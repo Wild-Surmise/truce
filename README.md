@@ -176,8 +176,7 @@ crates/
 ├── truce               # Facade (re-exports, plugin! macro)
 ├── truce-core          # Plugin, AudioBuffer, events, state
 ├── truce-params        # FloatParam, BoolParam, EnumParam, smoothing
-├── truce-params-derive # #[derive(Params)] proc macro
-├── truce-derive        # plugin_info!() + helper derives
+├── truce-derive        # All proc macros (#[derive(Params)], plugin_info!(), …)
 ├── truce-build         # build.rs helper (reads truce.toml)
 ├── truce-clap          # CLAP format wrapper
 ├── truce-vst3          # VST3 format wrapper

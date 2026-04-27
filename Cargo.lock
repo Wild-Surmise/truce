@@ -5913,7 +5913,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-vst2",
  "truce-vst3",
 ]
@@ -6009,7 +6008,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6031,7 +6029,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6053,7 +6050,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6076,7 +6072,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6099,7 +6094,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6122,7 +6116,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-slint",
  "truce-standalone",
  "truce-test",
@@ -6145,7 +6138,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6167,7 +6159,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6190,7 +6181,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-params-derive",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6259,10 +6249,10 @@ dependencies = [
  "parking_lot 0.12.5",
  "truce",
  "truce-core",
+ "truce-derive",
  "truce-gpu",
  "truce-gui",
  "truce-params",
- "truce-params-derive",
 ]
 
 [[package]]
@@ -6279,15 +6269,6 @@ name = "truce-params"
 version = "0.13.1"
 dependencies = [
  "bitflags 2.11.0",
-]
-
-[[package]]
-name = "truce-params-derive"
-version = "0.13.1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]

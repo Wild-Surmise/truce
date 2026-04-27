@@ -1,52 +1,75 @@
 # truce-derive
 
-Proc macros for truce plugin metadata.
+All proc macros for truce plugin authoring.
 
 ## Overview
 
-Provides the `plugin_info!()` macro, which reads `truce.toml` at compile time
-and generates a `PluginInfo` struct literal containing the plugin name, unique
-ID, vendor, category, and version. Removes the need for hand-written metadata
-constants. (Plugin crates still need a small `build.rs` calling
-`truce_build::emit_plugin_env()` — that handles format-feature check-cfg and
-optional env-var overrides; see the `truce-build` crate.)
+Two macro families live here:
 
-The macro is re-exported through `truce::plugin_info!()`, so plugin authors do
-not need to depend on this crate directly.
+- **Parameter / state derives** — `#[derive(Params)]`,
+  `#[derive(ParamEnum)]`, `#[derive(State)]`. Generate the
+  parameter-discovery, indexed access, display formatting, and
+  state-roundtrip glue every plugin needs. Pure `syn` + `quote`.
+- **`plugin_info!()`** — reads `truce.toml` at compile time and
+  expands to a `PluginInfo` struct literal containing the plugin
+  name, IDs, vendor, category, AU type / subtype / manufacturer
+  codes, and version. Removes the need for hand-written metadata
+  constants. Pulls in `toml` + `serde` at proc-macro compile time.
+  (Plugin crates still need a small `build.rs` calling
+  `truce_build::emit_plugin_env()` — that handles format-feature
+  `check-cfg` declarations and the `TRUCE_TARGET_DIR` /
+  `TRUCE_LOGIC_PROFILE` shell-mode env vars; see the `truce-build`
+  crate.)
 
-## Why a separate crate (vs. `truce-params-derive`)
+Plugin authors don't depend on this crate directly — everything is
+re-exported through `truce::prelude` (or `truce::plugin_info!()` /
+`truce::Params` etc. at the facade root).
 
-Both proc-macro crates expose derives consumed by the `truce` facade.
-The split is mostly about **separation of concerns** — this crate
-covers plugin metadata (`plugin_info!()` reading `truce.toml`),
-`truce-params-derive` covers parameter struct boilerplate. Different
-axes of plugin authoring.
+## Macros
 
-The deps differ — this crate pulls in `toml` + `serde` (with derive)
-to parse `truce.toml`; `truce-params-derive` is pure `syn` + `quote`.
-That doesn't actually save compile time in practice (every plugin
-uses both `plugin_info!()` and `#[derive(Params)]`, so the toml /
-serde cost is universal regardless of split), but it does keep the
-heavier dep tree localised to one crate.
+### `#[derive(Params)]`
 
-Minor build-parallelism upside: two independent proc-macro crates
-can compile concurrently. Merging would serialise them behind one
-proc-macro pre-build. Marginal in practice.
+Applied to a struct whose fields are `FloatParam`, `IntParam`,
+`BoolParam`, or `EnumParam`. Generates trait impls for parameter
+discovery, indexed access, and state round-tripping.
 
-Could be merged into a single `truce-derive` carrying all four
-derives + `plugin_info!()`. The trade-off is a `Cargo.toml` rename
-for every plugin that takes a direct dep on `truce-params-derive`
-(the example plugins do). Today's split is the status quo, not a
-hard technical requirement.
+### `#[derive(ParamEnum)]`
 
-## Key macro
+Applied to an enum to make it usable as an `EnumParam` value.
+Generates variant-to-index mapping and display names.
 
-- **`plugin_info!()`** -- expands to a `PluginInfo` struct populated from `truce.toml`
+### `#[derive(State)]`
 
-## Usage
+Generates per-field save/restore for plugin state structs.
+
+### `plugin_info!()`
+
+Expands to a `PluginInfo` struct populated from `truce.toml`. Reads
+the `[[plugin]]` entry matching the current crate's package name and
+the `[vendor]` section. Reads:
+
+- Plugin name and unique ID
+- Vendor name and URL
+- Plugin category (effect / instrument / midi / analyzer / tool)
+- AU type, subtype, manufacturer codes
+- Optional version override
+
+## Example
 
 ```rust
 use truce::prelude::*;
+
+#[derive(ParamEnum)]
+enum FilterMode { LowPass, HighPass, BandPass }
+
+#[derive(Params)]
+struct MyParams {
+    #[param(name = "Cutoff", range = log(20.0, 20000.0), unit = "Hz")]
+    cutoff: FloatParam,
+
+    #[param(name = "Mode")]
+    mode: EnumParam<FilterMode>,
+}
 
 impl Plugin for MyPlugin {
     fn info() -> PluginInfo {
@@ -55,12 +78,17 @@ impl Plugin for MyPlugin {
 }
 ```
 
-## What it reads from `truce.toml`
+## History
 
-- Plugin name and unique ID
-- Vendor name and URL
-- Plugin category (effect or instrument)
-- AU type, subtype, and manufacturer codes
-- Optional version override
+Until 0.13.x, `#[derive(Params)]` etc. lived in a separate
+`truce-params-derive` crate. The split was originally justified as
+"`truce-loader` consumes one but not the other" + "compile-cost
+partitioning" — both turned out wrong on closer inspection (the
+loader's only `truce-params-derive` use was a `[dev-dependencies]`
+test fixture; every plugin uses both `plugin_info!()` and
+`#[derive(Params)]` so the heavy `toml` + `serde` deps are universal
+either way). Merged into this crate to trim one crate from the
+published surface; the migration cost was a one-line `Cargo.toml`
+rename per plugin.
 
 Part of [truce](https://github.com/truce-audio/truce).

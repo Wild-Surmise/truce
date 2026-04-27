@@ -170,8 +170,7 @@ paths, so per-developer config has one obvious home.
 truce             — facade (re-exports everything, plugin! macro)
 truce-core        — Plugin, AudioBuffer, events, state
 truce-params      — FloatParam, BoolParam, EnumParam, smoothing
-truce-params-derive — #[derive(Params)] proc macro
-truce-derive      — proc macros (plugin_info!, internal)
+truce-derive      — all proc macros (#[derive(Params)] + plugin_info! + helper derives)
 truce-loader      — hot-reload (native ABI, PluginLogic trait)
 truce-gui         — built-in GUI (tiny-skia + fontdue, optional wgpu GPU backend, 7 widget types)
 truce-gpu         — GPU rendering backend (wgpu/Metal, lyon tessellation, glyph atlas)

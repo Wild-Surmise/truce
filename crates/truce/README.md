@@ -6,15 +6,14 @@ Main entry point for the truce audio plugin framework.
 
 `truce` is the only dependency most plugin authors need. It re-exports
 `truce-core` (traits and types), `truce-params` (parameter system), and the
-derive macros from `truce-derive` and `truce-params-derive`, giving you a
-single import path for everything.
+proc macros from `truce-derive` (all four — `Params`, `ParamEnum`, `State`,
+and `plugin_info!()`), giving you a single import path for everything.
 
 ## Key re-exports
 
 - `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` -- from truce-core
 - `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` -- from truce-params
-- `#[derive(Params)]`, `#[derive(ParamEnum)]` -- from truce-params-derive
-- `plugin_info!()` -- from truce-derive
+- `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]`, `plugin_info!()` -- from truce-derive
 - `PluginLogic`, `export_plugin!`, `export_static!`, `HotShell` -- from truce-loader
 - The `truce::plugin!` macro -- generates all the format-export glue from
   one declaration

@@ -10,7 +10,7 @@ use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
 #[allow(unused_imports)]
-use truce_params_derive::Params;
+use truce_derive::Params;
 
 #[derive(Params)]
 struct TestParams {
