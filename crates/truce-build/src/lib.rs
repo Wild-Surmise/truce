@@ -71,7 +71,7 @@ pub fn emit_plugin_env() {
     // `#[cfg(feature = "…")]` arm per supported format whether the
     // consumer declared it or not.
     println!(
-        "cargo:rustc-check-cfg=cfg(feature, values(\"clap\", \"vst3\", \"vst2\", \"lv2\", \"aax\", \"au\", \"dev\"))"
+        "cargo:rustc-check-cfg=cfg(feature, values(\"clap\", \"vst3\", \"vst2\", \"lv2\", \"aax\", \"au\", \"shell\"))"
     );
 
     let content = std::fs::read_to_string(&toml_path).unwrap_or_else(|e| {
@@ -138,6 +138,31 @@ pub fn emit_plugin_env() {
     if let Some(ref cat) = plugin.aax_category {
         println!("cargo:rustc-env=TRUCE_AAX_CATEGORY={cat}");
     }
+
+    // Bake the resolved cargo target dir + the logic profile into
+    // the binary so the `truce::plugin!` shell-mode arm can find the
+    // logic dylib at runtime without reading env in the DAW process
+    // (DAWs launched from Finder / Spotlight / Start don't inherit
+    // shell env; AU v3 sandboxing strips most env vars). The logic
+    // profile defaults to "release" — `cargo truce install --shell
+    // --debug` overrides it to "debug" by setting the env var
+    // `TRUCE_LOGIC_PROFILE` before the cargo build runs.
+    if let Ok(out_dir) = std::env::var("OUT_DIR") {
+        // OUT_DIR = <target>/<profile>/build/<crate-hash>/out
+        // ancestors() includes the path itself, so:
+        //   nth(0) = .../out
+        //   nth(1) = .../<crate-hash>
+        //   nth(2) = .../build
+        //   nth(3) = <target>/<profile>
+        //   nth(4) = <target>
+        if let Some(target_dir) = std::path::Path::new(&out_dir).ancestors().nth(4) {
+            println!("cargo:rustc-env=TRUCE_TARGET_DIR={}", target_dir.display());
+        }
+    }
+    let logic_profile =
+        std::env::var("TRUCE_LOGIC_PROFILE").unwrap_or_else(|_| "release".to_string());
+    println!("cargo:rustc-env=TRUCE_LOGIC_PROFILE={logic_profile}");
+    println!("cargo:rerun-if-env-changed=TRUCE_LOGIC_PROFILE");
 }
 
 fn find_truce_toml() -> PathBuf {

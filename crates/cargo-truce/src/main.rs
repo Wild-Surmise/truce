@@ -111,10 +111,16 @@ Build / Install / Package:
                      LV2, and AU v2.
       --system       Install into the system-wide directories. Requires
                      sudo on macOS, admin on Windows.
-      --shell        Build hot-reload shells + per-plugin debug logic
-                     dylibs (use with `cargo watch -x build` to iterate)
+      --shell        Build dynamic shells (loaded by the DAW) + per-
+                     plugin logic dylibs the shells dlopen at runtime.
+                     The shell uses the custom `[profile.shell]`
+                     (target/shell/); the logic uses release by default,
+                     debug if `--debug` is also passed (use `--debug`
+                     for fast iteration with `cargo watch -x build`).
       --debug        Compile with the cargo dev profile (faster compile,
                      slower DSP). Don't ship plugins built this way.
+                     With `--shell`: selects the *logic* dylib's profile
+                     (debug instead of the default release).
       --no-build     Skip build, install existing artifacts
       -p <crate>     Install only the plugin with this cargo crate name
                      (e.g. -p truce-example-gain)
@@ -134,9 +140,10 @@ Build / Install / Package:
       --au3          AU v3 only (.appex inside .app, macOS only)
       --aax          AAX only (requires pre-built SDK + template)
       -p <crate>     Build only the plugin with this cargo crate name
-      --shell        Add the `shell` feature and build the per-plugin
-                     debug logic dylibs alongside (the libs the
-                     hot-reload shells dlopen at runtime)
+      --shell        Build dynamic shells (custom `[profile.shell]`,
+                     `target/shell/`) plus the per-plugin logic dylibs
+                     they dlopen at runtime. Logic profile is release
+                     by default, debug if `--debug` is also passed.
       --debug        Cargo dev profile (faster compile, slower DSP).
                      Bundles still stage and sign correctly, but the
                      binary inside is debug-quality — not for shipping.

@@ -182,13 +182,39 @@ macro_rules! __plugin_hot_reload {
 
         impl __HotShellWrapper {
             fn dylib_path() -> std::path::PathBuf {
-                // Check env var first.
+                // Runtime escape hatch — point the shell at any
+                // dylib (advanced; only works when the DAW inherits
+                // the env, e.g. launched from the same terminal).
                 if let Ok(p) = std::env::var("TRUCE_LOGIC_PATH") {
                     return std::path::PathBuf::from(p);
                 }
 
-                // Find the workspace root by walking up from CARGO_MANIFEST_DIR
-                // looking for a target/ directory.
+                // Compile-time bake: `truce-build`'s `emit_plugin_env()`
+                // emits `TRUCE_TARGET_DIR` (resolved from `OUT_DIR`,
+                // honors `CARGO_TARGET_DIR`) and `TRUCE_LOGIC_PROFILE`
+                // (set by `cargo truce install --shell`, defaults to
+                // "release"). Captured into the shell binary so the
+                // DAW process doesn't need any env at runtime.
+                let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
+                let lib_name: String;
+                #[cfg(target_os = "macos")]
+                { lib_name = format!("lib{crate_name}.dylib"); }
+                #[cfg(target_os = "linux")]
+                { lib_name = format!("lib{crate_name}.so"); }
+                #[cfg(target_os = "windows")]
+                { lib_name = format!("{crate_name}.dll"); }
+
+                let profile = option_env!("TRUCE_LOGIC_PROFILE").unwrap_or("release");
+
+                if let Some(target_dir) = option_env!("TRUCE_TARGET_DIR") {
+                    return std::path::PathBuf::from(target_dir)
+                        .join(profile)
+                        .join(&lib_name);
+                }
+
+                // Fallback for shells built without truce-build (or
+                // pre-0.13 truce-build versions): walk up from
+                // CARGO_MANIFEST_DIR looking for `target/`.
                 let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
                 loop {
                     if root.join("target").is_dir() {
@@ -199,23 +225,9 @@ macro_rules! __plugin_hot_reload {
                         break;
                     }
                 }
-
-                // Always look in target/debug/ — the shell is built in release,
-                // the logic dylib is built in debug (fast compile).
                 root.push("target");
-                root.push("debug");
-
-                // Derive dylib name from crate name.
-                // CARGO_PKG_NAME = "truce-example-gain" → "truce_example_gain"
-                let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
-
-                #[cfg(target_os = "macos")]
-                root.push(format!("lib{crate_name}.dylib"));
-                #[cfg(target_os = "linux")]
-                root.push(format!("lib{crate_name}.so"));
-                #[cfg(target_os = "windows")]
-                root.push(format!("{crate_name}.dll"));
-
+                root.push(profile);
+                root.push(lib_name);
                 root
             }
         }

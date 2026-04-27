@@ -130,6 +130,15 @@ truce-test = {{ git = "https://github.com/truce-audio/truce" }}
 # crate doesn't declare.
 [build-dependencies]
 truce-build = {{ git = "https://github.com/truce-audio/truce" }}
+
+# Custom profile for `cargo truce install --shell`. The shell-mode
+# build (`cargo build --profile shell --features ...,shell`) lands the
+# shell binary at `target/shell/lib<crate>.dylib`, independent of
+# `target/release/` (where regular `cargo build --release` writes) and
+# `target/debug/` (where `cargo build` writes). Inherits release for
+# DSP perf parity.
+[profile.shell]
+inherits = "release"
 "#,
     )
 }
@@ -542,6 +551,13 @@ clap-sys = "0.5"
 # Steinberg's licensing terms. Enable only if you understand the
 # implications:
 # truce-vst2 = {{ git = "https://github.com/truce-audio/truce" }}
+
+# Custom profile for `cargo truce install --shell`. The shell-mode
+# build lands at `target/shell/lib<crate>.dylib`, independent of
+# `target/release/` and `target/debug/`. Cargo profiles are workspace-
+# level so this entry covers every plugin in the workspace.
+[profile.shell]
+inherits = "release"
 "#,
     )
 }

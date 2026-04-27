@@ -86,3 +86,13 @@ truce-font = { version = "0.13.1", path = "crates/truce-font" }
 # docs/pro-tools-aax-fix.md). GUI crates consume this via
 # `baseview = { workspace = true }` so the fork origin is declared once.
 baseview = { git = "https://github.com/truce-audio/baseview.git" }
+
+# Custom profile for shell-mode (hot-reload) builds. `cargo truce
+# install --shell` invokes `cargo build --profile shell --features
+# ...,shell`, so the shell binary lands at `target/shell/lib<crate>.dylib`
+# — independent of `target/release/` and `target/debug/`. Inheriting
+# from "release" gives release-quality DSP perf for testing while
+# leaving the regular release / debug profiles untouched for
+# `cargo build` / `cargo build --release`.
+[profile.shell]
+inherits = "release"

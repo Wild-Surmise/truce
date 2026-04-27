@@ -7,7 +7,7 @@ No DAW restart. No plugin window close. Same source file, same
 ## Setup
 
 The default `cargo truce new` scaffold produces a single-crate
-plugin with the `shell` feature pre-wired:
+plugin with the `shell` feature + `[profile.shell]` pre-wired:
 
 ```toml
 [features]
@@ -16,13 +16,21 @@ clap     = ["dep:truce-clap", "dep:clap-sys"]
 vst3     = ["dep:truce-vst3"]
 # ... other format features ...
 shell    = ["truce/shell"]     # ← the hot-reload feature
+
+[profile.shell]
+inherits = "release"           # ← shell binaries land at target/shell/
 ```
 
 ```sh
 # One-time: build and install the dynamic shell.
+# Shell goes to target/shell/, logic dylib goes to target/release/.
 cargo truce install --shell
 
-# Iterate: rebuild the logic dylib on every save (debug, fast).
+# Iterate (release-quality DSP, slower compile):
+cargo watch -x "build --release -p my-plugin"
+
+# Or, for faster compile / debug-quality DSP:
+cargo truce install --shell --debug
 cargo watch -x "build -p my-plugin"
 ```
 
@@ -30,6 +38,12 @@ cargo watch -x "build -p my-plugin"
 expand into a dynamic shell that loads your `PluginLogic` out of a
 separate dylib. The shell watches the dylib for content changes
 and swaps in the new one while the plugin is live.
+
+Logic profile defaults to release for closer-to-shipped DSP perf.
+Pass `--debug` to flip the logic to debug profile (faster compile,
+slower DSP) for tight iteration. The shell binary itself is always
+built into `target/shell/` via `[profile.shell]` and never collides
+with your regular `cargo build` / `cargo build --release` outputs.
 
 When you're done iterating, ship the release build:
 
@@ -107,12 +121,23 @@ avoid deadlocks.
 ## Troubleshooting
 
 **Plugin doesn't notice the new dylib.**
-The shell looks for `target/debug/lib{crate_name}.{dylib,so,dll}`
-(walked up from the crate that compiled the shell, ignoring
-`CARGO_TARGET_DIR` and the cargo profile at runtime). If that file
-doesn't exist after rebuild, override the lookup with
+The shell looks for `target/<profile>/lib{crate_name}.{dylib,so,dll}`,
+where `<profile>` is the one baked in at `cargo truce install --shell`
+time (release by default; debug if `--debug` was passed). The path
+is captured at compile time from `OUT_DIR` (which honors
+`CARGO_TARGET_DIR`), so you don't need any runtime env to be set in
+the DAW process — but it does mean the shell is tied to the
+workspace it was installed from. Re-run `cargo truce install
+--shell` if you change `CARGO_TARGET_DIR` or move the workspace.
+
+For ad-hoc overrides (point the shell at any dylib), set
 `TRUCE_LOGIC_PATH=/absolute/path/to/lib...` in the env that
-launches the host. The shell skips reload if CRC32 hasn't changed.
+launches the host. Caveat: DAWs launched from Finder / Spotlight /
+Start don't inherit terminal env, and AU v3 sandboxing strips most
+vars; this override only works when the DAW is started from the
+same shell or via `open -a Foo --env TRUCE_LOGIC_PATH=...` (macOS).
+
+The shell skips reload if CRC32 hasn't changed.
 
 **macOS "code signature invalid."**
 The shell codesigns the dylib copy. Ensure Xcode CLI tools are

@@ -98,22 +98,21 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         return Err("no matching plugins".into());
     }
 
-    // `--shell` forces the logic dylib into dev profile; the shell
-    // itself is built in release. `--debug` flipping the shell to
-    // dev too would race both builds for `target/debug/lib<crate>.dylib`.
-    if shell_mode && debug {
-        return Err(
-            "--shell and --debug can't be combined. The logic dylib is already \
-             built in the cargo dev profile when --shell is set; --debug only \
-             flips the shell build, which causes both builds to race for \
-             target/debug/lib<crate>.dylib. Drop --debug."
-                .into(),
-        );
-    }
+    // In shell mode `--debug` selects the *logic* profile (the dylib
+    // the shell dlopens at runtime). The shell itself goes to
+    // `target/shell/` via the custom `[profile.shell]`; default logic
+    // profile is release for better DSP perf, debug for fast iteration.
+    let logic_profile = if debug { "debug" } else { "release" };
 
-    // Flip the global profile flag once. `cargo_build`, `release_lib`,
-    // and the staging functions all consult it transparently.
-    crate::set_debug_profile(debug);
+    if shell_mode {
+        crate::set_build_profile("shell");
+        // Bake the logic profile into the shell binary via truce-build
+        // → `cargo:rustc-env=TRUCE_LOGIC_PROFILE=...`. The shell's
+        // runtime dylib lookup uses option_env! to read it.
+        std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
+    } else {
+        crate::set_debug_profile(debug);
+    }
 
     let root = project_root();
     let dt = &deployment_target();
@@ -336,14 +335,27 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // would rebuild every example + framework crate.
     if shell_mode {
         for p in &plugins {
-            crate::vprintln!("Building debug dylib for {} (shell logic)...", p.crate_name);
+            crate::vprintln!(
+                "Building {} logic dylib for {}...",
+                logic_profile,
+                p.crate_name
+            );
             let mut cmd = Command::new("cargo");
             cmd.arg("build").arg("-p").arg(&p.crate_name);
+            match logic_profile {
+                "debug" => {} // cargo default
+                "release" => {
+                    cmd.arg("--release");
+                }
+                other => {
+                    cmd.arg("--profile").arg(other);
+                }
+            }
             #[cfg(target_os = "macos")]
             cmd.env("MACOSX_DEPLOYMENT_TARGET", dt);
             let status = cmd.status()?;
             if !status.success() {
-                return Err(format!("debug build of {} failed", p.crate_name).into());
+                return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
             }
         }
     }

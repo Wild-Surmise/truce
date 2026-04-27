@@ -92,20 +92,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // on every platform).
     let scope = cli_scope.unwrap_or_else(InstallScope::os_default);
 
-    // `--shell` always builds the logic dylib in dev profile (the
-    // hot-reload workflow assumes "shell in release, logic in
-    // debug"). `--debug` would force the shell into dev too, which
-    // adds nothing — the logic dylib is already dev — and races
-    // both builds for the same `target/debug/lib<crate>.dylib` path.
-    if shell_mode && debug {
-        return Err(
-            "--shell and --debug can't be combined. The logic dylib is already \
-             built in the cargo dev profile when --shell is set; --debug only \
-             flips the shell build, which causes both builds to race for \
-             target/debug/lib<crate>.dylib. Drop --debug."
-                .into(),
-        );
-    }
+    // In shell mode, `--debug` selects the *logic* profile. The
+    // shell binary itself is always built into `target/shell/` via a
+    // custom cargo profile; the second build (the logic dylib the
+    // shell dlopens at runtime) defaults to release for better DSP
+    // perf, with `--debug` flipping it to debug for fast iteration.
 
     if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
@@ -147,7 +138,22 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         config.plugin.iter().collect()
     };
 
-    crate::set_debug_profile(debug);
+    // Logic profile (the dylib the shell dlopens at runtime). Baked
+    // into the shell binary via `TRUCE_LOGIC_PROFILE` so the runtime
+    // path lookup doesn't need to read env. Only meaningful when
+    // shell_mode is on.
+    let logic_profile = if debug { "debug" } else { "release" };
+
+    // For shell-mode builds the per-format cargo invocation uses the
+    // custom `[profile.shell]` (defined in the user's Cargo.toml,
+    // inherits from "release"). Output lands in `target/shell/`,
+    // independent of `target/release/` and `target/debug/`. For the
+    // non-shell case we honor `--debug` directly.
+    if shell_mode {
+        crate::set_build_profile("shell");
+    } else {
+        crate::set_debug_profile(debug);
+    }
 
     let root = project_root();
     let dt = &deployment_target();
@@ -155,6 +161,13 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut extra_features = Vec::new();
     if shell_mode {
         extra_features.push("shell");
+        // Set in the process env so every child cargo build inherits
+        // it. truce-build's `emit_plugin_env()` reads the var and
+        // re-emits it via `cargo:rustc-env=`, which bakes it into the
+        // shell binary as a compile-time constant. The shell's runtime
+        // dylib_path() lookup uses `option_env!("TRUCE_LOGIC_PROFILE")`
+        // to know which target subdir holds the logic dylib.
+        std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
     }
 
     // --- Build ---
@@ -366,20 +379,35 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             );
         }
 
-        // Shell mode: also build the debug dylibs (the logic dylib
-        // each installed shell will dlopen at runtime). Scoped to
-        // the plugins being installed — `--workspace` rebuilt every
-        // example + framework crate on a fresh checkout.
+        // Shell mode: also build the logic dylibs (the dylibs each
+        // installed shell will dlopen at runtime). Built in the
+        // profile baked into the shell — release by default, debug
+        // when `--debug` was passed. Scoped per-plugin (was
+        // `--workspace` until 0.13.x; that rebuilt every framework
+        // crate on a fresh checkout).
         if shell_mode {
             for p in &plugins {
-                crate::vprintln!("Building debug dylib for {} (shell logic)...", p.crate_name);
+                crate::vprintln!(
+                    "Building {} logic dylib for {}...",
+                    logic_profile,
+                    p.crate_name
+                );
                 let mut cmd = Command::new("cargo");
                 cmd.arg("build").arg("-p").arg(&p.crate_name);
+                match logic_profile {
+                    "debug" => {} // cargo default
+                    "release" => {
+                        cmd.arg("--release");
+                    }
+                    other => {
+                        cmd.arg("--profile").arg(other);
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 cmd.env("MACOSX_DEPLOYMENT_TARGET", dt);
                 let status = cmd.status()?;
                 if !status.success() {
-                    return Err(format!("debug build of {} failed", p.crate_name).into());
+                    return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
                 }
             }
         }

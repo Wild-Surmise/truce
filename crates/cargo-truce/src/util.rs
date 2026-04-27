@@ -9,7 +9,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Path-aware wrappers around `std::fs`. `io::Error` alone doesn't include
 /// the path that triggered it, so a bare `fs::copy(src, dst)?` on a root-owned
@@ -83,39 +82,60 @@ pub(crate) fn target_dir(root: &Path) -> PathBuf {
     }
 }
 
-// Process-scoped flag: when true, `release_lib` and friends resolve
-// to `<target>/debug/...` instead of `<target>/release/...`. Set by
-// commands that accept `--debug` (`build`, `install`, `run`) for
-// the duration of that invocation; `package` never flips it, so
-// shipped artifacts stay release. Atomic so any thread sees the
-// same value inside one xtask invocation.
-static DEBUG_PROFILE: AtomicBool = AtomicBool::new(false);
+// Process-scoped active build profile. Drives both `cargo build`'s
+// `--release` / `--profile <name>` flag selection and the
+// `release_lib*` path resolvers (which read `target/<profile>/...`).
+// Default is "release" so commands like `package` that never set
+// the profile keep producing release artifacts.
+//
+// Recognised values:
+//   - "release"  → `cargo build --release`,   `target/release/...`
+//   - "debug"    → `cargo build`,             `target/debug/...`
+//   - "shell"    → `cargo build --profile shell`, `target/shell/...`
+//   - any other  → `cargo build --profile <name>`, `target/<name>/...`
+static PROFILE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
-/// Switch the in-process build profile that `release_lib` /
-/// `release_lib_for_target` resolve against. `true` →
-/// `<target>/debug/`, `false` → `<target>/release/`. Default is
-/// release.
+/// Set the active cargo profile by name. `"release"` / `"debug"` map
+/// to cargo's built-in profiles; any other name maps to a custom
+/// profile defined in the user's `Cargo.toml` (e.g. `[profile.shell]
+/// inherits = "release"` for the shell-mode build).
+pub(crate) fn set_build_profile(name: &str) {
+    let mut g = PROFILE.lock().unwrap();
+    g.clear();
+    g.push_str(name);
+}
+
+/// Convenience wrapper for the common boolean-debug case. Equivalent
+/// to `set_build_profile("debug")` / `set_build_profile("release")`.
 pub(crate) fn set_debug_profile(debug: bool) {
-    DEBUG_PROFILE.store(debug, Ordering::Relaxed);
+    set_build_profile(if debug { "debug" } else { "release" });
+}
+
+/// Read the active build profile name, defaulting to `"release"` when
+/// no command has set one.
+pub(crate) fn build_profile_name() -> String {
+    let g = PROFILE.lock().unwrap();
+    if g.is_empty() {
+        "release".to_string()
+    } else {
+        g.clone()
+    }
 }
 
 /// Whether the current xtask invocation is operating in debug mode.
 /// Read by `cargo_build` so debug-flagged commands skip `--release`.
 pub(crate) fn is_debug_profile() -> bool {
-    DEBUG_PROFILE.load(Ordering::Relaxed)
+    build_profile_name() == "debug"
 }
 
-fn profile_subdir() -> &'static str {
-    if is_debug_profile() {
-        "debug"
-    } else {
-        "release"
-    }
+fn profile_subdir() -> String {
+    build_profile_name()
 }
 
 /// Return `<target>/<profile>/{shared_lib_name}` for a plugin.
-/// `<profile>` is `release` by default; the `--debug` flag on
-/// `cargo truce build` / `cargo truce run` flips it to `debug`.
+/// `<profile>` is `release` by default; commands that flip the active
+/// profile (`--debug` → `"debug"`, shell-mode builds → `"shell"`)
+/// move the resolution accordingly.
 pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
     target_dir(root)
         .join(profile_subdir())
@@ -124,8 +144,7 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
 
 /// Per-arch sibling of [`release_lib`]. `target` selects the triple
 /// subdir cargo writes to (macOS universal, Windows x64+arm64); the
-/// profile subdir tracks `release_lib` (release by default; debug
-/// when `set_debug_profile(true)` has been called).
+/// profile subdir tracks `release_lib`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
@@ -724,7 +743,12 @@ pub(crate) fn cargo_build(
     extra_args: &[&str],
     deployment_target: &str,
 ) -> crate::Res {
-    cargo_build_inner(env_vars, extra_args, deployment_target, !is_debug_profile())
+    cargo_build_with_profile(
+        env_vars,
+        extra_args,
+        deployment_target,
+        &build_profile_name(),
+    )
 }
 
 /// Force a cargo dev-profile build regardless of the global profile
@@ -736,14 +760,27 @@ pub(crate) fn cargo_build_debug(
     extra_args: &[&str],
     deployment_target: &str,
 ) -> crate::Res {
-    cargo_build_inner(env_vars, extra_args, deployment_target, false)
+    cargo_build_with_profile(env_vars, extra_args, deployment_target, "debug")
+}
+
+/// Run `cargo build` with an explicit profile, regardless of the
+/// process-global profile flag. `"release"` adds `--release`, `"debug"`
+/// adds nothing (cargo's default), any other name adds `--profile <name>`
+/// (so a custom `[profile.shell]` in the user's `Cargo.toml` works).
+pub(crate) fn cargo_build_with_profile(
+    env_vars: &[(&str, &str)],
+    extra_args: &[&str],
+    deployment_target: &str,
+    profile: &str,
+) -> crate::Res {
+    cargo_build_inner(env_vars, extra_args, deployment_target, profile)
 }
 
 fn cargo_build_inner(
     env_vars: &[(&str, &str)],
     extra_args: &[&str],
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
-    release: bool,
+    profile: &str,
 ) -> crate::Res {
     // If the caller passed `--target <triple>`, make sure rustup has
     // it installed before firing cargo. Catches the common "cross-arch
@@ -764,8 +801,14 @@ fn cargo_build_inner(
 
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
-    if release {
-        cmd.arg("--release");
+    match profile {
+        "debug" => {} // cargo's default profile, no flag needed
+        "release" => {
+            cmd.arg("--release");
+        }
+        custom => {
+            cmd.arg("--profile").arg(custom);
+        }
     }
     #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
