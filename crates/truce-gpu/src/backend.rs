@@ -631,7 +631,7 @@ impl WgpuBackend {
     /// Build a standalone `WgpuBackend` that records into encoders
     /// supplied per-frame by the caller.
     ///
-    /// Unlike [`Self::from_surface`] / [`Self::from_metal_layer`] / [`Self::from_window`],
+    /// Unlike [`Self::from_surface`] / `from_metal_layer` / [`Self::from_window`],
     /// this constructor does **not** own a `wgpu::Surface` or manage
     /// frame acquisition. The caller is expected to have its own render
     /// loop, allocate command encoders, and present — this backend only

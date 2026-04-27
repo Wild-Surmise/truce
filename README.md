@@ -205,24 +205,6 @@ crates/
 - [Formats](docs/formats/) — per-format reference (CLAP, VST3, VST2, LV2, AU, AAX) with env vars, signing, install paths, gotchas
 - [Status](docs/README.md) — what's built, what's next
 
-## Configuration
-
-Plugin metadata lives in `truce.toml`:
-
-```toml
-[vendor]
-name = "My Company"
-id = "com.mycompany"
-au_manufacturer = "MyCo"
-
-[[plugin]]
-name = "My Effect"
-bundle_id = "effect"
-crate = "my-effect"
-category = "effect"
-fourcc = "MyFx"
-```
-
 ## Requirements
 
 - Rust 1.88+ (`rustup update`).
