@@ -2,6 +2,7 @@
 //! clap-validator (CLAP) against the project's installed bundles, with
 //! shadow-install collision detection.
 
+use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::{deployment_target, project_root};
 use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
@@ -10,6 +11,22 @@ use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 use std::process::Command;
+
+/// Print a one-line warning when the same plugin is installed under
+/// both user and system scope. Both copies are valid bundles; the
+/// host picks one at scan time and shadows the other, which is a
+/// frequent cause of "DAW loads my old build" support questions.
+fn warn_on_scope_collision(format: &str, user_path: &Path, system_path: &Path) {
+    if user_path.exists() && system_path.exists() {
+        eprintln!("    ⚠️  {format} installed in both scopes:");
+        eprintln!("        • user:   {}", user_path.display());
+        eprintln!("        • system: {}", system_path.display());
+        eprintln!(
+            "        Hosts pick one at scan time; remove the stale copy with \
+             `cargo truce remove --user` or `--system`."
+        );
+    }
+}
 
 /// Read a single leaf value from a plist via `plutil -extract … raw`.
 /// Returns `None` if the key path doesn't exist or the value isn't a scalar.
@@ -212,6 +229,16 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         eprintln!("=== auval (AU v2) ===\n");
         if Command::new("auval").arg("-h").output().is_ok() {
             for p in &plugins {
+                #[cfg(target_os = "macos")]
+                {
+                    let user_path = InstallScope::User
+                        .au_v2_dir()
+                        .join(format!("{}.component", p.name));
+                    let system_path = InstallScope::System
+                        .au_v2_dir()
+                        .join(format!("{}.component", p.name));
+                    warn_on_scope_collision("AU v2", &user_path, &system_path);
+                }
                 eprint!(
                     "  {} ({} {} {}) ... ",
                     p.name,
@@ -306,14 +333,30 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         let pluginval = find_pluginval();
         if let Some(pv) = pluginval {
             for p in &plugins {
-                let vst3_path = format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name);
-                if !Path::new(&vst3_path).exists() {
+                let user_path = InstallScope::User
+                    .vst3_dir()
+                    .join(format!("{}.vst3", p.name));
+                let system_path = InstallScope::System
+                    .vst3_dir()
+                    .join(format!("{}.vst3", p.name));
+                // Validate the system bundle when it's there (the
+                // historical default), else fall through to user.
+                let validate_path = if system_path.exists() {
+                    system_path.clone()
+                } else if user_path.exists() {
+                    user_path.clone()
+                } else {
                     eprintln!("  {} ... SKIP (not installed)", p.name);
                     continue;
-                }
+                };
                 eprint!("  {} ... ", p.name);
                 let output = Command::new(&pv)
-                    .args(["--validate", &vst3_path, "--strictness-level", "5"])
+                    .args([
+                        "--validate",
+                        validate_path.to_str().unwrap(),
+                        "--strictness-level",
+                        "5",
+                    ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("SUCCESS") || output.status.success() {
@@ -322,6 +365,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     eprintln!("FAIL");
                     failures += 1;
                 }
+                warn_on_scope_collision("VST3", &user_path, &system_path);
             }
         } else {
             eprintln!("  pluginval not found. Install from https://github.com/Tracktion/pluginval");
@@ -333,9 +377,6 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         eprintln!("\n=== clap-validator (CLAP) ===\n");
         let clap_validator = find_clap_validator();
         if let Some(cv) = clap_validator {
-            let clap_dir = dirs::home_dir()
-                .map(|h| h.join("Library/Audio/Plug-Ins/CLAP"))
-                .unwrap_or_default();
             // Project-local scratch. `cargo clean` sweeps it, and it
             // stays off the system `/tmp` so nothing outside the repo
             // gets touched.
@@ -344,7 +385,15 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
             for p in &plugins {
                 let clap_name = format!("{}.clap", p.name);
-                let installed = clap_dir.join(&clap_name);
+                let user_path = InstallScope::User.clap_dir().join(&clap_name);
+                let system_path = InstallScope::System.clap_dir().join(&clap_name);
+                // Prefer the user-scope bundle (today's default); fall
+                // through to system-scope if the user installed there.
+                let installed = if user_path.exists() {
+                    user_path.clone()
+                } else {
+                    system_path.clone()
+                };
 
                 if !installed.exists() {
                     eprintln!("  {} ... SKIP (not installed)", p.name);
@@ -387,6 +436,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     }
                     failures += 1;
                 }
+                warn_on_scope_collision("CLAP", &user_path, &system_path);
             }
 
             let _ = fs::remove_dir_all(&scratch);
@@ -457,6 +507,18 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
 
     let mut failures = 0;
     for p in plugins {
+        // Cross-scope collision check first — visible regardless of
+        // whether the smoke binary builds. Two installed `.vst` bundles
+        // are valid on disk but only one will be loaded by any given
+        // host scan.
+        let user_path = InstallScope::User
+            .vst2_dir()
+            .join(format!("{}.vst", p.name));
+        let system_path = InstallScope::System
+            .vst2_dir()
+            .join(format!("{}.vst", p.name));
+        warn_on_scope_collision("VST2", &user_path, &system_path);
+
         eprint!("  {} ... ", p.name);
         let build = Command::new("cargo")
             .args([

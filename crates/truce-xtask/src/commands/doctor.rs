@@ -4,6 +4,7 @@
 #![allow(unused_imports)]
 
 use crate::config::read_cargo_config_env;
+use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -154,36 +155,259 @@ pub(crate) fn cmd_doctor() -> Res {
         }
     }
 
-    // Installed plugins
+    // Plugin install paths — both scopes side-by-side per format.
+    // Helps a user who's confused about why a host is finding the
+    // wrong copy of their plugin: when the same name appears under
+    // both scopes, the host picks one and shadows the other.
     eprintln!();
-    eprintln!("  Installed Plugins");
-    #[cfg(target_os = "macos")]
-    {
-        let home = dirs::home_dir().unwrap_or_default();
-        count_plugins(&home.join("Library/Audio/Plug-Ins/CLAP"), "CLAP");
-        count_plugins(
-            &Path::new("/Library/Audio/Plug-Ins/VST3").to_path_buf(),
-            "VST3",
-        );
-        count_plugins(
-            &Path::new("/Library/Audio/Plug-Ins/Components").to_path_buf(),
-            "AU v2",
-        );
-        count_plugins(&home.join("Library/Audio/Plug-Ins/VST"), "VST2");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let cpf = common_program_files();
-        let pf = program_files();
-        count_plugins(&cpf.join("CLAP"), "CLAP");
-        count_plugins(&cpf.join("VST3"), "VST3");
-        count_plugins(&pf.join("Steinberg").join("VstPlugins"), "VST2");
-        count_plugins(&cpf.join("Avid").join("Audio").join("Plug-Ins"), "AAX");
-    }
+    eprintln!("  Plugin install paths");
+    show_scope_paths();
 
     eprintln!();
     eprintln!("─────────────────────────────────────────");
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct PathFormat {
+    label: &'static str,
+    /// File extension or bundle suffix. Used to count plug-ins in
+    /// the directory and to detect cross-scope collisions in
+    /// `cargo truce validate`.
+    ext: &'static str,
+}
+
+const PATH_FORMATS_MACOS: &[PathFormat] = &[
+    PathFormat {
+        label: "CLAP",
+        ext: "clap",
+    },
+    PathFormat {
+        label: "VST3",
+        ext: "vst3",
+    },
+    PathFormat {
+        label: "VST2",
+        ext: "vst",
+    },
+    PathFormat {
+        label: "LV2",
+        ext: "lv2",
+    },
+    PathFormat {
+        label: "AU v2",
+        ext: "component",
+    },
+];
+
+const PATH_FORMATS_WINDOWS: &[PathFormat] = &[
+    PathFormat {
+        label: "CLAP",
+        ext: "clap",
+    },
+    PathFormat {
+        label: "VST3",
+        ext: "vst3",
+    },
+    PathFormat {
+        label: "VST2",
+        ext: "dll",
+    },
+    PathFormat {
+        label: "LV2",
+        ext: "lv2",
+    },
+];
+
+const PATH_FORMATS_LINUX: &[PathFormat] = &[
+    PathFormat {
+        label: "CLAP",
+        ext: "clap",
+    },
+    PathFormat {
+        label: "VST3",
+        ext: "vst3",
+    },
+    PathFormat {
+        label: "VST2",
+        ext: "so",
+    },
+    PathFormat {
+        label: "LV2",
+        ext: "lv2",
+    },
+];
+
+fn show_scope_paths() {
+    let formats: &[PathFormat] = if cfg!(target_os = "macos") {
+        PATH_FORMATS_MACOS
+    } else if cfg!(target_os = "windows") {
+        PATH_FORMATS_WINDOWS
+    } else {
+        PATH_FORMATS_LINUX
+    };
+
+    for f in formats {
+        let user_path = scope_path_for(f.label, InstallScope::User);
+        let system_path = scope_path_for(f.label, InstallScope::System);
+        report_scope_line(f, "user", InstallScope::User, &user_path);
+        // Linux's user and system dirs resolve to the same path —
+        // skip the duplicate row to keep the matrix readable.
+        if user_path != system_path {
+            report_scope_line(f, "system", InstallScope::System, &system_path);
+        }
+    }
+
+    // AAX is system-only; AU v3 is system-only and lives in
+    // /Applications/. Both have a single canonical location.
+    #[cfg(target_os = "macos")]
+    {
+        report_fixed(
+            "AAX",
+            "system",
+            true,
+            &PathBuf::from("/Library/Application Support/Avid/Audio/Plug-Ins"),
+            "aaxplugin",
+        );
+        report_fixed(
+            "AU v3",
+            "system",
+            true,
+            &PathBuf::from("/Applications"),
+            // /Applications/ also holds every non-plug-in Mac app,
+            // so a count by ".app" would be meaningless — skip it.
+            "",
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let aax_dir = common_program_files()
+            .join("Avid")
+            .join("Audio")
+            .join("Plug-Ins");
+        report_fixed("AAX", "system", true, &aax_dir, "aaxplugin");
+    }
+}
+
+/// Resolve the same path the install / remove / package commands use
+/// for `(format, scope)`. Falls through to user-scope on Linux for the
+/// unsupported `system` arm (Linux is user-only).
+fn scope_path_for(label: &str, scope: InstallScope) -> PathBuf {
+    match label {
+        "CLAP" => scope.clap_dir(),
+        "VST3" => scope.vst3_dir(),
+        "VST2" => scope.vst2_dir(),
+        "LV2" => scope.lv2_dir(),
+        #[cfg(target_os = "macos")]
+        "AU v2" => scope.au_v2_dir(),
+        _ => PathBuf::new(),
+    }
+}
+
+fn report_scope_line(f: &PathFormat, scope_label: &str, scope: InstallScope, path: &Path) {
+    let label = format!("{} {}:", f.label, scope_label);
+    report_path_line(&label, scope.needs_sudo(), path, f.ext);
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn report_fixed(format_label: &str, scope_label: &str, needs_sudo: bool, path: &Path, ext: &str) {
+    let label = format!("{} {}:", format_label, scope_label);
+    report_path_line(&label, needs_sudo, path, ext);
+}
+
+fn report_path_line(label: &str, needs_sudo: bool, path: &Path, ext: &str) {
+    if !path.exists() {
+        eprintln!(
+            "    {label:<14} {}{}— not present",
+            display_path(path),
+            spacer(path)
+        );
+        return;
+    }
+    let count_str = if ext.is_empty() {
+        // Path is shared with non-plug-in content (e.g.
+        // `/Applications/` for AU v3) — counting `.app`s would
+        // include every Mac app on disk. Skip the count.
+        String::new()
+    } else {
+        let count = count_bundles_with_ext(path, ext);
+        let plural = if count == 1 { "" } else { "s" };
+        format!(" ({count} plug-in{plural})")
+    };
+    let state = if needs_sudo {
+        format!("⚠️  needs sudo{count_str}")
+    } else if path_is_writable(path) {
+        format!("✅ writable{count_str}")
+    } else {
+        format!("⚠️  not writable{count_str}")
+    };
+    eprintln!(
+        "    {label:<14} {}{}{state}",
+        display_path(path),
+        spacer(path)
+    );
+}
+
+/// Tab-aligned spacer between the path and the state column.
+/// Pads the path column to ~46 chars so the state markers line up
+/// regardless of how long the resolved path is.
+fn spacer(path: &Path) -> String {
+    let width = display_path(path).chars().count();
+    let target = 46usize;
+    if width < target {
+        " ".repeat(target - width)
+    } else {
+        "  ".to_string()
+    }
+}
+
+/// Render `path` as `~/...` when it's under `$HOME`, otherwise as
+/// the absolute path. Keeps the matrix readable on macOS / Linux
+/// where the user-scope paths all begin with the home directory.
+fn display_path(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rel) = path.strip_prefix(&home) {
+            return format!("~/{}", rel.display());
+        }
+    }
+    path.display().to_string()
+}
+
+fn count_bundles_with_ext(dir: &Path, ext: &str) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let want = format!(".{ext}");
+    entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .ends_with(&want.to_lowercase())
+        })
+        .count()
+}
+
+/// Probe writability by trying to create a tempfile in `dir`. Avoids
+/// false positives from `metadata().permissions().readonly()` which
+/// only reports the file mode, not the effective access — system
+/// dirs on macOS are 0755 and would read as "writable" without
+/// surfacing the sudo requirement.
+fn path_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".truce-doctor-write-probe-{}", std::process::id()));
+    match fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Like `check_which`, but consults `env_var` (process env, then
@@ -218,14 +442,3 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn count_plugins(dir: &PathBuf, label: &str) {
-    if dir.exists() {
-        let count = fs::read_dir(dir)
-            .map(|entries| entries.filter(|e| e.is_ok()).count())
-            .unwrap_or(0);
-        eprintln!("    {label}: {count} items in {}", dir.display());
-    } else {
-        eprintln!("    {label}: directory not found");
-    }
-}
