@@ -6,6 +6,7 @@ AAX, and standalone from a single Rust codebase.
 [![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
 [![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
 [![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
+[![Docs](https://img.shields.io/badge/docs-rustdoc-blue?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 > Note: Earlier releases have been yanked, stable release coming soon.
