@@ -1,9 +1,10 @@
 //! Shared transport slot: audio-thread writer → editor-thread reader.
 //!
 //! Each format wrapper owns a [`TransportSlot`] and writes it at the
-//! top of every process block. The editor closure on [`EditorContext`]
-//! reads from the same slot, giving UI code access to host tempo /
-//! play state / beat position without a format-specific callback.
+//! top of every process block. The editor closure on
+//! [`crate::editor::EditorContext`] reads from the same slot, giving
+//! UI code access to host tempo / play state / beat position without
+//! a format-specific callback.
 //!
 //! The audio-thread side uses `try_lock` and never blocks: if the UI
 //! thread happens to be reading at the instant of write, that block's

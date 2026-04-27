@@ -285,7 +285,7 @@ pub struct WgpuBackend {
     atlas_texture: wgpu::Texture,
     atlas_bind_group: wgpu::BindGroup,
     /// Layout shared between the atlas bind group and every per-image
-    /// bind group (same texture2d<f32> + sampler layout).
+    /// bind group (same `texture2d<f32>` + sampler layout).
     tex_bind_group_layout: wgpu::BindGroupLayout,
     /// Shared linear sampler used for both the glyph atlas and images.
     sampler: wgpu::Sampler,
@@ -584,7 +584,7 @@ impl WgpuBackend {
     /// `logical_w` / `logical_h` are in logical points; `scale` is the
     /// layer's `contentsScale` (2.0 on Retina). The surface is
     /// configured at `logical × scale` physical pixels, matching the
-    /// contract of [`from_surface`] / [`from_window`].
+    /// contract of [`Self::from_surface`] / [`Self::from_window`].
     ///
     /// # Safety
     /// `metal_layer` must be a valid `CAMetalLayer*` that outlives the backend.
@@ -631,7 +631,7 @@ impl WgpuBackend {
     /// Build a standalone `WgpuBackend` that records into encoders
     /// supplied per-frame by the caller.
     ///
-    /// Unlike [`from_surface`] / [`from_metal_layer`] / [`from_window`],
+    /// Unlike [`Self::from_surface`] / [`Self::from_metal_layer`] / [`Self::from_window`],
     /// this constructor does **not** own a `wgpu::Surface` or manage
     /// frame acquisition. The caller is expected to have its own render
     /// loop, allocate command encoders, and present — this backend only
@@ -659,8 +659,8 @@ impl WgpuBackend {
     /// a subsequent `begin_frame(logical_w, logical_h)` exceeds the
     /// seed, the MSAA texture is reallocated transparently.
     ///
-    /// Matches the coordinate contract of [`from_surface`] /
-    /// [`from_window`]: draw calls and event coordinates are logical
+    /// Matches the coordinate contract of [`Self::from_surface`] /
+    /// [`Self::from_window`]: draw calls and event coordinates are logical
     /// points; the backend multiplies by `scale` internally when
     /// rasterizing.
     pub fn new(
@@ -885,7 +885,7 @@ impl WgpuBackend {
     /// Resets accumulated geometry and the clear flag. Rebuilds the MSAA
     /// texture if the physical size differs from the previous frame.
     ///
-    /// Only meaningful when the backend was built via [`new`]; the
+    /// Only meaningful when the backend was built via [`Self::new`]; the
     /// surface-owning constructors drive their own frame lifecycle.
     pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
         let phys_w = ((logical_w.max(1) as f32) * self.scale).round().max(1.0) as u32;
@@ -1013,7 +1013,7 @@ impl WgpuBackend {
 
     /// Access the shared `wgpu::Device` used by this backend.
     ///
-    /// Useful for callers that built the backend via [`new`] and want
+    /// Useful for callers that built the backend via [`Self::new`] and want
     /// to allocate additional resources against the same device.
     pub fn device(&self) -> &Arc<wgpu::Device> {
         &self.device

@@ -1,4 +1,4 @@
-//! LV2 State extension (http://lv2plug.in/ns/ext/state).
+//! LV2 State extension (`http://lv2plug.in/ns/ext/state`).
 //!
 //! Hosts call `save()` to serialize and `restore()` to re-hydrate plugin
 //! state, passing opaque store/retrieve function pointers along with a

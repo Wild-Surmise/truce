@@ -1,6 +1,6 @@
 //! Realtime-safe DSP utilities shared across truce plugins.
 //!
-//! The primary inhabitant today is [`audio_tap`], a lock-free SPSC ring
+//! The primary inhabitant today is [`mod@audio_tap`], a lock-free SPSC ring
 //! for handing audio-derived data from the DSP thread to the editor /
 //! UI thread (oscilloscopes, spectrum, waveform history, visualizers).
 //!

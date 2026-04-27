@@ -37,7 +37,7 @@ pub mod in_process;
 
 /// Result of a render operation.
 pub struct RenderResult {
-    /// Output audio channels. Each Vec<f32> is one channel.
+    /// Output audio channels. Each `Vec<f32>` is one channel.
     pub output: Vec<Vec<f32>>,
     /// The plugin instance (for further inspection).
     pub num_frames: usize,
