@@ -12,7 +12,7 @@ AAX, and standalone from a single Rust codebase.
 
 ## Quick Start
 
-[![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/README.md)
+[![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/install.md)
 [![Docs](https://img.shields.io/badge/docs-rustdoc-purple?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
 
 ```sh
