@@ -24,6 +24,11 @@ pub struct Options {
     /// privacy default (off). Set explicitly via `--input-enabled
     /// on|off` or `default_input_enabled` in the config file.
     pub input_enabled: Option<bool>,
+    /// Whether the speaker output is enabled at launch. `None` →
+    /// runtime default (on — the user launched standalone to hear
+    /// the plugin). Set explicitly via `--output-enabled on|off` or
+    /// `default_output_enabled` in the config file.
+    pub output_enabled: Option<bool>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub midi_input: Option<String>,
@@ -46,6 +51,8 @@ OPTIONS:
   --input <name>            Audio input device (effect plugins)
   --input-enabled <on|off>  Enable mic input at launch (default: off).
                             Press `I` in the window to toggle live.
+  --output-enabled <on|off> Enable speaker output at launch (default: on).
+                            Toggle live from the Plugin menu (Cmd+O / Ctrl+O).
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
   --midi-input <name>       MIDI input device (substring match)
@@ -92,6 +99,11 @@ pub fn parse() -> Result<Options, String> {
         .map_err(|e| format!("--input-enabled: {e}"))?
         .map(|s| parse_on_off(&s, "--input-enabled"))
         .transpose()?;
+    let output_enabled = args
+        .opt_value_from_str::<_, String>("--output-enabled")
+        .map_err(|e| format!("--output-enabled: {e}"))?
+        .map(|s| parse_on_off(&s, "--output-enabled"))
+        .transpose()?;
     let sample_rate = args
         .opt_value_from_str::<_, u32>("--sample-rate")
         .map_err(|e| format!("--sample-rate: {e}"))?;
@@ -124,6 +136,10 @@ pub fn parse() -> Result<Options, String> {
             env("INPUT_ENABLED")
                 .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
         }),
+        output_enabled: output_enabled.or_else(|| {
+            env("OUTPUT_ENABLED")
+                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
+        }),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
@@ -137,6 +153,7 @@ pub fn parse() -> Result<Options, String> {
         opts.output_device = opts.output_device.or(config.default_output);
         opts.input_device = opts.input_device.or(config.default_input);
         opts.input_enabled = opts.input_enabled.or(config.default_input_enabled);
+        opts.output_enabled = opts.output_enabled.or(config.default_output_enabled);
         opts.sample_rate = opts.sample_rate.or(config.default_sample_rate);
         opts.buffer_size = opts.buffer_size.or(config.default_buffer);
         opts.midi_input = opts.midi_input.or(config.default_midi_input);
@@ -169,6 +186,10 @@ struct Config {
     /// to override at launch.
     #[serde(default)]
     default_input_enabled: Option<bool>,
+    /// `None` (unset in config) means the runtime default takes
+    /// effect (on). Set `false` to launch muted.
+    #[serde(default)]
+    default_output_enabled: Option<bool>,
     #[serde(default)]
     default_sample_rate: Option<u32>,
     #[serde(default)]

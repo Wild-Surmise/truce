@@ -116,22 +116,26 @@ where
             _ => panic!("unsupported raw-window-handle variant"),
         };
 
-        // Install the macOS native menu bar (App + Plugin → Mic
-        // Input toggle). Must run on the main thread after baseview
-        // has initialized NSApp, which it does as part of opening
-        // the window. The closure builder runs on the main thread
-        // before the event loop starts, so this is the right hook.
-        // The mic-input menu only makes sense for effects (input
-        // is silent for instruments / analyzers without input
-        // routing). Device pickers, however, apply universally —
-        // every plugin can switch its output, and instruments can
-        // still want to pick a specific input if the host ever
-        // routes one. Effect-only gating keeps the simpler case
-        // until we have a use for it.
+        // Install the macOS native menu bar (App + Plugin →
+        // toggles + device pickers). Must run on the main thread
+        // after baseview has initialized NSApp, which it does as
+        // part of opening the window. The closure builder runs on
+        // the main thread before the event loop starts, so this is
+        // the right hook.
+        //
+        // The menu installs for every plugin category — the
+        // Audio Output toggle and Output Device picker are
+        // universally useful. The install path itself omits the
+        // Mic Input toggle and Input Device picker for non-effects
+        // (input is silent for instruments / analyzers without
+        // input routing).
         #[cfg(target_os = "macos")]
-        if is_effect {
-            crate::menu_macos::install(P::info().name, input_ctrl.clone(), output_ctrl.clone());
-        }
+        crate::menu_macos::install(
+            P::info().name,
+            is_effect,
+            input_ctrl.clone(),
+            output_ctrl.clone(),
+        );
 
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
@@ -139,15 +143,14 @@ where
         // Must run BEFORE `editor.open()` below — the resize has to
         // settle before the editor's child window sizes itself.
         #[cfg(target_os = "windows")]
-        if is_effect {
-            if let RwhHandle::Win32(h) = window.raw_window_handle() {
-                crate::menu_windows::install(
-                    h.hwnd,
-                    P::info().name,
-                    input_ctrl.clone(),
-                    output_ctrl.clone(),
-                );
-            }
+        if let RwhHandle::Win32(h) = window.raw_window_handle() {
+            crate::menu_windows::install(
+                h.hwnd,
+                P::info().name,
+                is_effect,
+                input_ctrl.clone(),
+                output_ctrl.clone(),
+            );
         }
 
         let ctx = synthesize_editor_context::<P>(&plugin, &transport);
@@ -159,7 +162,7 @@ where
             pending,
             transport,
             input_ctrl,
-            _output_ctrl: output_ctrl,
+            output_ctrl,
             is_effect,
             octave_offset: 0,
             _midi_thread: midi_thread,
@@ -181,10 +184,9 @@ where
     /// Toggle handle for mic input (sends to the worker thread
     /// owning the cpal input stream).
     input_ctrl: InputController,
-    /// Output device handle. Held only for lifetime — the menu
-    /// owns runtime switching; no keyboard shortcuts dispatch
-    /// through it today.
-    _output_ctrl: OutputController,
+    /// Toggle / device-switch handle for the output. Cmd+O / Ctrl+O
+    /// dispatches mute through this; the menu owns device switching.
+    output_ctrl: OutputController,
     /// True only for effect plugins; gates the `I` keyboard
     /// shortcut.
     is_effect: bool,
@@ -258,6 +260,30 @@ where
                 );
                 return EventStatus::Captured;
             }
+        }
+
+        // Cmd+O (macOS) / Ctrl+O (Linux / Windows) → toggle audio
+        // output (mute / unmute). Bare `O` is reserved for the
+        // QWERTY note keyboard (C#4 by default), so a modifier is
+        // required.
+        //
+        // On macOS the NSMenuItem accelerator dispatches this
+        // before baseview sees the event, so the handler below is
+        // mainly a guard. On Windows / Linux it's the only path:
+        // Win32 menu accelerators need an HACCEL table that
+        // baseview doesn't expose. Capture both Down and Up so the
+        // note-handler below never sees a stray modifier+O Up that
+        // would emit a NoteOff for a note we never played.
+        if kb.code == Code::KeyO && is_mod_pressed(&kb.modifiers) {
+            if kb.state == KeyState::Down {
+                let want = !self.output_ctrl.is_enabled();
+                self.output_ctrl.set_enabled(want);
+                eprintln!(
+                    "[truce-standalone] output: {} (request)",
+                    if want { "ON" } else { "OFF" }
+                );
+            }
+            return EventStatus::Captured;
         }
 
         if kb.state == KeyState::Down {

@@ -3,24 +3,26 @@
 //! Builds an `NSMenu` with two top-level items: an autopopulated
 //! App menu (Quit / Hide / About) and a Plugin menu carrying:
 //!
-//! - **Mic Input** (toggle, ⌘I, checkmark when on)
-//! - **Input Device** submenu — lists cpal-visible inputs, click to switch
+//! - **Mic Input** (toggle, ⌘I, checkmark when on; effect plugins only)
+//! - **Audio Output** (toggle, ⌘O, checkmark when unmuted)
+//! - **Input Device** submenu — lists cpal-visible inputs (effects only)
 //! - **Output Device** submenu — same for outputs
 //!
 //! Installed via `NSApp.setMainMenu(...)`.
 //!
 //! Action wiring uses a custom `TruceMenuTarget` Objective-C
 //! class declared at runtime. The class has one ivar — a raw
-//! pointer to a `MenuState` heap-allocated by Rust — and three
-//! action selectors (`toggleInputAction:`, `selectInputDeviceAction:`,
-//! `selectOutputDeviceAction:`) that dereference the pointer and
-//! route the click to the matching `InputController` /
-//! `OutputController` method.
+//! pointer to a `MenuState` heap-allocated by Rust — and four
+//! action selectors (`toggleInputAction:`, `toggleOutputAction:`,
+//! `selectInputDeviceAction:`, `selectOutputDeviceAction:`) that
+//! dereference the pointer and route the click to the matching
+//! `InputController` / `OutputController` method.
 //!
-//! Menu state (the mic checkmark + the active-device checkmark in
-//! each device submenu) is refreshed on `menuWillOpen:`. Device
-//! submenus are also *repopulated* on each open from cpal's live
-//! device list, so hot-plug is reflected without restarting.
+//! Menu state (the mic + output checkmarks + the active-device
+//! checkmark in each device submenu) is refreshed on
+//! `menuWillOpen:`. Device submenus are also *repopulated* on each
+//! open from cpal's live device list, so hot-plug is reflected
+//! without restarting.
 
 #![cfg(all(target_os = "macos", feature = "gui"))]
 
@@ -38,8 +40,13 @@ struct MenuState {
     input: InputController,
     output: OutputController,
     /// Mic-toggle item — checkmark refreshed on Plugin-menu open.
+    /// Null for instrument plugins (item not added).
     mic_item: *mut Object,
+    /// Output mute-toggle item — checkmark refreshed on
+    /// Plugin-menu open.
+    output_item: *mut Object,
     /// Input device submenu — repopulated on open from cpal.
+    /// Null for instrument plugins (submenu not added).
     input_device_menu: *mut Object,
     /// Output device submenu — repopulated on open from cpal.
     output_device_menu: *mut Object,
@@ -48,7 +55,12 @@ struct MenuState {
     target: *mut Object,
 }
 
-pub fn install(app_name: &str, input: InputController, output: OutputController) {
+/// Install the native menu bar.
+///
+/// `is_effect` controls whether mic-input and input-device items
+/// appear — input-side controls are useless for instruments and
+/// analyzers since the runner feeds them silence.
+pub fn install(app_name: &str, is_effect: bool, input: InputController, output: OutputController) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
 
@@ -63,21 +75,37 @@ pub fn install(app_name: &str, input: InputController, output: OutputController)
         let plugin_menu = make_menu("Plugin");
         let target = make_menu_target(input.clone(), output.clone());
 
-        // Mic toggle (⌘I).
-        let mic_item = make_toggle_item("Mic Input", "i", target);
-        let _: () = msg_send![plugin_menu, addItem: mic_item];
+        // Mic toggle (⌘I) — only meaningful for effects.
+        let mic_item = if is_effect {
+            let item = make_toggle_item("Mic Input", "i", sel!(toggleInputAction:), target);
+            let _: () = msg_send![plugin_menu, addItem: item];
+            item
+        } else {
+            std::ptr::null_mut()
+        };
+
+        // Output toggle (⌘O) — applies to every plugin category.
+        let output_item = make_toggle_item("Audio Output", "o", sel!(toggleOutputAction:), target);
+        let _: () = msg_send![plugin_menu, addItem: output_item];
 
         // Separator before device pickers.
         let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![plugin_menu, addItem: sep];
 
-        // Input device submenu — empty at install; repopulated on open.
-        let input_dev_item = make_menu_item("Input Device");
-        let input_dev_menu = make_menu("Input Device");
-        let _: () = msg_send![input_dev_item, setSubmenu: input_dev_menu];
-        let _: () = msg_send![plugin_menu, addItem: input_dev_item];
+        // Input device submenu — only useful for effects (instrument
+        // runners don't read from the input ring). Empty at install;
+        // repopulated on open.
+        let input_dev_menu = if is_effect {
+            let input_dev_item = make_menu_item("Input Device");
+            let menu = make_menu("Input Device");
+            let _: () = msg_send![input_dev_item, setSubmenu: menu];
+            let _: () = msg_send![plugin_menu, addItem: input_dev_item];
+            menu
+        } else {
+            std::ptr::null_mut()
+        };
 
-        // Output device submenu — same.
+        // Output device submenu — every plugin needs this.
         let output_dev_item = make_menu_item("Output Device");
         let output_dev_menu = make_menu("Output Device");
         let _: () = msg_send![output_dev_item, setSubmenu: output_dev_menu];
@@ -85,12 +113,23 @@ pub fn install(app_name: &str, input: InputController, output: OutputController)
 
         // Stash pointers in MenuState so menu-open delegates can
         // address the right submenu.
-        update_menu_state(target, mic_item, input_dev_menu, output_dev_menu, target);
+        update_menu_state(
+            target,
+            mic_item,
+            output_item,
+            input_dev_menu,
+            output_dev_menu,
+            target,
+        );
 
-        // Wire menuWillOpen on the Plugin menu (mic checkmark) and
-        // both device submenus (repopulate + checkmark).
+        // Wire menuWillOpen on the Plugin menu (toggle checkmarks)
+        // and both device submenus (repopulate + checkmark). Input
+        // submenu may be null for instruments — only delegate if
+        // we actually built it.
         let _: () = msg_send![plugin_menu, setDelegate: target];
-        let _: () = msg_send![input_dev_menu, setDelegate: target];
+        if !input_dev_menu.is_null() {
+            let _: () = msg_send![input_dev_menu, setDelegate: target];
+        }
         let _: () = msg_send![output_dev_menu, setDelegate: target];
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
@@ -123,14 +162,19 @@ unsafe fn make_menu_item(title: &str) -> *mut Object {
     item
 }
 
-unsafe fn make_toggle_item(title: &str, key_equiv: &str, target: *mut Object) -> *mut Object {
+unsafe fn make_toggle_item(
+    title: &str,
+    key_equiv: &str,
+    action: Sel,
+    target: *mut Object,
+) -> *mut Object {
     let title = ns_string(title);
     let key = ns_string(key_equiv);
     let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
     let item: *mut Object = msg_send![
         item,
         initWithTitle: title
-        action: sel!(toggleInputAction:)
+        action: action
         keyEquivalent: key
     ];
     let _: () = msg_send![item, setTarget: target];
@@ -267,6 +311,27 @@ fn ensure_class() -> &'static Class {
             toggle_input_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
+        // Output mute toggle.
+        extern "C" fn toggle_output_action(this: &Object, _: Sel, _sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let want = !state.output.is_enabled();
+                state.output.set_enabled(want);
+                eprintln!(
+                    "[truce-standalone] output: {} (request, via menu)",
+                    if want { "ON" } else { "OFF" }
+                );
+                let new_state: BOOL = if want { YES } else { NO };
+                let _: () = msg_send![_sender, setState: new_state as i64];
+            }
+        }
+        decl.add_method(
+            sel!(toggleOutputAction:),
+            toggle_output_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
         // Input device chosen.
         extern "C" fn select_input_device_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
@@ -311,7 +376,7 @@ fn ensure_class() -> &'static Class {
                     return;
                 };
 
-                if menu == state.input_device_menu {
+                if !state.input_device_menu.is_null() && menu == state.input_device_menu {
                     let (_, names) = audio::list_input_devices();
                     let current = state.input.current_name();
                     populate_device_menu(
@@ -337,12 +402,17 @@ fn ensure_class() -> &'static Class {
                     return;
                 }
 
-                // Plugin menu (any other we delegate) — refresh
-                // mic checkmark.
+                // Plugin menu (any other we delegate) — refresh the
+                // toggle checkmarks.
                 if !state.mic_item.is_null() {
                     let on = state.input.is_enabled();
                     let new_state: BOOL = if on { YES } else { NO };
                     let _: () = msg_send![state.mic_item, setState: new_state as i64];
+                }
+                if !state.output_item.is_null() {
+                    let on = state.output.is_enabled();
+                    let new_state: BOOL = if on { YES } else { NO };
+                    let _: () = msg_send![state.output_item, setState: new_state as i64];
                 }
             }
         }
@@ -381,6 +451,7 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
         input,
         output,
         mic_item: std::ptr::null_mut(),
+        output_item: std::ptr::null_mut(),
         input_device_menu: std::ptr::null_mut(),
         output_device_menu: std::ptr::null_mut(),
         target: std::ptr::null_mut(),
@@ -392,6 +463,7 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
 unsafe fn update_menu_state(
     target: *mut Object,
     mic_item: *mut Object,
+    output_item: *mut Object,
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
     target_self: *mut Object,
@@ -402,6 +474,7 @@ unsafe fn update_menu_state(
     }
     let state = &mut *(state_ptr as *mut MenuState);
     state.mic_item = mic_item;
+    state.output_item = output_item;
     state.input_device_menu = input_device_menu;
     state.output_device_menu = output_device_menu;
     state.target = target_self;

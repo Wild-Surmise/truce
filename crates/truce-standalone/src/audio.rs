@@ -7,7 +7,10 @@
 //! `Send + Sync` controllers (`InputController`, `OutputController`)
 //! that talk to the workers via `mpsc` channels:
 //!
-//! - **Toggle / enable** for input.
+//! - **Toggle / enable** for input (drop the cpal input stream when
+//!   off — saves CPU and skips the OS mic permission prompt) and
+//!   output (mute — keep the stream open so processing keeps ticking,
+//!   just zero-fill the speaker buffer).
 //! - **Switch device** for either side. Worker drops the old stream
 //!   and opens a new one against the requested device name; on
 //!   failure the previous device's name remains in place and the
@@ -131,6 +134,10 @@ impl InputController {
 /// UI thread. Cloneable; clones share the worker.
 #[derive(Clone)]
 pub struct OutputController {
+    /// Audio callback reads this every block to decide whether to
+    /// zero-fill the output buffer (mute). Worker thread (and direct
+    /// callers via `set_enabled`) update it.
+    pub enabled: Arc<AtomicBool>,
     cmd_tx: mpsc::Sender<OutputCmd>,
     current_name: Arc<Mutex<Option<String>>>,
 }
@@ -140,6 +147,20 @@ enum OutputCmd {
 }
 
 impl OutputController {
+    /// Mute / unmute the output. The cpal stream stays open either
+    /// way — disabling just makes the audio callback zero-fill its
+    /// buffer, so the plugin keeps processing (transport ticks,
+    /// MIDI is consumed) while the speakers are silent.
+    pub fn set_enabled(&self, on: bool) {
+        self.enabled.store(on, Ordering::Relaxed);
+    }
+
+    /// Read the current mute state. Source of truth for the audio
+    /// callback's zero-fill decision.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
     /// Switch the output device by name. Pass `None` to fall back
     /// to the system default. Failure to open is logged but
     /// non-fatal — the previous stream remains running.
@@ -340,7 +361,13 @@ pub fn start_audio<P: PluginExport>(
     let (output_cmd_tx, output_cmd_rx) = mpsc::channel::<OutputCmd>();
     let (open_result_tx, open_result_rx) = mpsc::channel::<Result<(), String>>();
 
+    // Output defaults to enabled — the user launched standalone to
+    // hear the plugin. `--output-enabled off` (or the config file)
+    // can flip the launch state.
+    let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
+
     let output_controller = OutputController {
+        enabled: Arc::clone(&output_enabled),
         cmd_tx: output_cmd_tx,
         current_name: Arc::clone(&output_current_name),
     };
@@ -350,6 +377,7 @@ pub fn start_audio<P: PluginExport>(
         pending: Arc::clone(&pending),
         input_ring: Arc::clone(&input_ring),
         input_enabled: Arc::clone(&input_enabled),
+        output_enabled: Arc::clone(&output_enabled),
         transport: transport.clone(),
         current_name: Arc::clone(&output_current_name),
     };
@@ -381,6 +409,13 @@ pub fn start_audio<P: PluginExport>(
         Err(e) => return Err(format!("output worker exited before reporting: {e}").into()),
     }
 
+    if !output_enabled.load(Ordering::Relaxed) {
+        eprintln!(
+            "Output: muted at launch — toggle from the Plugin menu or \
+             pass --output-enabled on"
+        );
+    }
+
     Ok(AudioHandles {
         pending,
         plugin,
@@ -405,6 +440,9 @@ struct OutputResources<P: PluginExport> {
     pending: Arc<Mutex<Vec<MidiEvent>>>,
     input_ring: Arc<Mutex<Vec<f32>>>,
     input_enabled: Arc<AtomicBool>,
+    /// Drives the audio callback's mute / unmute decision (UI thread
+    /// flips it via `OutputController::set_enabled`).
+    output_enabled: Arc<AtomicBool>,
     transport: Transport,
     current_name: Arc<Mutex<Option<String>>>,
 }
@@ -487,6 +525,7 @@ fn open_output_stream<P: PluginExport>(
     let pending_a = Arc::clone(&res.pending);
     let ring_a = Arc::clone(&res.input_ring);
     let enabled_a = Arc::clone(&res.input_enabled);
+    let out_enabled_a = Arc::clone(&res.output_enabled);
     let transport_a = res.transport.clone();
 
     let stream = match sample_format {
@@ -503,6 +542,7 @@ fn open_output_stream<P: PluginExport>(
                         &pending_a,
                         &ring_a,
                         &enabled_a,
+                        &out_enabled_a,
                         &transport_a,
                     );
                 },
@@ -764,6 +804,7 @@ fn audio_callback<P: PluginExport>(
     pending: &Arc<Mutex<Vec<MidiEvent>>>,
     input_ring: &Arc<Mutex<Vec<f32>>>,
     input_enabled: &Arc<AtomicBool>,
+    output_enabled: &Arc<AtomicBool>,
     transport: &Transport,
 ) {
     let num_frames = data.len() / channels;
@@ -823,6 +864,15 @@ fn audio_callback<P: PluginExport>(
         ProcessContext::new(&transport_info, sample_rate, num_frames, &mut output_events);
 
     plugin.process(&mut audio_buffer, &event_list, &mut context);
+
+    // Output mute: keep the plugin running (transport, MIDI, meters
+    // all still tick) but zero-fill the device buffer so the
+    // speakers stay silent. Cheaper and more responsive than
+    // tearing down the cpal stream.
+    if !output_enabled.load(Ordering::Relaxed) {
+        data.fill(0.0);
+        return;
+    }
 
     for frame in 0..num_frames {
         for ch in 0..channels {

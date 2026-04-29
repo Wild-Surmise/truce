@@ -3,8 +3,11 @@
 //! Builds a Win32 `HMENU` with one top-level "Plugin" popup
 //! containing:
 //!
-//! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint)
+//! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
+//!   effect plugins only)
+//! - **Audio Output** (checkable mute toggle, `Ctrl+O`)
 //! - **Input Device** submenu — repopulated from cpal on each open
+//!   (effect plugins only)
 //! - **Output Device** submenu — same for outputs
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
@@ -49,6 +52,8 @@ use crate::audio::{self, InputController, OutputController};
 
 /// Command ID for the mic-input toggle.
 const MENU_CMD_MIC: u16 = 0xC001;
+/// Command ID for the output (mute) toggle.
+const MENU_CMD_OUTPUT: u16 = 0xC002;
 
 /// Reserved command-ID ranges for dynamically-built device items.
 /// 256 slots per side is more than any sane system would expose.
@@ -65,15 +70,26 @@ struct MenuState {
     input: InputController,
     output: OutputController,
     /// The Plugin popup itself — needed for `CheckMenuItem` on the
-    /// mic toggle (whose command lives in the Plugin popup).
+    /// toggles (whose commands live in the Plugin popup).
     hmenu_plugin: HMENU,
+    /// True if the mic-input item is in the menu (effect plugins
+    /// only). Gates `WM_COMMAND` dispatch and skips the
+    /// checkmark refresh on `WM_INITMENUPOPUP` for instruments.
+    has_mic_item: bool,
+    /// `null` for instrument plugins (input device picker not built).
     hmenu_input_devices: HMENU,
     hmenu_output_devices: HMENU,
 }
 
+/// Install the native menu bar.
+///
+/// `is_effect` controls whether mic-input and input-device items
+/// appear — input-side controls are useless for instruments and
+/// analyzers since the runner feeds them silence.
 pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
+    is_effect: bool,
     input: InputController,
     output: OutputController,
 ) {
@@ -85,26 +101,44 @@ pub fn install(
     unsafe {
         let menu_bar = CreateMenu();
         let plugin_menu = CreatePopupMenu();
-        let input_dev_menu = CreatePopupMenu();
         let output_dev_menu = CreatePopupMenu();
-        if menu_bar.is_null()
-            || plugin_menu.is_null()
-            || input_dev_menu.is_null()
-            || output_dev_menu.is_null()
-        {
+        if menu_bar.is_null() || plugin_menu.is_null() || output_dev_menu.is_null() {
             return;
         }
 
-        // Mic-input item. `\t` separates the label from the
-        // accelerator hint; Windows right-aligns the hint in the
-        // popup. The hint is cosmetic — actual `Ctrl+I` dispatch
-        // happens in the baseview keyboard handler.
-        let item_text = wide("Mic Input\tCtrl+I");
+        let input_dev_menu = if is_effect {
+            let m = CreatePopupMenu();
+            if m.is_null() {
+                return;
+            }
+            m
+        } else {
+            std::ptr::null_mut()
+        };
+
+        // Mic-input item (effects only). `\t` separates the label
+        // from the accelerator hint; Windows right-aligns the hint
+        // in the popup. The hint is cosmetic — actual `Ctrl+I`
+        // dispatch happens in the baseview keyboard handler.
+        if is_effect {
+            let item_text = wide("Mic Input\tCtrl+I");
+            AppendMenuW(
+                plugin_menu,
+                MF_STRING,
+                MENU_CMD_MIC as usize,
+                item_text.as_ptr(),
+            );
+        }
+
+        // Audio output mute toggle. Applies to every plugin
+        // category. Initial state checkmark is set after install
+        // via WM_INITMENUPOPUP.
+        let output_text = wide("Audio Output\tCtrl+O");
         AppendMenuW(
             plugin_menu,
             MF_STRING,
-            MENU_CMD_MIC as usize,
-            item_text.as_ptr(),
+            MENU_CMD_OUTPUT as usize,
+            output_text.as_ptr(),
         );
 
         // Separator before the device pickers.
@@ -116,14 +150,16 @@ pub fn install(
         );
 
         // Input Device submenu — empty at install; repopulated on
-        // WM_INITMENUPOPUP so hot-plug just works.
-        let input_label = wide("Input Device");
-        AppendMenuW(
-            plugin_menu,
-            MF_POPUP,
-            input_dev_menu as usize,
-            input_label.as_ptr(),
-        );
+        // WM_INITMENUPOPUP so hot-plug just works. Effects only.
+        if is_effect {
+            let input_label = wide("Input Device");
+            AppendMenuW(
+                plugin_menu,
+                MF_POPUP,
+                input_dev_menu as usize,
+                input_label.as_ptr(),
+            );
+        }
 
         // Output Device submenu.
         let output_label = wide("Output Device");
@@ -156,6 +192,7 @@ pub fn install(
             input,
             output,
             hmenu_plugin: plugin_menu,
+            has_mic_item: is_effect,
             hmenu_input_devices: input_dev_menu,
             hmenu_output_devices: output_dev_menu,
         }));
@@ -207,7 +244,7 @@ unsafe extern "system" fn subclass_proc(
             let state = &*state_ptr;
             let cmd_id = (wparam & 0xFFFF) as u16;
 
-            if cmd_id == MENU_CMD_MIC {
+            if cmd_id == MENU_CMD_MIC && state.has_mic_item {
                 let want = !state.input.is_enabled();
                 state.input.set_enabled(want);
                 eprintln!(
@@ -219,7 +256,25 @@ unsafe extern "system" fn subclass_proc(
                 return 0;
             }
 
-            if (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id) {
+            if cmd_id == MENU_CMD_OUTPUT {
+                let want = !state.output.is_enabled();
+                state.output.set_enabled(want);
+                eprintln!(
+                    "[truce-standalone] output: {} (request, via menu)",
+                    if want { "ON" } else { "OFF" }
+                );
+                let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
+                CheckMenuItem(
+                    state.hmenu_plugin,
+                    MENU_CMD_OUTPUT as u32,
+                    MF_BYCOMMAND | flag,
+                );
+                return 0;
+            }
+
+            if !state.hmenu_input_devices.is_null()
+                && (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id)
+            {
                 if let Some(name) = get_menu_string(state.hmenu_input_devices, cmd_id as u32) {
                     eprintln!("[truce-standalone] input device: {name}");
                     state.input.set_device(Some(name));
@@ -242,7 +297,7 @@ unsafe extern "system" fn subclass_proc(
             let state = &*state_ptr;
             let popup = wparam as HMENU;
 
-            if popup == state.hmenu_input_devices {
+            if !state.hmenu_input_devices.is_null() && popup == state.hmenu_input_devices {
                 let (_, names) = audio::list_input_devices();
                 let current = state.input.current_name();
                 repopulate_device_menu(
@@ -261,9 +316,18 @@ unsafe extern "system" fn subclass_proc(
                     MENU_CMD_OUTPUT_DEVICE_BASE,
                 );
             } else if popup == state.hmenu_plugin {
-                let on = state.input.is_enabled();
-                let flag = if on { MF_CHECKED } else { MF_UNCHECKED };
-                CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                if state.has_mic_item {
+                    let on = state.input.is_enabled();
+                    let flag = if on { MF_CHECKED } else { MF_UNCHECKED };
+                    CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                }
+                let out_on = state.output.is_enabled();
+                let out_flag = if out_on { MF_CHECKED } else { MF_UNCHECKED };
+                CheckMenuItem(
+                    state.hmenu_plugin,
+                    MENU_CMD_OUTPUT as u32,
+                    MF_BYCOMMAND | out_flag,
+                );
             }
         }
         WM_NCDESTROY => {
