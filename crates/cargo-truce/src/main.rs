@@ -41,7 +41,7 @@ fn main() -> ExitCode {
 
         // Build/install commands — forwarded to the engine in lib.rs.
         "install" | "build" | "package" | "remove" | "run" | "screenshot" | "test" | "status"
-        | "clean" | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
+        | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
             cargo_truce::run(&args)
         }
 
@@ -216,14 +216,6 @@ Validation / Inspection:
       Check development environment and installed plugins.
 
 Maintenance:
-  clean [--all]
-      Run `cargo clean` while preserving `target/dist/` (signed /
-      notarized installers — expensive to rebuild). Pass `--all` to
-      wipe everything, equivalent to a bare `cargo clean`. Does not
-      touch installed plugin bundles or AU / AAX host caches — see
-      `remove`, `reset-au`, and `reset-aax` for those.
-      --all        Also remove `target/dist/`
-
   reset-au [--yes]
       macOS-only. Flush Audio Unit caches and restart `pkd` /
       `AudioComponentRegistrar`. Use when AU bundles are stuck

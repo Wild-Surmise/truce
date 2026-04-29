@@ -62,7 +62,6 @@ cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windo
                                  # → target/dist/<Plugin>-<version>-<platform>.{pkg,exe}
 cargo truce package -p my-plugin --formats clap,vst3,aax   # subset
 cargo truce package --no-sign                              # dev builds, skip signing
-cargo truce clean                # cargo clean, preserving target/dist/ installers
 ```
 
 Scaffolded plugins default to **CLAP + VST3 + standalone**. VST2, AU, and AAX are
