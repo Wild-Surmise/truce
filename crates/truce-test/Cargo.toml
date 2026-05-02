@@ -20,3 +20,6 @@ default = []
 # tests which only touch render / state / params / GUI snapshots don't
 # need.
 in-process = ["dep:truce-standalone"]
+
+[lints]
+workspace = true

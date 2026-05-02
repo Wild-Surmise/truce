@@ -48,3 +48,6 @@ slint-build = "=1.15.1"
 
 [dev-dependencies]
 truce-test = { workspace = true }
+
+[lints]
+workspace = true

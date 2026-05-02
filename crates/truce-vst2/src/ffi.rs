@@ -78,7 +78,7 @@ pub struct Vst2Callbacks {
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
-extern "C" {
+unsafe extern "C" {
     pub fn truce_vst2_register(
         descriptor: *const Vst2PluginDescriptor,
         callbacks: *const Vst2Callbacks,

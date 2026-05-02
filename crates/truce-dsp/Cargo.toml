@@ -7,3 +7,6 @@ rust-version.workspace = true
 description = "Realtime-safe DSP utilities for truce plugins (ring buffers, lock-free taps, …)"
 
 [dependencies]
+
+[lints]
+workspace = true

@@ -110,7 +110,7 @@ macro_rules! __plugin_impl {
         /// `name_ptr` must point to `name_len` valid UTF-8 bytes.
         /// `out_buf` must be writable for at least `out_cap` bytes.
         #[doc(hidden)]
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __truce_screenshot(
             name_ptr: *const u8,
             name_len: usize,
@@ -138,7 +138,7 @@ macro_rules! __plugin_impl {
         // `truce::plugin!` invocation site. Per-item `#[allow]`
         // doesn't suppress it because the lint is attributed to the
         // macro invocation, not the cfg attribute. Symbols emitted
-        // inside this module are still `#[no_mangle] extern "C"` so
+        // inside this module are still `#[unsafe(no_mangle)] extern "C"` so
         // they're visible to host loaders regardless of module scope.
         #[allow(unexpected_cfgs)]
         mod __truce_format_exports {

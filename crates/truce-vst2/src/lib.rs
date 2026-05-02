@@ -41,7 +41,7 @@ struct Vst2Instance<P: PluginExport> {
     transport_slot: Arc<truce_core::TransportSlot>,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn truce_vst2_host_begin_edit(effect: *mut std::ffi::c_void, param_id: u32);
     fn truce_vst2_host_automate(effect: *mut std::ffi::c_void, param_id: u32, normalized: f32);
     fn truce_vst2_host_end_edit(effect: *mut std::ffi::c_void, param_id: u32);
@@ -624,9 +624,9 @@ macro_rules! export_vst2 {
             // VSTPluginMain (in vst2_shim.c) checks g_vst2_callbacks
             // so registration must happen before the host calls it.
             #[used]
-            #[cfg_attr(target_os = "linux", link_section = ".init_array")]
-            #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
-            #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
+            #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+            #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+            #[cfg_attr(target_os = "windows", unsafe(link_section = ".CRT$XCU"))]
             static INIT: extern "C" fn() = {
                 extern "C" fn init() {
                     ::truce_vst2::register_vst2::<$plugin_type>();

@@ -127,7 +127,7 @@ pub struct Vst3Callbacks {
     pub gui_set_content_scale: unsafe extern "C" fn(ctx: *mut c_void, scale: f64),
 }
 
-extern "C" {
+unsafe extern "C" {
     /// Register the plugin with the VST3 shim.
     pub fn truce_vst3_register(
         descriptor: *const Vst3PluginDescriptor,

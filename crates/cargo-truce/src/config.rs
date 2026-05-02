@@ -352,7 +352,7 @@ pub(crate) fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
     } else {
         (&config.macos.aax_sdk_path, "[macos].aax_sdk_path")
     };
-    if let Some(ref p) = toml_path.0 {
+    if let Some(p) = toml_path.0 {
         let path = PathBuf::from(p);
         if path.exists() {
             return Some(path);

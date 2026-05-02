@@ -416,7 +416,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // by the next gui_open call.
 }
 
-extern "C" {
+unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
@@ -536,20 +536,20 @@ macro_rules! export_au {
             use super::*;
 
             /// Called by the constructor to init the plugin.
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" fn truce_au_init() {
                 ::truce_au::register_au::<$plugin_type>();
             }
 
             // AU v2 factory — delegates to au_v2_shim.c if compiled,
             // otherwise the weak stub in au_shim_common.c returns NULL.
-            extern "C" {
+            unsafe extern "C" {
                 fn truce_au_v2_factory_bridge(
                     desc: *const ::std::ffi::c_void,
                 ) -> *mut ::std::ffi::c_void;
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn TruceAUFactory(
                 desc: *const ::std::ffi::c_void,
             ) -> *mut ::std::ffi::c_void {

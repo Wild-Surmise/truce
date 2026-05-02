@@ -112,7 +112,12 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         // Bake the logic profile into the shell binary via truce-build
         // → `cargo:rustc-env=TRUCE_LOGIC_PROFILE=...`. The shell's
         // runtime dylib lookup uses option_env! to read it.
-        std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
+        // 2024-edition: `set_var` is unsafe (process-wide env state).
+        // Single-threaded build path here, so no race; main thread is
+        // the only writer.
+        unsafe {
+            std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
+        }
     } else {
         crate::set_debug_profile(debug);
     }

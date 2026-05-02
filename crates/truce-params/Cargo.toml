@@ -8,3 +8,6 @@ description = "Parameter system for the truce framework"
 
 [dependencies]
 bitflags = "2"
+
+[lints]
+workspace = true

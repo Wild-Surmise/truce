@@ -568,7 +568,7 @@ macro_rules! export_lv2 {
                 ::truce_lv2::extension_data::<$plugin_type>(uri)
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" fn lv2_descriptor(index: u32) -> *const LV2Descriptor {
                 if index == 0 {
                     get_descriptor() as *const LV2Descriptor
@@ -593,7 +593,7 @@ macro_rules! export_lv2 {
                 })
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" fn lv2ui_descriptor(index: u32) -> *const Lv2UiDescriptor {
                 if index == 0 {
                     get_ui_descriptor() as *const Lv2UiDescriptor
@@ -607,7 +607,7 @@ macro_rules! export_lv2 {
             /// and `plugin.ttl` describing this plugin's ports and parameters.
             ///
             /// Returns 0 on success, nonzero on failure.
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" fn __truce_lv2_emit_bundle(
                 bundle_dir: *const c_char,
                 so_filename: *const c_char,

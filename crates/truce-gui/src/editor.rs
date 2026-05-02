@@ -871,7 +871,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // for why this matters on AAX.
         #[cfg(target_os = "macos")]
         let pool = unsafe {
-            extern "C" {
+            unsafe extern "C" {
                 fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
             }
             objc_autoreleasePoolPush()
@@ -894,7 +894,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
         #[cfg(target_os = "macos")]
         unsafe {
-            extern "C" {
+            unsafe extern "C" {
                 fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
             }
             objc_autoreleasePoolPop(pool);

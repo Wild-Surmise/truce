@@ -1695,7 +1695,7 @@ macro_rules! export_clap {
                 }
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_upper_case_globals)]
             pub static clap_entry: clap_plugin_entry = clap_plugin_entry {
                 clap_version: CLAP_VERSION,

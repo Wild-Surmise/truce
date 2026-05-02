@@ -10,3 +10,6 @@ description = "CLAP format wrapper for truce"
 truce-core = { workspace = true }
 truce-params = { workspace = true }
 clap-sys = "0.5"
+
+[lints]
+workspace = true

@@ -21,3 +21,6 @@ raw-window-handle = "0.5"
 [features]
 default = []
 hot-debug = []
+
+[lints]
+workspace = true

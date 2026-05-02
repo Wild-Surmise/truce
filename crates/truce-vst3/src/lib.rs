@@ -414,7 +414,7 @@ unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
     }
 }
 
-extern "C" {
+unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
 }
@@ -750,12 +750,12 @@ macro_rules! export_vst3 {
         mod _vst3_entry {
             use super::*;
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" fn truce_vst3_init() {
                 ::truce_vst3::register_vst3::<$plugin_type>();
             }
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub unsafe extern "C" fn GetPluginFactory() -> *mut ::std::ffi::c_void {
                 // Lazy init: register on first call
@@ -767,54 +767,54 @@ macro_rules! export_vst3 {
             }
 
             #[cfg(target_os = "macos")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn BundleEntry(_: *mut ::std::ffi::c_void) -> bool {
                 true
             }
 
             #[cfg(target_os = "macos")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "system" fn bundleEntry(_: *mut ::std::ffi::c_void) -> bool {
                 true
             }
 
             #[cfg(target_os = "macos")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn BundleExit() -> bool {
                 true
             }
 
             #[cfg(target_os = "macos")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "system" fn bundleExit() -> bool {
                 true
             }
 
             #[cfg(target_os = "linux")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn ModuleEntry(_: *mut ::std::ffi::c_void) -> bool {
                 true
             }
 
             #[cfg(target_os = "linux")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn ModuleExit() -> bool {
                 true
             }
 
             #[cfg(target_os = "windows")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn InitDll() -> bool {
                 true
             }
 
             #[cfg(target_os = "windows")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
             pub extern "system" fn ExitDll() -> bool {
                 true

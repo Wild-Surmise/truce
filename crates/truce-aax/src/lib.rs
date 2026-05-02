@@ -296,9 +296,9 @@ macro_rules! export_aax {
 
             // Force registration on library load
             #[used]
-            #[cfg_attr(target_os = "linux", link_section = ".init_array")]
-            #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
-            #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
+            #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+            #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+            #[cfg_attr(target_os = "windows", unsafe(link_section = ".CRT$XCU"))]
             static INIT: extern "C" fn() = {
                 extern "C" fn init() {
                     ::truce_aax::register_aax::<$plugin_type>();
@@ -306,28 +306,28 @@ macro_rules! export_aax {
                 init
             };
 
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_descriptor(
                 out: *mut ::truce_aax::TruceAaxDescriptor,
             ) {
                 ::truce_aax::_get_descriptor(out);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_param_info(
                 index: u32,
                 out: *mut ::truce_aax::TruceAaxParamInfo,
             ) {
                 ::truce_aax::_get_param_info(index, out);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_create() -> *mut ::std::ffi::c_void {
                 ::truce_aax::_create::<$plugin_type>()
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_destroy(ctx: *mut ::std::ffi::c_void) {
                 ::truce_aax::_destroy::<$plugin_type>(ctx);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_reset(
                 ctx: *mut ::std::ffi::c_void,
                 sample_rate: f64,
@@ -335,7 +335,7 @@ macro_rules! export_aax {
             ) {
                 ::truce_aax::_reset::<$plugin_type>(ctx, sample_rate, max_frames);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_process(
                 ctx: *mut ::std::ffi::c_void,
                 inputs: *const *const f32,
@@ -352,14 +352,14 @@ macro_rules! export_aax {
                     transport,
                 );
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_param(
                 ctx: *mut ::std::ffi::c_void,
                 id: u32,
             ) -> f64 {
                 ::truce_aax::_get_param::<$plugin_type>(ctx, id)
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_set_param(
                 ctx: *mut ::std::ffi::c_void,
                 id: u32,
@@ -367,7 +367,7 @@ macro_rules! export_aax {
             ) {
                 ::truce_aax::_set_param::<$plugin_type>(ctx, id, value);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_format_param(
                 ctx: *mut ::std::ffi::c_void,
                 id: u32,
@@ -377,14 +377,14 @@ macro_rules! export_aax {
             ) {
                 ::truce_aax::_format_param::<$plugin_type>(ctx, id, value, out, out_len);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_save_state(
                 ctx: *mut ::std::ffi::c_void,
                 out_data: *mut *mut u8,
             ) -> u32 {
                 ::truce_aax::_save_state::<$plugin_type>(ctx, out_data)
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_load_state(
                 ctx: *mut ::std::ffi::c_void,
                 data: *const u8,
@@ -392,18 +392,18 @@ macro_rules! export_aax {
             ) {
                 ::truce_aax::_load_state::<$plugin_type>(ctx, data, len);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_free_state(data: *mut u8, len: u32) {
                 ::truce_aax::_free_state(data, len);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_create(
                 ctx: *mut ::std::ffi::c_void,
                 out: *mut ::truce_aax::TruceAaxEditorInfo,
             ) {
                 ::truce_aax::_editor_create::<$plugin_type>(ctx, out);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_open(
                 ctx: *mut ::std::ffi::c_void,
                 parent_view: *mut ::std::ffi::c_void,
@@ -412,15 +412,15 @@ macro_rules! export_aax {
             ) {
                 ::truce_aax::_editor_open::<$plugin_type>(ctx, parent_view, platform, callbacks);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_close(ctx: *mut ::std::ffi::c_void) {
                 ::truce_aax::_editor_close::<$plugin_type>(ctx);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_idle(ctx: *mut ::std::ffi::c_void) {
                 ::truce_aax::_editor_idle::<$plugin_type>(ctx);
             }
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_get_size(
                 ctx: *mut ::std::ffi::c_void,
                 w: *mut u32,

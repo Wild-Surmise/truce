@@ -41,3 +41,6 @@ optional = true
 [dependencies.truce-lv2]
 workspace = true
 optional = true
+
+[lints]
+workspace = true

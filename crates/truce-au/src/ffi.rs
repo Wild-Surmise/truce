@@ -150,7 +150,7 @@ pub struct AuTransportSnapshot {
 }
 
 // Functions implemented in the ObjC shim, called from Rust.
-extern "C" {
+unsafe extern "C" {
     /// Register the plugin with the AU system. Called once at load time.
     /// The descriptor and callbacks must remain valid for the lifetime of the process.
     pub fn truce_au_register(

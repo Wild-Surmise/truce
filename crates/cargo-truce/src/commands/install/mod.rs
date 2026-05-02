@@ -188,7 +188,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         // shell binary as a compile-time constant. The shell's runtime
         // dylib_path() lookup uses `option_env!("TRUCE_LOGIC_PROFILE")`
         // to know which target subdir holds the logic dylib.
-        std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
+        // 2024-edition: `set_var` is unsafe (process-wide env state).
+        // Single-threaded install path; main thread is the only writer.
+        unsafe {
+            std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
+        }
     }
 
     // --- Build ---

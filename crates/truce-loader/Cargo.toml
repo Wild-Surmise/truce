@@ -28,3 +28,6 @@ truce-derive = { workspace = true }
 default = []
 shell = ["dep:libloading", "dep:parking_lot"]
 hot-debug = ["truce-gpu/hot-debug"]
+
+[lints]
+workspace = true

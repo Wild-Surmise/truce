@@ -3,7 +3,7 @@
 //! Split your plugin into a static shell (loaded by the DAW) and a
 //! hot-reloadable logic dylib (reloads on recompile). The developer
 //! implements [`PluginLogic`] — a safe Rust trait — and exports it
-//! via `#[no_mangle]` functions. The shell loads the dylib, verifies
+//! via `#[unsafe(no_mangle)]` functions. The shell loads the dylib, verifies
 //! ABI compatibility, and delegates audio processing + GUI rendering
 //! to the trait object.
 //!
@@ -15,13 +15,13 @@
 //! struct MyPlugin { /* ... */ }
 //! impl PluginLogic for MyPlugin { /* ... */ }
 //!
-//! #[no_mangle]
+//! #[unsafe(no_mangle)]
 //! pub fn truce_create() -> Box<dyn PluginLogic> { Box::new(MyPlugin::new()) }
 //!
-//! #[no_mangle]
+//! #[unsafe(no_mangle)]
 //! pub fn truce_abi_canary() -> AbiCanary { AbiCanary::current() }
 //!
-//! #[no_mangle]
+//! #[unsafe(no_mangle)]
 //! pub fn truce_vtable_probe() -> Box<dyn PluginLogic> { Box::new(ProbePlugin) }
 //! ```
 
@@ -47,14 +47,14 @@ pub use traits::*;
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
 
-/// Export the `#[no_mangle]` functions required by the shell.
+/// Export the `#[unsafe(no_mangle)]` functions required by the shell.
 ///
 /// `params_ptr` is a raw `Arc<Params>` pointer from the shell.
 /// The plugin receives shared params — one copy, no sync.
 #[macro_export]
 macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic> {
             let params: Arc<$params> = unsafe {
                 Arc::increment_strong_count(params_ptr as *const $params);
@@ -63,12 +63,12 @@ macro_rules! export_plugin {
             Box::new(<$logic>::new(params))
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub fn truce_abi_canary() -> $crate::AbiCanary {
             $crate::AbiCanary::current()
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic> {
             Box::new($crate::ProbePlugin)
         }

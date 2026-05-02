@@ -1,7 +1,7 @@
 [package]
 name = "cargo-truce"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Build tool for truce audio plugins"
 repository = "https://github.com/truce-audio/truce"
@@ -26,3 +26,6 @@ version = "0.9"
 
 [dev-dependencies]
 hound = "3"
+
+[lints]
+workspace = true

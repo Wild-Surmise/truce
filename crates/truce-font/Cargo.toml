@@ -13,3 +13,6 @@ include = [
     "fonts/OFL.txt",
     "README.md",
 ]
+
+[lints]
+workspace = true
