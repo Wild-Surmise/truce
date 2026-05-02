@@ -22,8 +22,3 @@
 
 # Windows .pfx password (when using [windows.signing].pfx_path):
 # TRUCE_PFX_PASSWORD = "..."
-
-# Screenshot testing — which OS owns the committed reference PNGs?
-# Defaults to `macos`. Other platforms render and report diffs but
-# don't fail the test. See docs/reference/gui/screenshot-testing.md.
-# TRUCE_SCREENSHOT_REFERENCE_OS = "macos"

@@ -82,21 +82,6 @@ pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     (buf, info.width, info.height)
 }
 
-/// Whether the current host should enforce strict pixel comparison.
-/// Defaults to macOS; override with
-/// `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}`.
-///
-/// Per-backend wgpu rasterization differs across GPU/OS combinations,
-/// so cross-platform pixel comparison isn't meaningful. The
-/// "reference platform" gate trades that for cross-platform smoke
-/// coverage of the rendering pipeline (every platform renders, only
-/// one enforces).
-pub fn is_reference_platform() -> bool {
-    let target =
-        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
-    std::env::consts::OS == target
-}
-
 /// Write RGBA bytes to a PNG with 144 DPI metadata so the file
 /// renders at half pixel size in viewers and on GitHub.
 pub fn save_png(path: &Path, pixels: &[u8], w: u32, h: u32) {

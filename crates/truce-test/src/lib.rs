@@ -659,9 +659,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
         self
     }
 
-    /// Max allowed differing-pixel count on the reference platform.
-    /// `0` is strict equality; bump for cross-machine antialiasing
-    /// tolerance.
+    /// Max allowed differing-pixel count. `0` is strict equality;
+    /// bump for cross-machine antialiasing tolerance.
     pub fn tolerance(mut self, t: usize) -> Self {
         self.tolerance = t;
         self
@@ -693,8 +692,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
     ///
     /// - No reference → log a `cp` hint and pass.
     /// - Match within tolerance → pass silently.
-    /// - Mismatch on reference platform → panic.
-    /// - Mismatch on non-reference platform → log + pass.
+    /// - Mismatch → panic with both PNG paths and the `cp` command
+    ///   to accept the new render as the baseline.
     pub fn run(self) {
         let ref_path = self.resolve_path();
         let tolerance = self.tolerance;
@@ -782,30 +781,16 @@ fn compare_against_reference(
     }
 
     if diff_count > max_diff_pixels {
-        if truce_core::screenshot::is_reference_platform() {
-            panic!(
-                "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
-                 Reference: {}\n\
-                 Current:   {}\n\
-                 Either fix the regression, or accept the new render with: cp '{}' '{}'",
-                ref_path.display(),
-                render_path.display(),
-                render_path.display(),
-                ref_path.display(),
-            );
-        } else {
-            // Non-reference platform: report the diff for visibility
-            // but don't fail. Per-backend wgpu rasterization
-            // differences make divergence expected.
-            eprintln!(
-                "[truce-test] non-reference diff on {}: {diff_count} pixels differ vs {} \
-                 (informational; max allowed on reference: {max_diff_pixels}). \
-                 Current render at {}.",
-                std::env::consts::OS,
-                ref_path.display(),
-                render_path.display(),
-            );
-        }
+        panic!(
+            "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
+             Reference: {}\n\
+             Current:   {}\n\
+             Either fix the regression, or accept the new render with: cp '{}' '{}'",
+            ref_path.display(),
+            render_path.display(),
+            render_path.display(),
+            ref_path.display(),
+        );
     }
 }
 

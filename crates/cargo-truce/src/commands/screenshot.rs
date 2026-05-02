@@ -14,9 +14,9 @@
 //! - `--state <path>` — load a `.pluginstate` blob before rendering.
 //!   Path is CWD-relative or absolute.
 //! - `--check` — diff against the existing baseline; exit non-zero
-//!   on regression. Same comparator semantics as the
-//!   `truce_test::ScreenshotTest` runtime (pass-on-non-reference-OS
-//!   via `TRUCE_SCREENSHOT_REFERENCE_OS`).
+//!   on regression. Strict pixel match — every host gates the same
+//!   way, so cross-OS rasterizer drift will fail. Bake your
+//!   baselines on whichever host you gate from.
 //! - `--debug` — cargo dev profile (faster compile).
 
 use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
@@ -293,9 +293,8 @@ unsafe fn call_screenshot(
 }
 
 /// `--check`: diff the just-rendered PNG (at `render_path`) against
-/// the committed baseline (at `ref_path`). Mirrors the test
-/// runtime's per-OS-pass-on-non-reference behavior so a green CI on
-/// macOS doesn't go red on Linux just because the rasterizer drifts.
+/// the committed baseline (at `ref_path`). Strict pixel match — any
+/// difference fails the check.
 fn check_against_reference(render_path: &Path, ref_path: &Path, label: &str) -> Res {
     if !ref_path.exists() {
         return Err(format!(
@@ -324,27 +323,17 @@ fn check_against_reference(render_path: &Path, ref_path: &Path, label: &str) -> 
         return Ok(());
     }
 
-    if is_reference_platform() {
-        Err(format!(
-            "{label}: {diff_count} pixels differ from baseline.\n\
-             Reference: {}\n\
-             Current:   {}\n\
-             Either fix the regression, or accept the new render with: cp '{}' '{}'",
-            ref_path.display(),
-            render_path.display(),
-            render_path.display(),
-            ref_path.display(),
-        )
-        .into())
-    } else {
-        eprintln!(
-            "{label}: non-reference diff on {}: {diff_count} pixels differ vs {} \
-             (informational; see TRUCE_SCREENSHOT_REFERENCE_OS).",
-            std::env::consts::OS,
-            ref_path.display(),
-        );
-        Ok(())
-    }
+    Err(format!(
+        "{label}: {diff_count} pixels differ from baseline.\n\
+         Reference: {}\n\
+         Current:   {}\n\
+         Either fix the regression, or accept the new render with: cp '{}' '{}'",
+        ref_path.display(),
+        render_path.display(),
+        render_path.display(),
+        ref_path.display(),
+    )
+    .into())
 }
 
 /// Read an RGBA PNG from disk for `--check` comparison. Mirrors
@@ -364,14 +353,6 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
         .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));
     buf.truncate(info.buffer_size());
     (buf, info.width, info.height)
-}
-
-/// Mirrors `truce_core::screenshot::is_reference_platform`. See that
-/// fn for the rationale; same env-var contract.
-fn is_reference_platform() -> bool {
-    let target =
-        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
-    std::env::consts::OS == target
 }
 
 fn print_help() {
@@ -396,8 +377,8 @@ Options:
                    standalone host's Cmd+S / Ctrl+S writes) before
                    rendering. CWD-relative or absolute.
   --check          Diff against the existing baseline; exit non-zero
-                   on regression. Honors TRUCE_SCREENSHOT_REFERENCE_OS
-                   the same way the test runtime does.
+                   on regression. Strict pixel match — bake the
+                   baseline on the host you gate from.
   --debug          Cargo dev profile (faster compile). Default is release."
     );
 }

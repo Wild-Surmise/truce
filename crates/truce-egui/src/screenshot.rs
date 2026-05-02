@@ -50,10 +50,12 @@ pub(crate) fn render_with_state(
 
     // Headless wgpu rendering. `PRIMARY` picks the platform-default
     // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so
-    // the screenshot pipeline runs everywhere. Per-backend rasterization
-    // differences mean the rendered pixels won't byte-match across
-    // platforms — `assert_screenshot` only enforces the comparison on
-    // the reference platform (see `is_reference_platform`).
+    // the screenshot pipeline runs everywhere. Per-backend
+    // rasterization differs across platforms, so the same plugin
+    // can produce different pixel bytes on different OSes — author
+    // your reference PNGs on whichever host you intend to gate
+    // screenshots from, and bump the `tolerance` if you need
+    // cross-machine antialiasing slack.
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
