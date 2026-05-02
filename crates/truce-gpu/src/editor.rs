@@ -176,15 +176,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 let scale = system_scale as f32;
                 let gpu = unsafe { WgpuBackend::from_window(window, size.0, size.1, scale) };
 
-                if gpu.is_some() {
-                    eprintln!("[truce-gpu] GPU backend active (wgpu/baseview, scale={scale})");
-                } else {
-                    eprintln!(
-                        "[truce-gpu] GPU init failed — plugin window will be blank. \
-                              Build with --no-default-features to use CPU rendering."
-                    );
-                }
-
                 GpuWindowHandler {
                     inner,
                     gpu,
