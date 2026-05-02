@@ -695,7 +695,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// and compare against the reference. Same comparator semantics
     /// as the lower-level `assert_screenshot_pixels`:
     ///
-    /// - No reference → log a `cp` hint and pass.
+    /// - No reference → panic, pointing at
+    ///   `cargo truce screenshot --out <ref_path>` to create one.
     /// - Match within tolerance → pass silently.
     /// - Mismatch → panic with both PNG paths and the `cp` command
     ///   to accept the new render as the baseline.
@@ -757,16 +758,12 @@ fn compare_against_reference(
     save_png(&render_path, pixels, width, height);
 
     if !ref_path.exists() {
-        eprintln!(
-            "[truce-test] No reference at {}.\n\
-             Current render saved to {}.\n\
-             To promote: cp '{}' '{}'",
-            ref_path.display(),
-            render_path.display(),
-            render_path.display(),
-            ref_path.display(),
+        panic!(
+            "No screenshot baseline at {ref}.\n\
+             Create one with: cargo truce screenshot --out {ref}\n\
+             then inspect the rendered PNG and commit it.",
+            ref = ref_path.display(),
         );
-        return;
     }
 
     let (ref_pixels, ref_w, ref_h) = truce_core::screenshot::load_png(ref_path);

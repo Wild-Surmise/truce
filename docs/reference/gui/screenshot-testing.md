@@ -44,28 +44,26 @@ mod tests {
 }
 ```
 
-First run: there's no reference yet, so the test logs a `cp`-based
-"promote" hint and **passes** (it doesn't fail — committing the
-first reference is meant to be a deliberate step):
+If the reference doesn't exist, the test fails and points at the
+CLI command that creates one:
 
 ```
-[truce-test] No reference at /path/to/your-plugin/screenshots/your-plugin.png.
-Current render saved to /path/to/your-plugin/target/screenshots/your-plugin.png.
-To promote: cp '/path/to/.../target/screenshots/your-plugin.png' '/path/to/.../screenshots/your-plugin.png'
+No screenshot baseline at /path/to/your-plugin/screenshots/your-plugin.png.
+Create one with: cargo truce screenshot --out /path/to/.../screenshots/your-plugin.png
+then inspect the rendered PNG and commit it.
 ```
 
-Run that `cp`, commit the PNG, and from then on the test gates
-regressions silently.
-
-Faster path that doesn't go through `cargo test`:
+The standard flow:
 
 ```sh
-cargo truce screenshot          # writes <crate>/screenshots/<crate>.png directly
+cargo truce screenshot          # writes <crate>/screenshots/<crate>.png
+git add screenshots/            # eyeball the PNG, then commit
+cargo test                      # the gate
 ```
 
-`cargo truce screenshot` is fully decoupled from the test surface —
-you can use it on any crate built with `truce::plugin!`, with or
-without a `gui_screenshot` test in the codebase.
+`cargo truce screenshot` is decoupled from the test surface — it
+works on any crate built with `truce::plugin!` whether or not
+the codebase has a `gui_screenshot` test.
 
 ## How it works
 

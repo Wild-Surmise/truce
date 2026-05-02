@@ -158,10 +158,11 @@ The `screenshot!` macro reads `CARGO_PKG_NAME` +
 `CARGO_MANIFEST_DIR` from the calling crate, so the test
 renders your plugin's editor and compares against
 `<crate>/screenshots/<crate>.png`. The current render lands in
-`target/screenshots/` (gitignored); when the reference doesn't
-exist yet, the test passes and prints a `cp`-based promote
-hint. Works for every backend (built-in GUI, egui, iced,
-slint).
+`target/screenshots/` (gitignored). The first time you run the
+test the reference doesn't exist yet — the test fails and
+points at `cargo truce screenshot --out <ref-path>` to create
+the baseline. Works for every backend (built-in GUI, egui,
+iced, slint).
 
 See [gui/screenshot-testing.md](gui/screenshot-testing.md) for
 the full flow — promoting new references, state-dependent shots
