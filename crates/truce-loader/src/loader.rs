@@ -376,7 +376,7 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
 ///
 /// Reads through an 8 KiB buffer instead of slurping the whole dylib
 /// into memory. A 5–20 MB dylib, polled every 500 ms, used to allocate
-/// + free its full contents on every poll cycle; this keeps the working
+/// and free its full contents on every poll cycle; this keeps the working
 /// set bounded and lets the kernel page-cache do the actual I/O work.
 ///
 /// Uses `crc32fast`, which is already in the workspace dep graph

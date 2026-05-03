@@ -134,14 +134,12 @@ pub(crate) const HOT_RELOAD_CONFIG_FILE: &str = ".truce-build-config";
 /// when the file changes via `cargo:rerun-if-changed=`.
 pub(crate) fn write_hot_reload_config(root: &Path, logic_profile: &str) -> Result<(), BoxErr> {
     let dir = target_dir(root);
-    fs::create_dir_all(&dir).map_err(|e| -> BoxErr {
-        format!("failed to create {}: {e}", dir.display()).into()
-    })?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| -> BoxErr { format!("failed to create {}: {e}", dir.display()).into() })?;
     let path = dir.join(HOT_RELOAD_CONFIG_FILE);
     let body = format!("logic_profile={logic_profile}\n");
-    fs::write(&path, body).map_err(|e| -> BoxErr {
-        format!("failed to write {}: {e}", path.display()).into()
-    })?;
+    fs::write(&path, body)
+        .map_err(|e| -> BoxErr { format!("failed to write {}: {e}", path.display()).into() })?;
     Ok(())
 }
 

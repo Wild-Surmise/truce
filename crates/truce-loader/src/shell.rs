@@ -333,9 +333,7 @@ impl<P: Params + 'static> HotEditor<P> {
                     // audio has the lock, fall through to the next
                     // tick — the dylib state isn't going anywhere.
                     let Some(mut guard) = loader_for_thread.try_lock() else {
-                        hot_debug!(
-                            "[truce-gui-reload] loader busy (audio holds lock); retrying"
-                        );
+                        hot_debug!("[truce-gui-reload] loader busy (audio holds lock); retrying");
                         continue;
                     };
 
@@ -401,9 +399,7 @@ impl<P: Params + 'static> HotEditor<P> {
                                 *g = new_builtin;
                                 if let Some(ctx) = had_ctx {
                                     g.set_context(ctx);
-                                    hot_debug!(
-                                        "[truce-gui-reload] context restored on new editor"
-                                    );
+                                    hot_debug!("[truce-gui-reload] context restored on new editor");
                                 } else {
                                     hot_debug!(
                                         "[truce-gui-reload] WARNING: no context to restore!"
@@ -411,9 +407,7 @@ impl<P: Params + 'static> HotEditor<P> {
                                 }
                             }
                             Err(_) => {
-                                hot_debug!(
-                                    "[truce-gui-reload] ERROR: failed to lock inner mutex"
-                                );
+                                hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
                             }
                         }
                     }

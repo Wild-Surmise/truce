@@ -167,8 +167,8 @@ pub fn emit_plugin_env() {
     if let Some(td) = target_dir.as_deref() {
         println!("cargo:rustc-env=TRUCE_TARGET_DIR={}", td.display());
     }
-    let logic_profile = read_hot_reload_config(target_dir.as_deref())
-        .unwrap_or_else(|| "release".to_string());
+    let logic_profile =
+        read_hot_reload_config(target_dir.as_deref()).unwrap_or_else(|| "release".to_string());
     println!("cargo:rustc-env=TRUCE_LOGIC_PROFILE={logic_profile}");
     // Flipping `CARGO_TARGET_DIR` between runs would otherwise leave the
     // baked `TRUCE_TARGET_DIR` stale (cargo rebuilds the proc-macro /

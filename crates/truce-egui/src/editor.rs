@@ -538,7 +538,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // On Linux the same call returns the cached baseview scale.
         // Any `set_scale_factor` the host issues *after* open will
         // override this on the next frame via the shared state.
-        self.scale.set(crate::platform::query_backing_scale(&parent));
+        self.scale
+            .set(crate::platform::query_backing_scale(&parent));
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
