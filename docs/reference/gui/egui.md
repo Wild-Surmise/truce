@@ -17,46 +17,53 @@ Override `custom_editor()` and return an `EguiEditor`:
 
 ```rust
 use truce::prelude::*;
-use truce_egui::{EguiEditor, ParamState};
+use truce_egui::EguiEditor;
 use truce_egui::widgets::param_knob;
 use MyParamsParamId as P;
 
 impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(
-            EguiEditor::new((400, 300), |ctx: &egui::Context, state: &ParamState| {
+        Some(Box::new(EguiEditor::new(
+            self.params.clone(),
+            (400, 300),
+            |ctx: &egui::Context, state: &EditorContext<MyParams>| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("My Plugin");
                     param_knob(ui, state, P::Gain, "Gain");
                 });
-            })
-        ))
+            },
+        )))
     }
 }
 ```
 
 The closure is your egui frame function — it runs every frame, same as
 `eframe::App::update`. `(400, 300)` is the window size in logical points.
+`EditorContext<MyParams>` is typed for direct `Deref` access to the
+plugin's `Params` fields (`state.gain.smoothed_next()` etc.) inside the
+closure.
 
-## ParamState
+## EditorContext
 
-`ParamState` is the bridge between egui and the DAW's parameter system.
-It wraps `begin_edit` / `set_param` / `end_edit` into an ergonomic API:
+`EditorContext<P>` is the bridge between egui and the DAW's parameter
+system. It wraps `begin_edit` / `set_param` / `end_edit` into an
+ergonomic API; IDs use `#[derive(Params)]`'s generated `*ParamId` enum
+and convert to `u32` through `impl Into<u32>`:
 
 ```rust
 // Read
-state.get(P::Gain)             // normalized 0.0-1.0
-state.get_plain(P::Gain)       // plain value (-60.0 dB)
-state.format(P::Gain)          // display string ("0.0 dB")
-state.meter(P::MeterLeft)      // meter level 0.0-1.0
+state.get_param(P::Gain)         // normalized 0.0-1.0
+state.get_param_plain(P::Gain)   // plain value (-60.0 dB)
+state.format_param(P::Gain)      // display string ("0.0 dB")
+state.get_meter(P::MeterLeft)    // meter level 0.0-1.0
 
 // Write (one-shot, for clicks/toggles)
-state.set_immediate(P::Bypass, 1.0);
+state.automate(P::Bypass, 1.0);
 
 // Write (continuous drag — records smooth automation)
-state.begin_gesture(P::Gain);
-state.set_value(P::Gain, new_value);  // call each frame during drag
-state.end_gesture(P::Gain);
+state.begin_edit(P::Gain);
+state.set_param(P::Gain, new_value);  // call each frame during drag
+state.end_edit(P::Gain);
 ```
 
 ## Widgets
@@ -78,7 +85,7 @@ use truce_egui::widgets::{
 Typical layout:
 
 ```rust
-fn my_ui(ctx: &egui::Context, state: &ParamState) {
+fn my_ui(ctx: &egui::Context, state: &EditorContext<MyParams>) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
             param_knob(ui, state, P::Gain, "Gain");
@@ -95,11 +102,11 @@ fn my_ui(ctx: &egui::Context, state: &ParamState) {
 Any egui widget works — just wire the gesture protocol manually:
 
 ```rust
-let mut value = state.get(P::Gain) as f32;
+let mut value = state.get_param(P::Gain) as f32;
 let response = ui.add(egui::Slider::new(&mut value, 0.0..=1.0));
-if response.drag_started() { state.begin_gesture(P::Gain); }
-if response.changed()      { state.set_value(P::Gain, value as f64); }
-if response.drag_stopped() { state.end_gesture(P::Gain); }
+if response.drag_started() { state.begin_edit(P::Gain); }
+if response.changed()      { state.set_param(P::Gain, value as f64); }
+if response.drag_stopped() { state.end_edit(P::Gain); }
 ```
 
 ## Theme
@@ -110,11 +117,11 @@ own:
 
 ```rust
 // Use egui's built-in light theme
-EguiEditor::new((400, 300), my_ui)
+EguiEditor::new(self.params.clone(), (400, 300), my_ui)
     .with_visuals(egui::Visuals::light())
 
 // Or customize the truce dark theme as a starting point
-EguiEditor::new((400, 300), my_ui)
+EguiEditor::new(self.params.clone(), (400, 300), my_ui)
     .with_visuals(truce_egui::theme::dark())
     .with_font(truce_gui::font::JETBRAINS_MONO)
 ```
@@ -133,15 +140,15 @@ use truce_egui::theme::{BACKGROUND, SURFACE, PRIMARY, TEXT, TEXT_DIM,
 ## Stateful UIs (EditorUi trait)
 
 The closure API works for simple UIs. For state across frames (tabs,
-caches, animations), implement `EditorUi`:
+caches, animations), implement `EditorUi<P>`:
 
 ```rust
-use truce_egui::{EditorUi, ParamState};
+use truce_egui::EditorUi;
 
 struct MyUi { tab: usize }
 
-impl EditorUi for MyUi {
-    fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
+impl EditorUi<MyParams> for MyUi {
+    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<MyParams>) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, 0, "Controls");
@@ -153,16 +160,16 @@ impl EditorUi for MyUi {
 }
 
 // In custom_editor():
-EguiEditor::with_ui((640, 480), MyUi { tab: 0 })
+EguiEditor::with_ui(self.params.clone(), (640, 480), MyUi { tab: 0 })
 ```
 
-`EditorUi` has three methods:
+`EditorUi<P>` has three methods:
 
 | Method | When | Use for |
 |---|---|---|
-| `opened(&mut self, &ParamState)` | Editor window opens | Initialize `StateBinding`, load resources |
-| `ui(&mut self, &egui::Context, &ParamState)` | Every frame | Draw your UI |
-| `state_changed(&mut self, &ParamState)` | Preset recall, undo, session load | Re-sync cached state |
+| `opened(&mut self, &EditorContext<P>)` | Editor window opens | Initialize `StateBinding`, load resources |
+| `ui(&mut self, &egui::Context, &EditorContext<P>)` | Every frame | Draw your UI |
+| `state_changed(&mut self, &EditorContext<P>)` | Preset recall, undo, session load | Re-sync cached state |
 
 All have default no-ops. Only `ui()` is required.
 
@@ -182,18 +189,18 @@ struct MyUi {
     state: StateBinding<MyState>,
 }
 
-impl EditorUi for MyUi {
-    fn opened(&mut self, ps: &ParamState) {
-        self.state = StateBinding::new(ps.context());
+impl EditorUi<MyParams> for MyUi {
+    fn opened(&mut self, ctx: &EditorContext<MyParams>) {
+        self.state = StateBinding::new(ctx.clone().dyn_erase());
     }
 
-    fn ui(&mut self, ctx: &egui::Context, _ps: &ParamState) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn ui(&mut self, egui_ctx: &egui::Context, _ctx: &EditorContext<MyParams>) {
+        egui::CentralPanel::default().show(egui_ctx, |ui| {
             ui.label(&self.state.get().instance_name);
         });
     }
 
-    fn state_changed(&mut self, _ps: &ParamState) {
+    fn state_changed(&mut self, _ctx: &EditorContext<MyParams>) {
         self.state.sync();
     }
 }
@@ -208,7 +215,7 @@ self.state.update(|s| s.instance_name = new_name);
 For the closure API, use `.on_state_changed()`:
 
 ```rust
-EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
+EguiEditor::new(self.params.clone(), (400, 300), |ctx, state| { /* ui */ })
     .on_state_changed(|state| { /* re-read cached state */ })
 ```
 

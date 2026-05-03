@@ -46,22 +46,26 @@ implement the `Editor` trait directly. See
 
 ## Parameter communication
 
-Every backend wraps the host's parameter callbacks in a `ParamState`
-with the same API:
+Every backend hands you an `EditorContext<P>` typed for your plugin's
+`Params`. The same method API works in egui, iced, slint, and
+raw-window-handle editors:
 
 ```rust
-state.get(P::Gain)            // normalized 0.0-1.0
-state.format(P::Gain)         // "0.0 dB"
-state.meter(P::MeterLeft)     // level 0.0-1.0
-state.set_immediate(P::Gain, 0.75)  // write (single action)
-state.begin_gesture(P::Gain)        // write (start drag)
-state.set_value(P::Gain, 0.75)      // write (during drag)
-state.end_gesture(P::Gain)          // write (end drag)
+state.get_param(P::Gain)         // normalized 0.0-1.0
+state.format_param(P::Gain)      // "0.0 dB"
+state.get_meter(P::MeterLeft)    // level 0.0-1.0
+state.automate(P::Gain, 0.75)    // write (single action)
+state.begin_edit(P::Gain)        // write (start drag)
+state.set_param(P::Gain, 0.75)   // write (during drag)
+state.end_edit(P::Gain)          // write (end drag)
 ```
 
 The gesture protocol tells the DAW that the user is dragging a control,
 so it records smooth automation. For single-click actions (toggles),
-`set_immediate()` handles everything.
+`automate()` handles everything (begin + set + end in one call).
+`EditorContext<P>` also `Deref`s to `&P`, so
+`state.gain.smoothed_next()` works directly when you need to peek at
+parameter metadata.
 
 ## Screenshot testing
 

@@ -66,34 +66,38 @@ Wire it up in Rust:
 
 ```rust
 use truce::prelude::*;
-use truce_slint::{SlintEditor, ParamState};
-use truce_core::meter_display;
+use truce_slint::{SlintEditor, SyncFn};
 slint::include_modules!();
 use MyParamsParamId as P;
 
 impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((200, 120), |state: ParamState| {
-            let ui = MyPluginUi::new().unwrap();
+        Some(Box::new(SlintEditor::new(
+            self.params.clone(),
+            (200, 120),
+            |state: EditorContext<MyParams>| -> SyncFn<MyParams> {
+                let ui = MyPluginUi::new().unwrap();
 
-            // UI -> host: when the user drags the knob
-            let s = state.clone();
-            ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
+                // UI → host: when the user drags the knob
+                let s = state.clone();
+                ui.on_gain_changed(move |v| s.automate(P::Gain, v as f64));
 
-            // host -> UI: sync every frame
-            Box::new(move |state: &ParamState| {
-                ui.set_gain(state.get(P::Gain) as f32);
-                ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
-                ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
-            })
-        })))
+                // host → UI: sync every frame
+                Box::new(move |state: &EditorContext<MyParams>| {
+                    ui.set_gain(state.get_param(P::Gain) as f32);
+                    ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));
+                    ui.set_meter_right(meter_display(state.get_meter(P::MeterRight)));
+                })
+            },
+        )))
     }
 }
 ```
 
-The closure receives a `ParamState` and returns a sync function. Slint
-calls the sync function every frame (~60fps) to push host values into
-the UI.
+The setup closure receives an `EditorContext<MyParams>` (typed for
+direct `Deref` access to `MyParams` fields) and returns a `SyncFn<P>`.
+Slint calls the sync function every frame (~60fps) to push host
+values into the UI.
 
 ## Adding more parameters
 
@@ -134,7 +138,7 @@ Knob {
 
 ```rust
 // In the sync closure:
-ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
+ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));
 ```
 
 ## Available truce widgets
@@ -164,7 +168,7 @@ them before the `bind!` macro:
 let s = state.clone();
 ui.on_freq_changed(move |hz| {
     let norm = (hz.log2() - 20f32.log2()) / (20000f32.log2() - 20f32.log2());
-    s.set_immediate(P::Freq, norm as f64);
+    s.automate(P::Freq, norm as f64);
 });
 
 // bind! must come last — it returns the sync closure
@@ -173,27 +177,33 @@ truce_slint::bind! { state, ui,
 }
 ```
 
-## ParamState
+## EditorContext
 
-Same as the other backends:
+Same as the other backends — `EditorContext<P>` exposes its host
+bridge as methods. IDs use `#[derive(Params)]`'s generated
+`*ParamId` enum and convert to `u32` through `impl Into<u32>`:
 
 ```rust
-state.get(P::Gain)           // normalized 0.0-1.0
-state.get_plain(P::Gain)     // plain value
-state.format(P::Gain)        // formatted string
-state.meter(P::MeterLeft)    // meter level
-state.set_immediate(P::Gain, v)  // write (one shot)
-state.begin_gesture(P::Gain)     // write (start drag)
-state.set_value(P::Gain, v)      // write (during drag)
-state.end_gesture(P::Gain)       // write (end drag)
+state.get_param(P::Gain)          // normalized 0.0-1.0
+state.get_param_plain(P::Gain)    // plain value
+state.format_param(P::Gain)       // formatted string
+state.get_meter(P::MeterLeft)     // meter level
+state.automate(P::Gain, v)        // begin + set + end (one shot)
+state.begin_edit(P::Gain)         // gesture: start
+state.set_param(P::Gain, v)       // gesture: in progress
+state.end_edit(P::Gain)           // gesture: end
 ```
 
-`ParamState` is `Clone`-able, so Slint callbacks can capture copies.
+`EditorContext<P>` is `Clone`-able (cheap — internally an
+`Arc<dyn EditorBridge>`), so Slint callbacks can capture copies.
+`Deref` to `&P` is also available, so `state.gain.smoothed_next()`
+works directly when you need to peek at param metadata or smoothed
+values inside the sync closure.
 
 ## Custom state
 
 If your plugin has persistent state beyond parameters, read it via
-`ParamState::get_state()` in the sync callback:
+`state.get_state()` in the sync callback:
 
 ```rust
 #[derive(State, Default)]
@@ -227,7 +237,7 @@ See the [state persistence](../plugin-anatomy.md#state-persistence)
 section for the full `#[derive(State)]` pattern.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
-parameter values sync automatically through `ParamState`.
+parameter values sync automatically through `EditorContext<P>`.
 
 ## Screenshot testing
 

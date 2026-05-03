@@ -68,8 +68,14 @@ impl Editor for MyEditor {
     }
 
     fn can_resize(&self) -> bool { false }
-    fn scale_factor(&self) -> f64 { 1.0 }
-    fn set_scale_factor(&mut self, _factor: f64) {}
+    fn set_scale_factor(&mut self, _factor: f64) {
+        // Hosts deliver content scale here on Windows VST3
+        // (`IPlugViewContentScaleSupport`) and CLAP
+        // (`clap_plugin_gui::set_scale`). macOS hosts rarely call
+        // it — AppKit handles Retina backing automatically. Resize
+        // your off-screen buffers to physical pixels here if you
+        // need them.
+    }
 }
 
 unsafe impl Send for MyEditor {}
@@ -77,31 +83,37 @@ unsafe impl Send for MyEditor {}
 
 ## Reading and writing parameters
 
-The `EditorContext` fields are `Arc<dyn Fn>` closures. Call them with
-parentheses around the field name:
+`EditorContext` exposes its host bridge as methods. IDs use
+`#[derive(Params)]`'s generated `*ParamId` enum and convert to `u32`
+through `impl Into<u32>`, so you can pass either the enum variant or a
+literal `u32`:
 
 ```rust
 fn idle(&mut self) {
     let ctx = self.context.as_ref().unwrap();
 
     // read current values
-    let gain = (ctx.get_param)(0);            // normalized 0.0-1.0
-    let gain_plain = (ctx.get_param_plain)(0); // e.g., -60.0 to 6.0
-    let gain_text = (ctx.format_param)(0);     // "0.0 dB"
-    let meter_l = (ctx.get_meter)(100);        // 0.0-1.0
+    let gain = ctx.get_param(P::Gain);            // normalized 0.0-1.0
+    let gain_plain = ctx.get_param_plain(P::Gain); // e.g., -60.0 to 6.0
+    let gain_text = ctx.format_param(P::Gain);     // "0.0 dB"
+    let meter_l = ctx.get_meter(P::MeterLeft);     // 0.0-1.0
 
     // render your UI with these values...
 
     // when the user drags a control:
-    (ctx.begin_edit)(0);
-    (ctx.set_param)(0, 0.75);   // normalized value
-    (ctx.end_edit)(0);
+    ctx.begin_edit(P::Gain);
+    ctx.set_param(P::Gain, 0.75);   // normalized value
+    ctx.end_edit(P::Gain);
+
+    // ...or, for click-to-toggle / single-shot edits, the
+    // `begin_edit + set_param + end_edit` triple collapses to:
+    ctx.automate(P::Bypass, 1.0);
 }
 ```
 
 Always wrap drag gestures in `begin_edit` / `end_edit` so the host
-records automation correctly. For single-click changes (toggles), call
-all three in sequence.
+records automation correctly — `automate(id, val)` is the convenience
+wrapper for one-shot edits where the gesture and value arrive together.
 
 ## Connecting to your plugin
 

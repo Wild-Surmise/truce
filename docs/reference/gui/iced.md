@@ -42,7 +42,7 @@ For full control, implement `IcedPlugin`. Here's a minimal example:
 use std::sync::Arc;
 use truce_iced::{
     knob, meter, IcedEditor, IcedPlugin, IntoElement,
-    Message, ParamState,
+    Message, ParamCache,
 };
 use iced::widget::{Column, Row, text};
 use iced::Element;
@@ -60,7 +60,7 @@ impl IcedPlugin<MyParams> for MyEditor {
 
     fn view<'a>(
         &'a self,
-        params: &'a ParamState<MyParams>,
+        params: &'a ParamCache<MyParams>,
     ) -> Element<'a, Message<Msg>> {
         Column::new()
             .push(text("MY PLUGIN").size(14))
@@ -116,21 +116,29 @@ Import `IntoElement` from `truce_iced` and call `.el()` on any widget.
 
 ## Reading and writing parameters
 
+`ParamCache<P>` is a per-tick read-only snapshot — iced's `view`
+function can't have side effects, so the cache is what widgets read
+from. The host bridge (gestures, automation writes) lives on
+`EditorContext<P>` and is passed to `update()`:
+
 ```rust
-// Read
+// Read — from ParamCache (passed to view + update)
 params.get(P::Gain)          // normalized 0.0-1.0
 params.get_plain(P::Gain)    // plain value
 params.label(P::Gain)        // formatted string
 params.meter(P::MeterLeft)   // meter level
 
-// Write (click)
-params.set_immediate(P::Gain, 0.75)
-
-// Write (drag)
-params.begin_gesture(P::Gain)
-params.set_value(P::Gain, new_value)
-params.end_gesture(P::Gain)
+// Write — from EditorContext (passed to update)
+ctx.automate(P::Gain, 0.75)        // begin + set + end (one shot)
+ctx.begin_edit(P::Gain)            // gesture: start
+ctx.set_param(P::Gain, new_value)  // gesture: in progress
+ctx.end_edit(P::Gain)              // gesture: end
 ```
+
+The built-in widgets (`knob`, `param_slider`, `param_toggle`, etc.)
+emit their own `Message::Param(...)` variants — the iced runtime
+forwards those to the host via the underlying `EditorContext`, so
+direct writes are only needed for custom widgets and `Msg::*` handling.
 
 ## Widgets
 
@@ -159,12 +167,17 @@ pub enum Msg {
     TabChanged(usize),
 }
 
-fn update(&mut self, msg: Message<Msg>, params: &ParamState<MyParams>, ctx: &EditorHandle) -> Task<Message<Msg>> {
+fn update(
+    &mut self,
+    msg: Message<Msg>,
+    params: &ParamCache<MyParams>,
+    ctx: &EditorContext<MyParams>,
+) -> Task<Message<Msg>> {
     match msg {
         Message::Custom(Msg::ResetGain) => {
-            ctx.begin_edit(P::Gain.into());
-            ctx.set_param(P::Gain.into(), 0.5);
-            ctx.end_edit(P::Gain.into());
+            // `automate` collapses the begin / set / end triple
+            // into one call for single-shot edits.
+            ctx.automate(P::Gain, 0.5);
         }
         _ => {}
     }
@@ -199,15 +212,23 @@ impl IcedPlugin<MyParams> for MyEditor {
         Self { state: StateBinding::default(), initialized: false }
     }
 
-    fn update(&mut self, _msg: Message<()>, _params: &ParamState<MyParams>, ctx: &EditorHandle) -> Task<Message<()>> {
+    fn update(
+        &mut self,
+        _msg: Message<()>,
+        _params: &ParamCache<MyParams>,
+        ctx: &EditorContext<MyParams>,
+    ) -> Task<Message<()>> {
         if !self.initialized {
-            self.state = StateBinding::new(ctx.context());
+            self.state = StateBinding::new(ctx.clone().dyn_erase());
             self.initialized = true;
         }
         Task::none()
     }
 
-    fn view<'a>(&'a self, _params: &'a ParamState<MyParams>) -> Element<'a, Message<()>> {
+    fn view<'a>(
+        &'a self,
+        _params: &'a ParamCache<MyParams>,
+    ) -> Element<'a, Message<()>> {
         text(&self.state.get().instance_name).into()
     }
 
@@ -225,11 +246,11 @@ To write state from the GUI:
 self.state.update(|s| s.instance_name = new_name);
 ```
 
-You can also access state directly via `ctx.get_state()` / `ctx.set_state()`
-on the `EditorHandle`.
+You can also access state directly via `ctx.get_state()` /
+`ctx.set_state()` on the `EditorContext` passed to `update()`.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
-parameter values sync automatically through `ParamState`.
+parameter values sync automatically through `ParamCache`.
 
 ## Screenshot testing
 
