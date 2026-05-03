@@ -12,6 +12,7 @@ truce-params = { workspace = true }
 truce-driver = { workspace = true }
 truce-build = { workspace = true }
 png = "0.18"
+toml = "1"
 
 [lints]
 workspace = true

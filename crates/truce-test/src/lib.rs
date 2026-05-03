@@ -818,14 +818,24 @@ fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>)
     let mut dir = start.clone();
     let mut topmost_package: Option<PathBuf> = None;
     loop {
-        let toml = dir.join("Cargo.toml");
-        if toml.exists()
-            && let Ok(s) = std::fs::read_to_string(&toml)
+        let toml_path = dir.join("Cargo.toml");
+        if toml_path.exists()
+            && let Ok(s) = std::fs::read_to_string(&toml_path)
+            && let Ok(doc) = s.parse::<toml::Table>()
         {
-            if s.contains("[workspace]") {
+            // Workspace `Cargo.toml` is the strongest anchor we'll
+            // see — short-circuit and take its enclosing dir as
+            // the target-dir root.
+            if doc.contains_key("workspace") {
                 return truce_build::target_dir(&dir).join("screenshots");
             }
-            topmost_package = Some(dir.clone());
+            // Otherwise we may be under a single-crate or workspace
+            // member. Remember the topmost package and keep walking
+            // — if we never find a workspace, the topmost package
+            // is the right anchor.
+            if doc.contains_key("package") {
+                topmost_package = Some(dir.clone());
+            }
         }
         if !dir.pop() {
             let anchor = topmost_package.unwrap_or(start);

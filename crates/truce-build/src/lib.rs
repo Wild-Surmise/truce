@@ -293,36 +293,18 @@ pub fn target_dir(root: &Path) -> PathBuf {
 }
 
 /// Look for `[build].target-dir = "..."` in `<root>/.cargo/config.toml`.
-/// Tiny inline parser — we only care about a single key under one
-/// section header. Pulling in the `toml` crate's full parser for two
-/// strings is technically free here (already a dep) but the inline
-/// match is simpler to audit and matches cargo's own forgiveness
-/// about commented-out / blank lines.
+/// Goes through the `toml` crate (already a dep) so dotted-key forms
+/// (`build.target-dir = "build"`), inline tables, and commented-out
+/// keys are all handled correctly.
 fn read_cargo_config_target_dir(root: &Path) -> Option<PathBuf> {
     let cfg = root.join(".cargo").join("config.toml");
     let contents = std::fs::read_to_string(&cfg).ok()?;
-    let mut in_build = false;
-    for raw in contents.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            in_build = rest.trim() == "build";
-            continue;
-        }
-        if in_build && let Some(value) = line.strip_prefix("target-dir") {
-            let v = value.trim_start().strip_prefix('=')?.trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(v);
-            if !v.is_empty() {
-                return Some(PathBuf::from(v));
-            }
-        }
+    let doc: toml::Table = contents.parse().ok()?;
+    let v = doc.get("build")?.get("target-dir")?.as_str()?;
+    if v.is_empty() {
+        return None;
     }
-    None
+    Some(PathBuf::from(v))
 }
 
 /// Walk up from `CARGO_MANIFEST_DIR` looking for `truce.toml`.
