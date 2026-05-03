@@ -582,7 +582,6 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         device,
         queue,
         surface,
-        surface_config,
         blit,
     }
 }
@@ -591,7 +590,6 @@ struct BlitBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
     blit: crate::blit::BlitPipeline,
 }
 
@@ -617,7 +615,6 @@ struct BuiltinWindowHandler<P: Params> {
     /// callback queued). Only accessed from the GUI thread.
     editor: *mut BuiltinEditor<P>,
     backend: SharedBackend,
-    scale: f32,
     /// Canonical baseview → `InputEvent` translator. Handles cursor
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
@@ -712,7 +709,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // the backend cell is the synchronization point with
         // `BuiltinEditor::close`. If the cell is `None`, the editor
         // pointer is no longer guaranteed valid and we must not deref.
-        let mut guard = match self.backend.lock() {
+        let guard = match self.backend.lock() {
             Ok(g) => g,
             Err(_) => return baseview::EventStatus::Ignored,
         };
@@ -730,39 +727,20 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                let pw = info.physical_size().width;
-                let ph = info.physical_size().height;
-                let new_scale = info.scale() as f32;
-                self.scale = new_scale;
+                // Resize is intentionally disallowed: `Editor::can_resize`
+                // and `Editor::set_size` use the trait defaults
+                // (`false` / `false`), so hosts shouldn't drive a resize
+                // through the truce protocol. We still pass the OS-
+                // reported scale through `note_linux_scale_factor` so
+                // newly opened editors on the same process see the
+                // correct DPI from the cache, but we deliberately do
+                // not resize the CPU pixmap or wgpu blit surface — a
+                // user who drags the host window across a DPI boundary
+                // accepts the stretched/cropped output. Matches the
+                // `truce-gpu` `GpuEditor` posture so the two paths
+                // behave identically.
                 crate::platform::note_linux_scale_factor(info.scale());
-
-                // Re-size the CPU pixmap and blit texture to match the
-                // new physical surface. Without this, dragging the
-                // window between displays of different DPI would leave
-                // the pixmap at the old physical size and the blit
-                // pass would either stretch or crop.
-                let editor = unsafe { &mut *self.editor };
-                let (lw, lh) = editor.size();
-                editor.scale = new_scale;
-                if let Some(cpu) = editor.backend.as_mut() {
-                    cpu.resize(lw, lh, new_scale);
-                }
-                editor.request_repaint();
-
-                if let Some(BlitBackend {
-                    device,
-                    surface,
-                    surface_config,
-                    blit,
-                    ..
-                }) = guard.as_mut()
-                {
-                    surface_config.width = pw;
-                    surface_config.height = ph;
-                    surface.configure(device, surface_config);
-                    blit.resize(device, pw, ph);
-                }
-                baseview::EventStatus::Captured
+                baseview::EventStatus::Ignored
             }
             _ => baseview::EventStatus::Ignored,
         }
@@ -842,7 +820,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
         let editor_addr = self as *mut BuiltinEditor<P> as usize;
-        let scale_f32 = scale as f32;
 
         // Shared backend cell: the editor keeps one Arc and baseview's
         // window handler gets the other. At close time the editor
@@ -902,7 +879,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 BuiltinWindowHandler {
                     editor: editor_addr as *mut BuiltinEditor<P>,
                     backend: shared_for_handler.clone(),
-                    scale: scale_f32,
                     translator: crate::interaction::BaseviewTranslator::new(),
                 }
             },

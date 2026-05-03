@@ -113,13 +113,17 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mInputMIDINodeName = g_descriptor.name;
         setupInfo.mInputMIDIChannelMask = 0xFFFF; // all channels
     }
-    // Plugin → host MIDI output. Truce's `output_events` stream is
-    // surfaced as a single AAX_eMIDINodeType_LocalOutput node so
-    // Pro Tools' MIDI router sees the plugin's note/CC output.
-    setupInfo.mNeedsGlobalsNode = false;
-    setupInfo.mNeedsOutputMIDI = true;
-    setupInfo.mOutputMIDINodeName = g_descriptor.name;
-    setupInfo.mOutputMIDIChannelMask = 0xFFFF;
+    // Plugin → host MIDI is not wired through the monolithic-parameters
+    // helper — `AAX_SInstrumentSetupInfo` only describes input/global/
+    // transport nodes, and `AAX_SInstrumentRenderInfo` (the per-render
+    // struct passed to `RenderAudio`) has no `mOutputNode` field. The
+    // `AAX_CMonolithicParameters::StaticDescribe` source confirms it
+    // only registers `AAX_eMIDINodeType_LocalInput` / `Global` /
+    // `Transport`. Adding plugin → host MIDI on AAX requires building
+    // the component descriptor by hand and calling `AddMIDINode(...,
+    // AAX_eMIDINodeType_LocalOutput, ...)` on the inner descriptor —
+    // that's a structural change to this template, not a flag flip.
+    // Tracked as a follow-up.
 
     // Register mono configuration
     setupInfo.mInputStemFormat = g_descriptor.num_inputs > 0

@@ -124,8 +124,20 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                 EventStatus::Captured
             }
             Event::Window(win) => {
-                if let baseview::WindowEvent::Resized(_info) = win {
-                    // TODO: resize wgpu surface + BuiltinEditor
+                if let baseview::WindowEvent::Resized(info) = win {
+                    // Resize is intentionally disallowed: `Editor::can_resize`
+                    // and `Editor::set_size` use the trait defaults
+                    // (`false` / `false`), so hosts shouldn't drive a
+                    // resize. We pass the OS-reported scale through
+                    // `note_linux_scale_factor` to keep the cross-
+                    // backend Linux DPI cache populated, but
+                    // deliberately do not reconfigure the wgpu surface
+                    // or the inner `BuiltinEditor` — a user who drags
+                    // the host window across a DPI boundary accepts the
+                    // stretched/cropped output. Matches the
+                    // `truce-gui::BuiltinEditor` CPU path so the two
+                    // paths behave identically.
+                    truce_gui::platform::note_linux_scale_factor(info.scale());
                 }
                 EventStatus::Ignored
             }
