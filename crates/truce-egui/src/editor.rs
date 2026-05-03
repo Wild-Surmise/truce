@@ -250,8 +250,8 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         // fires when scale moved without a corresponding window event.
         let cur_scale = self.scale.get() as f32;
         if cur_scale != self.last_applied_scale {
-            let phys_w = (self.size.0 as f32 * cur_scale).round() as u32;
-            let phys_h = (self.size.1 as f32 * cur_scale).round() as u32;
+            let phys_w = truce_gui::to_physical_px(self.size.0, cur_scale as f64);
+            let phys_h = truce_gui::to_physical_px(self.size.1, cur_scale as f64);
             renderer.resize(phys_w, phys_h);
             self.last_applied_scale = cur_scale;
         }
@@ -306,9 +306,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         // but reapplying the surface config is idempotent.
         let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
         if pending != self.size && pending.0 > 0 && pending.1 > 0 {
-            let scale = self.scale.get() as f32;
-            let phys_w = (pending.0 as f32 * scale).round() as u32;
-            let phys_h = (pending.1 as f32 * scale).round() as u32;
+            let scale = self.scale.get();
+            let phys_w = truce_gui::to_physical_px(pending.0, scale);
+            let phys_h = truce_gui::to_physical_px(pending.1, scale);
             _window.resize(baseview::Size::new(pending.0 as f64, pending.1 as f64));
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.resize(phys_w, phys_h);
@@ -612,8 +612,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             options,
             move |window: &mut Window| {
                 let scale = system_scale as f32;
-                let phys_w = (size.0 as f32 * scale) as u32;
-                let phys_h = (size.1 as f32 * scale) as u32;
+                let phys_w = truce_gui::to_physical_px(size.0, system_scale);
+                let phys_h = truce_gui::to_physical_px(size.1, system_scale);
                 let renderer = unsafe { EguiRenderer::from_window(window, phys_w, phys_h) };
 
                 if let Some(font_data) = font {

@@ -809,8 +809,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.request_repaint();
 
         let (lw, lh) = (w as f64, h as f64);
-        let phys_w = (lw * scale) as u32;
-        let phys_h = (lh * scale) as u32;
+        let phys_w = crate::platform::to_physical_px(w, scale);
+        let phys_h = crate::platform::to_physical_px(h, scale);
 
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),

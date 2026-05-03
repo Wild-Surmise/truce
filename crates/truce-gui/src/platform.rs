@@ -166,6 +166,25 @@ impl EditorScale {
     }
 }
 
+/// Convert a logical extent (in points) to physical pixels.
+///
+/// Standardised rounding policy across every truce GUI backend:
+/// round to nearest, then clamp the result to `1` so a degenerate
+/// `0 × scale` doesn't collapse a wgpu surface (`width: 0` is a
+/// validation error). The `logical.max(1)` guard handles the
+/// converse — a zero-logical caller can't multiply through to `0`
+/// before the round.
+///
+/// Replaces a mix of truncating `(logical * scale) as u32` casts,
+/// `.round() as u32` without a min clamp, and the explicit
+/// `.round().max(1.0) as u32` form that landed in
+/// `truce-gui::backend_cpu` first. One helper, every site, identical
+/// pixel maths.
+#[inline]
+pub fn to_physical_px(logical: u32, scale: f64) -> u32 {
+    ((logical.max(1) as f64) * scale).round().max(1.0) as u32
+}
+
 /// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.
 ///
 /// Linux has no safe synchronous DPI query from plugin code — the authoritative

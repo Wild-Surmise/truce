@@ -326,8 +326,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // 1.0 even on a HiDPI display.
         let render_scale = self.scale.get();
         self.last_applied_scale = render_scale;
-        let w = (lw as f64 * render_scale) as u32;
-        let h = (lh as f64 * render_scale) as u32;
+        let w = truce_gui::to_physical_px(lw, render_scale);
+        let h = truce_gui::to_physical_px(lh, render_scale);
 
         let adapter =
             match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -450,10 +450,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let cur_scale = self.scale.get();
         if cur_scale != self.last_applied_scale {
             let (lw, lh) = self.size;
-            let pw = (lw as f64 * cur_scale) as u32;
-            let ph = (lh as f64 * cur_scale) as u32;
-            render.surface_config.width = pw.max(1);
-            render.surface_config.height = ph.max(1);
+            let pw = truce_gui::to_physical_px(lw, cur_scale);
+            let ph = truce_gui::to_physical_px(lh, cur_scale);
+            render.surface_config.width = pw;
+            render.surface_config.height = ph;
             render
                 .surface
                 .configure(&render.device, &render.surface_config);
@@ -904,8 +904,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             runtime.size = (width, height);
             if let Some(ref mut render) = runtime.render {
                 let scale = self.scale.get();
-                let pw = (width as f64 * scale) as u32;
-                let ph = (height as f64 * scale) as u32;
+                let pw = truce_gui::to_physical_px(width, scale);
+                let ph = truce_gui::to_physical_px(height, scale);
                 render.viewport =
                     iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale);
                 render.surface_config.width = pw;

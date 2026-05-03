@@ -894,6 +894,38 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
 
+    // --- get_normalized ---
+    //
+    // Reach into the matching param's `info.range` per id and call
+    // `normalize` / `denormalize` directly. The previous version dispatched
+    // through `self.param_infos()` (a `Vec<ParamInfo>` allocation) on every
+    // call, so every host-driven `set_normalized` / `get_normalized` round
+    // trip — and every `EditorBridge` paint frame that touches a normalized
+    // value — allocated. Per-id arms eliminate the allocation entirely.
+    let get_normalized_arms: Vec<_> = param_fields.iter().map(|f| {
+        let ident = &f.ident;
+        let plain_expr = match f.kind {
+            ParamKind::Float => quote! { self.#ident.value() as f64 },
+            ParamKind::Bool => quote! { if self.#ident.value() { 1.0 } else { 0.0 } },
+            ParamKind::Int => quote! { self.#ident.value() as f64 },
+            ParamKind::Enum => quote! { self.#ident.index() as f64 },
+        };
+        quote! {
+            x if x == self.#ident.id() => Some(self.#ident.info.range.normalize(#plain_expr)),
+        }
+    }).collect();
+
+    let get_normalized_fallthrough = if nested_fields.is_empty() {
+        quote! { _ => None, }
+    } else {
+        quote! {
+            _ => {
+                #(if let Some(v) = self.#nested_idents.get_normalized(id) { return Some(v); })*
+                None
+            }
+        }
+    };
+
     // --- set_plain ---
     let set_plain_arms: Vec<_> = param_fields.iter().map(|f| {
         let ident = &f.ident;
@@ -911,6 +943,37 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {
             _ => {
                 #(self.#nested_idents.set_plain(id, value);)*
+            }
+        }
+    };
+
+    // --- set_normalized ---
+    //
+    // Per-id arms denormalize through the matching param's range, then
+    // commit through the kind-specific atomic write. Same allocation
+    // motivation as `get_normalized` above.
+    let set_normalized_arms: Vec<_> = param_fields.iter().map(|f| {
+        let ident = &f.ident;
+        let commit = match f.kind {
+            ParamKind::Float => quote! { self.#ident.set_value(plain) },
+            ParamKind::Bool => quote! { self.#ident.set_value(plain > 0.5) },
+            ParamKind::Int => quote! { self.#ident.set_value(plain.round() as i64) },
+            ParamKind::Enum => quote! { self.#ident.set_index(plain.round() as u32) },
+        };
+        quote! {
+            x if x == self.#ident.id() => {
+                let plain = self.#ident.info.range.denormalize(value);
+                #commit;
+            }
+        }
+    }).collect();
+
+    let set_normalized_fallthrough = if nested_fields.is_empty() {
+        quote! { _ => {} }
+    } else {
+        quote! {
+            _ => {
+                #(self.#nested_idents.set_normalized(id, value);)*
             }
         }
     };
@@ -1162,13 +1225,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
 
             fn get_normalized(&self, id: u32) -> Option<f64> {
-                let info = self.param_infos().into_iter().find(|i| i.id == id)?;
-                Some(info.range.normalize(self.get_plain(id)?))
+                match id {
+                    #(#get_normalized_arms)*
+                    #get_normalized_fallthrough
+                }
             }
 
             fn set_normalized(&self, id: u32, value: f64) {
-                if let Some(info) = self.param_infos().into_iter().find(|i| i.id == id) {
-                    self.set_plain(id, info.range.denormalize(value));
+                match id {
+                    #(#set_normalized_arms)*
+                    #set_normalized_fallthrough
                 }
             }
 

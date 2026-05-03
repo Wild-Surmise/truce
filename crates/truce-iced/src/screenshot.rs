@@ -39,8 +39,8 @@ where
     P: Params + 'static,
     M: IcedPlugin<P>,
 {
-    let w = (size.0 as f64 * scale) as u32;
-    let h = (size.1 as f64 * scale) as u32;
+    let w = truce_gui::to_physical_px(size.0, scale);
+    let h = truce_gui::to_physical_px(size.1, scale);
 
     // Create headless wgpu device. `PRIMARY` picks the platform-default
     // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so the

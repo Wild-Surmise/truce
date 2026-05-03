@@ -34,8 +34,8 @@ impl CpuBackend {
     /// internal pixmap is sized at `logical × scale` physical pixels.
     pub fn new(logical_w: u32, logical_h: u32, scale: f32) -> Option<Self> {
         let scale = scale.max(0.0);
-        let phys_w = ((logical_w.max(1) as f32) * scale).round().max(1.0) as u32;
-        let phys_h = ((logical_h.max(1) as f32) * scale).round().max(1.0) as u32;
+        let phys_w = crate::platform::to_physical_px(logical_w, scale as f64);
+        let phys_h = crate::platform::to_physical_px(logical_h, scale as f64);
         Pixmap::new(phys_w, phys_h).map(|pixmap| Self {
             pixmap,
             scale,
@@ -49,8 +49,8 @@ impl CpuBackend {
     /// the current pixmap.
     pub fn resize(&mut self, logical_w: u32, logical_h: u32, scale: f32) -> bool {
         let scale = scale.max(0.0);
-        let phys_w = ((logical_w.max(1) as f32) * scale).round().max(1.0) as u32;
-        let phys_h = ((logical_h.max(1) as f32) * scale).round().max(1.0) as u32;
+        let phys_w = crate::platform::to_physical_px(logical_w, scale as f64);
+        let phys_h = crate::platform::to_physical_px(logical_h, scale as f64);
         if phys_w == self.pixmap.width() && phys_h == self.pixmap.height() {
             self.scale = scale;
             return false;

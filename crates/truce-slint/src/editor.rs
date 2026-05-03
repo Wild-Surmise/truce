@@ -166,8 +166,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // without a corresponding window event.
         let cur_scale = self.scale.get() as f32;
         if cur_scale != self.last_applied_scale {
-            let phys_w = (self.width as f32 * cur_scale) as u32;
-            let phys_h = (self.height as f32 * cur_scale) as u32;
+            let phys_w = truce_gui::to_physical_px(self.width, cur_scale as f64);
+            let phys_h = truce_gui::to_physical_px(self.height, cur_scale as f64);
             self.slint_window
                 .window()
                 .dispatch_event(WindowEvent::ScaleFactorChanged {
@@ -196,8 +196,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         self.slint_window.request_redraw();
 
         // 4. Render Slint to pixel buffer
-        let phys_w = (self.width as f32 * self.last_applied_scale) as u32;
-        let phys_h = (self.height as f32 * self.last_applied_scale) as u32;
+        let phys_w = truce_gui::to_physical_px(self.width, self.last_applied_scale as f64);
+        let phys_h = truce_gui::to_physical_px(self.height, self.last_applied_scale as f64);
         platform::render_to_rgba(
             &self.slint_window,
             phys_w,
@@ -415,8 +415,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     .copied()
                     .unwrap_or(caps.formats[0]);
 
-                let phys_w = (lw as f64 * scale) as u32;
-                let phys_h = (lh as f64 * scale) as u32;
+                let phys_w = truce_gui::to_physical_px(lw, scale);
+                let phys_h = truce_gui::to_physical_px(lh, scale);
 
                 let surface_config = wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

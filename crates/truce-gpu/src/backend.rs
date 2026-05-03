@@ -335,8 +335,8 @@ impl WgpuBackend {
         logical_h: u32,
         scale: f32,
     ) -> Option<Self> {
-        let width = (logical_w as f32 * scale) as u32;
-        let height = (logical_h as f32 * scale) as u32;
+        let width = truce_gui::to_physical_px(logical_w, scale as f64);
+        let height = truce_gui::to_physical_px(logical_h, scale as f64);
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -687,8 +687,8 @@ impl WgpuBackend {
         scale: f32,
     ) -> Option<Self> {
         let scale = scale.max(0.0);
-        let width = ((max_logical_w.max(1) as f32) * scale).round().max(1.0) as u32;
-        let height = ((max_logical_h.max(1) as f32) * scale).round().max(1.0) as u32;
+        let width = truce_gui::to_physical_px(max_logical_w, scale as f64);
+        let height = truce_gui::to_physical_px(max_logical_h, scale as f64);
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -903,8 +903,8 @@ impl WgpuBackend {
     /// Only meaningful when the backend was built via [`Self::new`]; the
     /// surface-owning constructors drive their own frame lifecycle.
     pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
-        let phys_w = ((logical_w.max(1) as f32) * self.scale).round().max(1.0) as u32;
-        let phys_h = ((logical_h.max(1) as f32) * self.scale).round().max(1.0) as u32;
+        let phys_w = truce_gui::to_physical_px(logical_w, self.scale as f64);
+        let phys_h = truce_gui::to_physical_px(logical_h, self.scale as f64);
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
@@ -1094,8 +1094,8 @@ impl WgpuBackend {
     /// space as `BuiltinEditor::size()`). Returns `true` if the surface
     /// was actually reconfigured.
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
-        let new_w = (logical_w as f32 * self.scale) as u32;
-        let new_h = (logical_h as f32 * self.scale) as u32;
+        let new_w = truce_gui::to_physical_px(logical_w, self.scale as f64);
+        let new_h = truce_gui::to_physical_px(logical_h, self.scale as f64);
         if new_w == self.width && new_h == self.height {
             return false;
         }
@@ -1634,8 +1634,8 @@ impl WgpuBackend {
     /// Create a headless GPU backend (no window or surface).
     /// Used for snapshot testing.
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
-        let phys_w = (width as f32 * scale) as u32;
-        let phys_h = (height as f32 * scale) as u32;
+        let phys_w = truce_gui::to_physical_px(width, scale as f64);
+        let phys_h = truce_gui::to_physical_px(height, scale as f64);
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,

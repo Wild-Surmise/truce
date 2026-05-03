@@ -26,8 +26,8 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     platform::ensure_platform();
 
     let (width, height) = size;
-    let phys_w = (width as f32 * scale) as u32;
-    let phys_h = (height as f32 * scale) as u32;
+    let phys_w = truce_gui::to_physical_px(width, scale as f64);
+    let phys_h = truce_gui::to_physical_px(height, scale as f64);
 
     let window = platform::create_slint_window();
     window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
