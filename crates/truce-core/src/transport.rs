@@ -6,52 +6,109 @@
 //! UI code access to host tempo / play state / beat position without
 //! a format-specific callback.
 //!
-//! The audio-thread side uses `try_lock` and never blocks: if the UI
-//! thread happens to be reading at the instant of write, that block's
-//! update is skipped. At block-rate (typically every few ms) the next
-//! successful write is effectively-instantaneous from a visualizer's
-//! point of view.
+//! The implementation is a single-writer seqlock: the audio thread's
+//! write path takes no locks and always lands; UI readers retry on
+//! collision (the critical section is a single `TransportInfo` clone,
+//! a few hundred nanoseconds at worst). The previous `Mutex` design
+//! used `try_lock` on both sides and silently dropped audio-thread
+//! writes that happened to coincide with a UI read, so the visualizer
+//! could see stale tempo/beat values for one repaint frame.
 
-use std::sync::{Arc, Mutex};
+use std::cell::UnsafeCell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::events::TransportInfo;
 
-/// Lock-free-ish slot carrying the most recently-reported host
-/// [`TransportInfo`]. Held by format wrappers; exposed to editors via
-/// `EditorContext::transport`.
+/// Single-writer / multi-reader transport slot. Held by format
+/// wrappers; exposed to editors via `EditorContext::transport`.
 ///
 /// The audio thread calls [`TransportSlot::write`] each block; readers
 /// (UI thread, worker threads) call [`TransportSlot::read`].
 ///
-/// `populated` is set true on the first successful write so consumers
-/// can distinguish "host has not reported transport yet" from
-/// "host reported a default / stopped transport".
+/// The seq counter is 0 before any write, then alternates odd ("write
+/// in progress") / even ("write done") as `write` runs. `read` reads
+/// the counter, copies the data, re-reads the counter, and retries if
+/// either snapshot landed on a write-in-progress or the two reads
+/// disagree.
 pub struct TransportSlot {
-    inner: Mutex<Option<TransportInfo>>,
+    /// Sequence counter. 0 = uninitialized; even, non-zero = quiescent
+    /// after Nth write; odd = writer mid-update.
+    seq: AtomicU64,
+    /// Last-written transport. Written only by `write` (single writer
+    /// assumption — the audio-thread callback). Read under seqlock by
+    /// any number of `read`-calling threads.
+    data: UnsafeCell<TransportInfo>,
 }
+
+// Safety: writes are guarded by the seq counter so concurrent reads
+// detect torn states and retry; readers only observe the data when
+// seq is even and unchanged across the read.
+unsafe impl Sync for TransportSlot {}
+unsafe impl Send for TransportSlot {}
 
 impl TransportSlot {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(None),
+            seq: AtomicU64::new(0),
+            data: UnsafeCell::new(TransportInfo::default()),
         })
     }
 
     /// Realtime-safe write. Called on the audio thread at the top of
-    /// each process block. Skips the update silently if the UI thread
-    /// currently holds the read lock — the next block will write again.
+    /// each process block. Wait-free — never blocks, never drops.
+    ///
+    /// Single-writer: this assumes only one thread (the host's audio
+    /// callback) ever calls `write` on a given slot. Format wrappers
+    /// uphold this by giving each plugin instance its own slot.
     pub fn write(&self, info: &TransportInfo) {
-        if let Ok(mut g) = self.inner.try_lock() {
-            *g = Some(info.clone());
+        // The previous seq is even (or 0). Bump to the next odd value
+        // to mark "write in progress", do the write, then bump to the
+        // next even value to publish.
+        let s = self.seq.load(Ordering::Relaxed);
+        // Release on the odd→writing transition makes the data write
+        // visible to a reader that observes the matching even value
+        // after our second store.
+        self.seq.store(s.wrapping_add(1), Ordering::Release);
+        // SAFETY: single-writer invariant means no other thread writes
+        // `data` concurrently. Readers detect mid-update via the odd
+        // seq value.
+        unsafe {
+            *self.data.get() = info.clone();
         }
+        self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
 
     /// Read the most recently-reported transport info, or `None` if
     /// no host block has reported one yet.
+    ///
+    /// Bounded retry: each iteration is an Acquire-ordered counter
+    /// load and a `TransportInfo` clone. In the worst observable case
+    /// (writer scheduled out mid-update) the reader spins until the
+    /// writer resumes — typically nanoseconds; with thread preemption
+    /// in pathological scheduling, microseconds. We cap at 8 attempts
+    /// and bail out with `None` rather than potentially spin forever
+    /// — the editor next frame will read again.
     pub fn read(&self) -> Option<TransportInfo> {
-        // `try_lock` here too so the editor never blocks the audio
-        // thread's next write — if we collide we simply return None
-        // (caller treats this the same as "no transport yet").
-        self.inner.try_lock().ok().and_then(|g| g.clone())
+        for _ in 0..8 {
+            let s1 = self.seq.load(Ordering::Acquire);
+            if s1 == 0 {
+                return None;
+            }
+            if s1 & 1 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            // SAFETY: even seq means no writer is mid-update at the
+            // load above. The post-clone seq re-read confirms no
+            // writer started during the clone; if that fails we
+            // discard and retry rather than returning torn state.
+            let snapshot = unsafe { (*self.data.get()).clone() };
+            let s2 = self.seq.load(Ordering::Acquire);
+            if s1 == s2 {
+                return Some(snapshot);
+            }
+        }
+        None
     }
 }

@@ -28,9 +28,9 @@ pub mod prelude {
     pub use truce_core::custom_state::{State as StateTrait, StateBinding, StateField};
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
     pub use truce_core::{
-        AudioBuffer, BusConfig, BusLayout, ChannelConfig, Editor, EditorContext, Event, EventBody,
-        EventList, Plugin, PluginCategory, PluginExport, PluginInfo, ProcessContext, ProcessStatus,
-        TransportInfo,
+        AudioBuffer, BusConfig, BusKind, BusLayout, ChannelConfig, Editor, EditorContext, Event,
+        EventBody, EventList, Plugin, PluginCategory, PluginExport, PluginInfo, ProcessContext,
+        ProcessStatus, TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     pub use truce_params::{

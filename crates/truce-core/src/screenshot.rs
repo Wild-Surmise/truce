@@ -44,8 +44,16 @@ pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32
 /// `state_file` paths and the `cargo truce screenshot --state` flag
 /// both ride on this entry point.
 pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
-    let mut editor = <P as Plugin>::editor(plugin)
-        .expect("plugin returned no editor: Plugin::editor() returned None and layout() was empty");
+    let mut editor = <P as Plugin>::editor(plugin).unwrap_or_else(|| {
+        panic!(
+            "plugin {} returned no editor: Plugin::editor() returned None. \
+             Implement `fn editor(&mut self)` on your plugin (or one of \
+             the built-in editor wrappers — truce-gpu / truce-egui / \
+             truce-iced / truce-slint) so screenshot rendering has \
+             something to draw.",
+            std::any::type_name::<P>()
+        )
+    });
     // `PluginExport::Params` is the concrete params type the
     // `plugin!` macro wired up. Hand the editor the live params Arc
     // (so any state we pre-loaded into `plugin` flows through), erased

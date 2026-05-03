@@ -15,7 +15,7 @@ pub mod util;
 pub mod wrapper;
 
 pub use buffer::{AudioBuffer, RawBufferScratch};
-pub use bus::{BusConfig, BusLayout, ChannelConfig};
+pub use bus::{BusConfig, BusKind, BusLayout, ChannelConfig};
 pub use editor::{Editor, EditorContext};
 pub use events::{Event, EventBody, EventList, TransportInfo};
 pub use export::PluginExport;
