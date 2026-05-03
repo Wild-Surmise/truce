@@ -158,9 +158,17 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         pressure: ev.data2 as f32 / 127.0,
                     }),
                     0xF0 => {
-                        // Note expression: data1=typeId, data2=value*127, _pad=noteId
+                        // Note expression: data1=typeId, data2=value*127, _pad=noteId.
+                        // Spec says data2 ∈ 0..=127, but the C++ shim isn't required
+                        // to clamp — values 128..=255 are ABI-legal. Clamp first
+                        // and scale through u64 so the multiplication can't wrap
+                        // (the previous `data2 * (u32::MAX / 127)` overflowed u32
+                        // for any data2 ≥ 128, and undershot full range — `u32::MAX
+                        // / 127` truncates, so even data2 == 127 stopped 15 short
+                        // of u32::MAX). Now data2 == 127 maps to exactly u32::MAX.
                         let type_id = ev.data1;
-                        let value = ev.data2 as u32 * (0xFFFFFFFF / 127);
+                        let data2_clamped = ev.data2.min(127) as u64;
+                        let value = (data2_clamped * u32::MAX as u64 / 127) as u32;
                         let note = ev._pad;
                         match type_id {
                             0 => Some(EventBody::PerNoteCC {

@@ -19,6 +19,14 @@ use crate::traits::PluginLogic;
 type ProbeFn = fn() -> Box<dyn PluginLogic>;
 type CreateFn = fn(*const ()) -> Box<dyn PluginLogic>;
 
+/// Verified candidate dylib + instance, ready to swap in.
+struct Candidate {
+    library: Library,
+    plugin: Box<dyn PluginLogic>,
+    hash: u32,
+    mtime: SystemTime,
+}
+
 /// Manages a hot-reloadable plugin dylib.
 pub struct NativeLoader {
     dylib_path: PathBuf,
@@ -75,21 +83,18 @@ impl NativeLoader {
         loader
     }
 
-    /// Load (or reload) the dylib.
-    fn load(&mut self) -> bool {
-        // CRC32 check: skip if content hasn't changed.
+    /// Build, verify, and instantiate a fresh dylib at `dylib_path`.
+    /// Does not touch `self.library` / `self.plugin`. Caller decides
+    /// whether to swap the old state out for the result.
+    fn build_candidate(&mut self) -> Option<Candidate> {
         let new_hash = crc32_file(&self.dylib_path);
-        if new_hash == self.last_hash && self.library.is_some() {
-            log::debug!("dylib unchanged (CRC32 match), skipping reload");
-            return true;
-        }
 
         // Copy to versioned temp path to defeat macOS dyld cache.
         let temp = match self.copy_versioned() {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("failed to copy dylib: {e}");
-                return false;
+                return None;
             }
         };
 
@@ -101,22 +106,20 @@ impl NativeLoader {
                 .output();
         }
 
-        // dlopen.
         let lib = match unsafe { Library::new(&temp) } {
             Ok(l) => l,
             Err(e) => {
                 log::warn!("dlopen failed: {e}");
                 let _ = std::fs::remove_file(&temp);
-                return false;
+                return None;
             }
         };
 
-        // Canary check.
         let canary_fn: Symbol<fn() -> AbiCanary> = match unsafe { lib.get(b"truce_abi_canary") } {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_abi_canary export: {e}");
-                return false;
+                return None;
             }
         };
         let dylib_canary = canary_fn();
@@ -126,67 +129,93 @@ impl NativeLoader {
                 "ABI mismatch — rebuild both shell and logic:\n{}",
                 shell_canary.diff_report(&dylib_canary)
             );
-            return false;
+            return None;
         }
 
-        // Vtable probe.
         let probe_fn: Symbol<ProbeFn> = match unsafe { lib.get(b"truce_vtable_probe") } {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_vtable_probe export: {e}");
-                return false;
+                return None;
             }
         };
         let probe = probe_fn();
         if let Err(msg) = verify_probe(probe.as_ref()) {
             log::error!("vtable probe failed: {msg}");
-            return false;
+            return None;
         }
         drop(probe);
 
-        // Load the real plugin.
         let create_fn: Symbol<CreateFn> = match unsafe { lib.get(b"truce_create") } {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_create export: {e}");
-                return false;
+                return None;
             }
         };
         let plugin = create_fn(self.params_ptr);
 
-        self.library = Some(lib);
-        self.plugin = Some(plugin);
-        self.last_modified = file_mtime(&self.dylib_path);
-        self.last_hash = new_hash;
-
-        log::info!("loaded plugin dylib: {}", self.dylib_path.display());
-        true
+        Some(Candidate {
+            library: lib,
+            plugin,
+            hash: new_hash,
+            mtime: file_mtime(&self.dylib_path),
+        })
     }
 
-    /// Reload the dylib. Saves state from the old instance, loads the
-    /// new dylib, creates a new instance, and restores state.
+    /// Initial load. Called from `new()`.
+    fn load(&mut self) -> bool {
+        let new_hash = crc32_file(&self.dylib_path);
+        if new_hash == self.last_hash && self.library.is_some() {
+            log::debug!("dylib unchanged (CRC32 match), skipping reload");
+            return true;
+        }
+        match self.build_candidate() {
+            Some(cand) => {
+                self.library = Some(cand.library);
+                self.plugin = Some(cand.plugin);
+                self.last_hash = cand.hash;
+                self.last_modified = cand.mtime;
+                log::info!("loaded plugin dylib: {}", self.dylib_path.display());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Reload the dylib. Verifies the *new* dylib first; only drops the
+    /// old plugin/library after the candidate is fully constructed, so a
+    /// failed canary or vtable probe leaves the host with the previous
+    /// plugin still loaded instead of silence.
     pub fn reload(&mut self) -> bool {
         self.reload_pending.store(false, Ordering::Relaxed);
 
-        // Save state from old instance.
+        let new_hash = crc32_file(&self.dylib_path);
+        if new_hash == self.last_hash && self.library.is_some() {
+            log::debug!("dylib unchanged (CRC32 match), skipping reload");
+            return true;
+        }
+
+        // Build + verify the candidate while the old plugin is still alive.
+        let Some(candidate) = self.build_candidate() else {
+            log::warn!("hot-reload failed; keeping previous plugin loaded");
+            return false;
+        };
+
+        // Save state from the old instance, then swap.
         let state = self.plugin.as_ref().map(|p| p.save_state());
-
-        // Drop old plugin BEFORE leaking old library (plugin's drop
-        // impl lives in the old library).
+        // Drop old plugin before leaking the library (plugin's `Drop`
+        // lives in that library).
         self.plugin = None;
-
-        // Leak old library handle (never dlclose Rust dylibs).
         if let Some(old) = self.library.take() {
             self.leaked_handles.push(old);
         }
 
-        // Load new.
-        if !self.load() {
-            log::warn!("hot-reload failed, plugin unavailable");
-            return false;
-        }
+        self.library = Some(candidate.library);
+        self.plugin = Some(candidate.plugin);
+        self.last_hash = candidate.hash;
+        self.last_modified = candidate.mtime;
 
-        // Restore state.
         if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut())
             && !state.is_empty()
         {
@@ -243,18 +272,33 @@ impl Drop for NativeLoader {
     }
 }
 
-/// File watcher loop. Polls mtime every 500ms.
+/// File watcher loop. Polls mtime ~every 500ms, but checks the stop flag
+/// every 50ms so dropping the loader doesn't block waiting for the next
+/// poll cycle.
 fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+    const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
+    let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
+
     let mut last_mtime = file_mtime(path);
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if stop.load(Ordering::Relaxed) {
-            return;
+    while !stop.load(Ordering::Relaxed) {
+        for _ in 0..chunks {
+            std::thread::sleep(STOP_CHECK);
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
         }
         let mtime = file_mtime(path);
         if mtime > last_mtime {
-            // Wait for compiler to finish writing.
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            // Wait for compiler to finish writing — also broken into
+            // STOP_CHECK chunks so a Drop during the settle window
+            // doesn't have to wait the full 200ms.
+            for _ in 0..(200 / STOP_CHECK.as_millis() as u32) {
+                std::thread::sleep(STOP_CHECK);
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
             last_mtime = file_mtime(path);
             flag.store(true, Ordering::Relaxed);
         }

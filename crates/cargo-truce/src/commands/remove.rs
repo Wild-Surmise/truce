@@ -29,12 +29,18 @@ fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
             .args(["-r", "-i", &pattern])
             .output();
     }
-    let _ = Command::new(
-        "/System/Library/Frameworks/CoreServices.framework/\
-         Frameworks/LaunchServices.framework/Support/lsregister",
-    )
-    .args(["-u", app_path.to_str().unwrap_or("")])
-    .output();
+    // `lsregister -u ""` interprets the empty string as the current
+    // directory and unregisters whatever app-bundle the CWD happens to
+    // be — alarming if the user invoked `cargo truce remove` from inside
+    // some other `.app`. Skip the call instead.
+    if let Some(app_path_str) = app_path.to_str() {
+        let _ = Command::new(
+            "/System/Library/Frameworks/CoreServices.framework/\
+             Frameworks/LaunchServices.framework/Support/lsregister",
+        )
+        .args(["-u", app_path_str])
+        .output();
+    }
 }
 
 fn clear_au_caches() {
@@ -451,13 +457,15 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 .find(|p| t.path == Path::new(&format!("/Applications/{}.app", p.au3_app_name())));
             if let Some(p) = matched_plugin {
                 unregister_au3(&config, p, &t.path);
-            } else {
-                // Stale AU v3 — unregister by path only (lsregister)
+            } else if let Some(path_str) = t.path.to_str() {
+                // Stale AU v3 — unregister by path only (lsregister).
+                // Skip the call when the path can't be UTF-8'd: `lsregister
+                // -u ""` would unregister whatever app the CWD happens to be.
                 let _ = Command::new(
                     "/System/Library/Frameworks/CoreServices.framework/\
                      Frameworks/LaunchServices.framework/Support/lsregister",
                 )
-                .args(["-u", t.path.to_str().unwrap_or("")])
+                .args(["-u", path_str])
                 .output();
             }
             removed_au = true;

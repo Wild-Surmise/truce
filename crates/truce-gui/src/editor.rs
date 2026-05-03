@@ -518,7 +518,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         .expect("failed to create wgpu surface");
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
+        power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: Some(&surface),
         force_fallback_adapter: false,
     }))

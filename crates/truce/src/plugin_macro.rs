@@ -214,13 +214,19 @@ macro_rules! __plugin_hot_reload {
                 // "release"). Captured into the shell binary so the
                 // DAW process doesn't need any env at runtime.
                 let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
-                let lib_name: String;
-                #[cfg(target_os = "macos")]
-                { lib_name = format!("lib{crate_name}.dylib"); }
-                #[cfg(target_os = "linux")]
-                { lib_name = format!("lib{crate_name}.so"); }
-                #[cfg(target_os = "windows")]
-                { lib_name = format!("{crate_name}.dll"); }
+                // Single `if cfg!()` chain, not separate `#[cfg]` arms —
+                // the latter pattern looks like `lib_name` is reassigned
+                // (warning: `unused_assignments`) and silently leaves it
+                // uninitialized on a future target_os we forgot to add.
+                let lib_name: String = if cfg!(target_os = "macos") {
+                    format!("lib{crate_name}.dylib")
+                } else if cfg!(target_os = "linux") {
+                    format!("lib{crate_name}.so")
+                } else if cfg!(target_os = "windows") {
+                    format!("{crate_name}.dll")
+                } else {
+                    panic!("truce hot-reload: unsupported target_os");
+                };
 
                 let profile = option_env!("TRUCE_LOGIC_PROFILE").unwrap_or("release");
 
@@ -233,16 +239,34 @@ macro_rules! __plugin_hot_reload {
                 // Fallback for shells built without truce-build (or
                 // pre-0.13 truce-build versions): walk up from
                 // CARGO_MANIFEST_DIR looking for `target/`.
-                let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                loop {
+                let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                let mut root = manifest_dir.clone();
+                let workspace_root = loop {
                     if root.join("target").is_dir() {
-                        break;
+                        break Some(root);
                     }
                     if !root.pop() {
-                        root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                        break;
+                        break None;
                     }
-                }
+                };
+                let Some(mut root) = workspace_root else {
+                    // No `target/` in any ancestor — silently falling
+                    // back to `CARGO_MANIFEST_DIR/target/` would have
+                    // produced a path that never exists in workspace
+                    // layouts, surfacing as a confusing runtime "dylib
+                    // not found". Crash with a clear message instead;
+                    // the plugin author needs to either set
+                    // `TRUCE_LOGIC_PATH`, run via `truce-build`, or fix
+                    // their workspace layout.
+                    panic!(
+                        "truce hot-reload: no `target/` found in any \
+                         ancestor of CARGO_MANIFEST_DIR ({}). Set \
+                         TRUCE_LOGIC_PATH to the dylib explicitly, or \
+                         build via truce-build so TRUCE_TARGET_DIR is baked \
+                         in at compile time.",
+                        manifest_dir.display()
+                    );
+                };
                 root.push("target");
                 root.push(profile);
                 root.push(lib_name);

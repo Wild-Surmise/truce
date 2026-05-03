@@ -95,6 +95,11 @@ struct GlyphAtlas {
     glyphs: HashMap<(char, u32), GlyphUV>,
     /// Pending pixel uploads: (x, y, w, h, data).
     pending: Vec<(u32, u32, u32, u32, Vec<u8>)>,
+    /// Set when `ensure_glyph` couldn't fit a new glyph. The next call to
+    /// `WgpuBackend::clear` evicts the cache so subsequent frames can
+    /// re-rasterize from scratch — never mid-frame, which would invalidate
+    /// UVs the current frame's vertex buffer already references.
+    overflow_pending: bool,
 }
 
 impl GlyphAtlas {
@@ -105,6 +110,7 @@ impl GlyphAtlas {
             cursor_x: 0,
             glyphs: HashMap::new(),
             pending: Vec::new(),
+            overflow_pending: false,
         }
     }
 
@@ -113,56 +119,63 @@ impl GlyphAtlas {
         self.shelf_h = 0;
         self.cursor_x = 0;
         self.glyphs.clear();
+        self.overflow_pending = false;
     }
 
-    /// Ensure a glyph is in the atlas, rasterizing and packing it if needed.
-    /// Returns the UV entry.
-    fn ensure_glyph(&mut self, font: &fontdue::Font, ch: char, size: f32) -> &GlyphUV {
+    /// Try to place a glyph in the atlas. On overflow, sets
+    /// `overflow_pending` and returns without inserting; caller must
+    /// tolerate a missing entry for the rest of this frame. Subsequent
+    /// frames clear the atlas at frame start and re-rasterize.
+    fn ensure_glyph(&mut self, font: &fontdue::Font, ch: char, size: f32) {
         let key = (ch, (size * 10.0) as u32);
-        if !self.glyphs.contains_key(&key) {
-            let (metrics, bitmap) = font.rasterize(ch, size);
-            let gw = metrics.width as u32;
-            let gh = metrics.height as u32;
-
-            // Shelf-pack: does it fit on the current shelf?
-            if self.cursor_x + gw > ATLAS_SIZE {
-                // Start new shelf
-                self.shelf_y += self.shelf_h;
-                self.shelf_h = 0;
-                self.cursor_x = 0;
-            }
-            if self.shelf_y + gh > ATLAS_SIZE {
-                // Atlas full — clear and re-pack (rare)
-                self.clear();
-            }
-
-            let x = self.cursor_x;
-            let y = self.shelf_y;
-            self.cursor_x += gw;
-            self.shelf_h = self.shelf_h.max(gh);
-
-            let u0 = x as f32 / ATLAS_SIZE as f32;
-            let v0 = y as f32 / ATLAS_SIZE as f32;
-            let u1 = (x + gw) as f32 / ATLAS_SIZE as f32;
-            let v1 = (y + gh) as f32 / ATLAS_SIZE as f32;
-
-            self.pending.push((x, y, gw, gh, bitmap));
-
-            self.glyphs.insert(
-                key,
-                GlyphUV {
-                    u0,
-                    v0,
-                    u1,
-                    v1,
-                    advance: metrics.advance_width,
-                    width: gw as f32,
-                    height: gh as f32,
-                    y_offset: metrics.ymin as f32,
-                },
-            );
+        if self.glyphs.contains_key(&key) {
+            return;
         }
-        self.glyphs.get(&key).unwrap()
+        let (metrics, bitmap) = font.rasterize(ch, size);
+        let gw = metrics.width as u32;
+        let gh = metrics.height as u32;
+
+        // Shelf-pack: does it fit on the current shelf?
+        if self.cursor_x + gw > ATLAS_SIZE {
+            self.shelf_y += self.shelf_h;
+            self.shelf_h = 0;
+            self.cursor_x = 0;
+        }
+        if self.shelf_y + gh > ATLAS_SIZE {
+            // Atlas full. Calling self.clear() here would wipe entries
+            // the current frame's vertex buffer still references and
+            // evict glyphs that earlier draw_text iterations expect to
+            // look up — at best wrong UVs, at worst a HashMap lookup
+            // panic. Defer the clear to the next frame boundary.
+            self.overflow_pending = true;
+            return;
+        }
+
+        let x = self.cursor_x;
+        let y = self.shelf_y;
+        self.cursor_x += gw;
+        self.shelf_h = self.shelf_h.max(gh);
+
+        let u0 = x as f32 / ATLAS_SIZE as f32;
+        let v0 = y as f32 / ATLAS_SIZE as f32;
+        let u1 = (x + gw) as f32 / ATLAS_SIZE as f32;
+        let v1 = (y + gh) as f32 / ATLAS_SIZE as f32;
+
+        self.pending.push((x, y, gw, gh, bitmap));
+
+        self.glyphs.insert(
+            key,
+            GlyphUV {
+                u0,
+                v0,
+                u1,
+                v1,
+                advance: metrics.advance_width,
+                width: gw as f32,
+                height: gh as f32,
+                y_offset: metrics.ymin as f32,
+            },
+        );
     }
 }
 
@@ -326,7 +339,7 @@ impl WgpuBackend {
         let height = (logical_h as f32 * scale) as u32;
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
+            power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))?;
@@ -1216,6 +1229,13 @@ impl RenderBackend for WgpuBackend {
         self.indices.clear();
         self.batches.clear();
         self.clear_pending = true;
+        // If a previous frame hit atlas overflow, do the eviction at the
+        // frame boundary now — past frames' vertex buffers are gone, so
+        // dropping the UV cache is safe. Glyphs re-rasterize lazily as
+        // draw_text walks them this frame.
+        if self.glyph_atlas.overflow_pending {
+            self.glyph_atlas.clear();
+        }
     }
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
@@ -1322,18 +1342,19 @@ impl RenderBackend for WgpuBackend {
             self.glyph_atlas.ensure_glyph(&self.font, ch, phys_size);
         }
 
-        let glyph_quads: Vec<_> = chars
-            .iter()
-            .map(|&ch| {
-                let key = (ch, (phys_size * 10.0) as u32);
-                let g = &self.glyph_atlas.glyphs[&key];
-                (
-                    g.u0, g.v0, g.u1, g.v1, g.width, g.height, g.y_offset, g.advance,
-                )
-            })
-            .collect();
-
-        for (u0, v0, u1, v1, gw, gh, y_off, advance) in glyph_quads {
+        // `.get` rather than `[..]` — when the atlas overflows mid-frame,
+        // `ensure_glyph` skips the insert (see GlyphAtlas::ensure_glyph)
+        // and we want to drop the missing glyph silently rather than
+        // panic on lookup. The next frame clears the atlas and these
+        // glyphs come back.
+        for &ch in &chars {
+            let key = (ch, (phys_size * 10.0) as u32);
+            let Some(g) = self.glyph_atlas.glyphs.get(&key) else {
+                continue;
+            };
+            let (u0, v0, u1, v1, gw, gh, y_off, advance) = (
+                g.u0, g.v0, g.u1, g.v1, g.width, g.height, g.y_offset, g.advance,
+            );
             let gx = cursor_x;
             let gy = y * s + ascent - y_off - gh;
 
@@ -1478,8 +1499,13 @@ impl RenderBackend for WgpuBackend {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Upload geometry
         if self.vertices.is_empty() {
+            // No draws this frame, but the surface is double/triple-buffered
+            // — without a render pass the swap chain shows whatever was
+            // there before (often the second-prior frame, producing a
+            // visible flicker on idle). Issue a clear-only pass so the
+            // surface ends up at `clear_color`.
+            self.clear_only_pass(&frame_view);
             frame.present();
             return;
         }
@@ -1490,6 +1516,34 @@ impl RenderBackend for WgpuBackend {
 }
 
 impl WgpuBackend {
+    /// Issue a render pass that only clears the surface to `clear_color`.
+    /// Used by `present()` when there is no geometry — without it the swap
+    /// chain would show stale buffer contents.
+    fn clear_only_pass(&mut self, resolve_target: &wgpu::TextureView) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear-only"),
+            });
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear-only"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_texture,
+                    resolve_target: Some(resolve_target),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
     /// Render accumulated geometry to a texture view (shared by present + headless).
     fn render_pass(&mut self, resolve_target: &wgpu::TextureView) {
         let vertex_buffer = self
@@ -1584,7 +1638,7 @@ impl WgpuBackend {
         });
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
+            power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
         }))?;
@@ -1907,6 +1961,25 @@ impl WgpuBackend {
         }
         drop(mapped);
         readback_buf.unmap();
+
+        // Shader writes premultiplied alpha (BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        // but downstream consumers — `truce-test`'s reference-PNG comparison
+        // and `cargo truce screenshot` output — assume straight RGBA, the
+        // same convention `truce-slint::screenshot::render_with_state` uses.
+        // Un-premultiply here so the GPU readback matches the headless
+        // contract instead of leaking the GPU's internal format.
+        for px in pixels.chunks_exact_mut(4) {
+            let a = px[3];
+            if a == 0 || a == 255 {
+                continue;
+            }
+            let a16 = a as u16;
+            // Round to nearest: (c * 255 + a/2) / a.
+            px[0] = (((px[0] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
+            px[1] = (((px[1] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
+            px[2] = (((px[2] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
+        }
+
         pixels
     }
 }
@@ -2004,7 +2077,7 @@ mod tests {
         });
         let adapter =
             match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })) {
