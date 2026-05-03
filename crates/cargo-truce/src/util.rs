@@ -570,6 +570,8 @@ pub(crate) fn run_silent(cmd: &str, args: &[&str]) {
         .status();
 }
 
+// Gated to macOS: only `cmd_status` (macOS impl) shells out to `auval`.
+#[cfg(target_os = "macos")]
 pub(crate) fn run_quiet(cmd: &str, args: &[&str]) -> std::result::Result<String, BoxErr> {
     let output = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
