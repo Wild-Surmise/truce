@@ -174,18 +174,39 @@ gui_screenshot_<name>` + `cp` for closure-driven baselines.)
 
 ## Tolerance
 
-The default tolerance is 0 (strict pixel match). Bump it via
-`.tolerance(n)` if anti-aliasing or font hinting introduces
-flake:
+Comparison runs at pixel granularity (one count per RGBA pixel,
+not per byte) with two independent knobs:
+
+- `.tolerance(n)` — how many *noticeably* different pixels are
+  allowed. `0` = strict.
+- `.pixel_threshold(d: u8)` — how big a per-channel delta has to
+  be before a pixel counts as "noticeable" at all. `0` = strict
+  (any byte difference counts).
+
+A pixel only consumes the `tolerance` budget if at least one of
+its R/G/B/A channels differs from the reference by more than
+`pixel_threshold`. This lets you absorb sub-perceptual drift
+(rasterizer / driver / font-hinting wobble of 1–3/255) without
+inflating `tolerance` to numbers that would also hide real
+regressions:
 
 ```rust
 truce_test::screenshot!(Plugin, "screenshots/default.png")
-    .tolerance(200)
+    .pixel_threshold(2)   // ignore ≤2/255 channel drift
+    .tolerance(50)        // up to 50 visibly-different pixels OK
     .run();
 ```
 
-Typical bumps are 50–500 pixels for cross-machine antialiasing
-slack.
+Practical values for `pixel_threshold`: `1`–`3` rides out the
+drift you get across machines; `8`+ starts to mask things a human
+would notice. Typical `tolerance` bumps are 50–500 pixels for
+local AA flake on top of a sane threshold.
+
+When a tolerance gate fails, the panic message includes the
+largest single channel delta seen in the diff — useful for
+deciding whether to bump `pixel_threshold` (drift was sub-
+perceptual but slightly above your current threshold) or fix the
+regression (a few pixels jumped by a lot).
 
 ## Cross-OS rendering
 
@@ -211,32 +232,42 @@ fn gui_screenshot() {
 }
 ```
 
-**Option B — per-platform references.** One test per OS, each
-gated by `cfg(target_os = …)`, each with its own committed
-reference:
+**Option B — per-platform references with sub-perceptual slack.**
+One test per OS, each gated by `cfg(target_os = …)`, each with
+its own committed reference. The non-baseline platforms (the ones
+where you didn't bake the reference) bump `pixel_threshold` to
+absorb the small per-channel drift you get between driver
+versions / GPUs on the same OS:
 
 ```rust
 #[cfg(target_os = "macos")]
 #[test]
 fn gui_screenshot_macos() {
+    // Baseline host: strict. Drift here means a real regression.
     truce_test::screenshot!(Plugin, "screenshots/default_macos.png").run();
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn gui_screenshot_linux() {
-    truce_test::screenshot!(Plugin, "screenshots/default_linux.png").run();
+    truce_test::screenshot!(Plugin, "screenshots/default_linux.png")
+        .pixel_threshold(2)
+        .run();
 }
 
 #[cfg(target_os = "windows")]
 #[test]
 fn gui_screenshot_windows() {
-    truce_test::screenshot!(Plugin, "screenshots/default_windows.png").run();
+    truce_test::screenshot!(Plugin, "screenshots/default_windows.png")
+        .pixel_threshold(2)
+        .run();
 }
 ```
 
 `cargo test` on each platform compiles only its variant; cross-OS
-rasterizer drift can't fail the wrong test. The in-tree examples
+rasterizer drift can't fail the wrong test. `pixel_threshold(2)`
+on the non-baseline runs absorbs sub-perceptual driver / GPU
+drift without masking visible regressions. The in-tree examples
 (`examples/truce-example-*`) use this pattern.
 
 ## API reference
