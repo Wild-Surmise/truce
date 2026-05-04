@@ -30,13 +30,13 @@ impl<'a, M: Clone + Debug + 'static> ToggleWidget<'a, M> {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let id = self.id;
 

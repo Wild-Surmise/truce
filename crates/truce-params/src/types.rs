@@ -34,7 +34,7 @@ pub struct FloatParam {
 }
 
 impl FloatParam {
-    #[must_use] 
+    #[must_use]
     pub fn new(info: ParamInfo, smoothing: SmoothingStyle) -> Self {
         let default = info.default_plain;
         let smoother = Smoother::new(smoothing);
@@ -113,7 +113,7 @@ impl BoolParam {
     /// `false` literals for bool params (which it emits as `0.0` /
     /// `1.0`), so this assertion fires only when a user constructs
     /// a `BoolParam` from hand-rolled `ParamInfo`.
-    #[must_use] 
+    #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = match info.default_plain {
             0.0 => false,
@@ -166,7 +166,7 @@ impl IntParam {
     #[allow(
         clippy::float_cmp,
         clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
+        clippy::cast_precision_loss
     )]
     #[must_use]
     pub fn new(info: ParamInfo) -> Self {
@@ -244,7 +244,7 @@ impl<E: ParamEnum> EnumParam<E> {
     #[allow(
         clippy::float_cmp,
         clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
+        clippy::cast_sign_loss
     )]
     #[must_use]
     pub fn new(info: ParamInfo) -> Self {
@@ -356,7 +356,7 @@ pub struct MeterSlot {
 }
 
 impl MeterSlot {
-    #[must_use] 
+    #[must_use]
     pub fn id(&self) -> u32 {
         self.id
     }

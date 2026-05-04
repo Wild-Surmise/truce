@@ -25,8 +25,19 @@ mod windows_manifest;
 pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
 pub(crate) use commands::package::PkgFormat;
-pub(crate) use config::{deployment_target, load_config, Config, PluginDef, resolve_aax_sdk_path, PackagingConfig};
-pub(crate) use util::{detect_default_features, project_root, MacArch, extract_team_id, cargo_build, release_lib, locate_wraptool_macos, rustup_has_target, tag_info, check_cmd, find_on_path, tag_fail, tag_ok, tag_warn, codesign_bundle, run_sudo, tmp_dir, cargo_build_for_arch, is_production_identity, lipo_into, release_lib_for_target, run_silent, pace_sign_aax_macos, copy_dir_recursive, read_workspace_version, confirm_prompt, cargo_build_debug, target_dir, run_quiet, vprintln, verify_shell_profile_declared, set_build_profile, write_hot_reload_config, set_debug_profile, log_output, log_skip, take_outputs, take_skipped, run_codesign, is_debug_profile};
+pub(crate) use config::{
+    Config, PackagingConfig, PluginDef, deployment_target, load_config, resolve_aax_sdk_path,
+};
+pub(crate) use util::{
+    MacArch, cargo_build, cargo_build_debug, cargo_build_for_arch, check_cmd, codesign_bundle,
+    confirm_prompt, copy_dir_recursive, detect_default_features, extract_team_id, find_on_path,
+    is_debug_profile, is_production_identity, lipo_into, locate_wraptool_macos, log_output,
+    log_skip, pace_sign_aax_macos, project_root, read_workspace_version, release_lib,
+    release_lib_for_target, run_codesign, run_quiet, run_silent, run_sudo, rustup_has_target,
+    set_build_profile, set_debug_profile, tag_fail, tag_info, tag_ok, tag_warn, take_outputs,
+    take_skipped, target_dir, tmp_dir, verify_shell_profile_declared, vprintln,
+    write_hot_reload_config,
+};
 
 use std::process::ExitCode;
 
@@ -39,7 +50,7 @@ pub(crate) type BoxErr = Box<dyn std::error::Error>;
 /// arg-stripping live in `main.rs`. Unknown commands here surface
 /// back to the caller as an error so `main` can render its own help
 /// block.
-#[must_use] 
+#[must_use]
 pub fn run(args: &[String]) -> ExitCode {
     // Strip global `-v` / `--verbose` from anywhere in the arg list.
     // Setting the static once here means every subcommand picks it up

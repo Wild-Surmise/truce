@@ -154,7 +154,7 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::cast_possible_wrap,
-    clippy::many_single_char_names,
+    clippy::many_single_char_names
 )]
 pub fn draw_text_fontdue(
     pixmap_data: &mut [u8],
@@ -243,7 +243,7 @@ pub fn draw_text_fontdue(
 }
 
 /// Measure text width in pixels.
-#[must_use] 
+#[must_use]
 pub fn text_width_fontdue(text: &str, size: f32) -> f32 {
     with_cache(|cache| {
         let mut width = 0.0f32;

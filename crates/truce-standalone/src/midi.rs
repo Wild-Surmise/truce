@@ -92,11 +92,10 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
                     std::thread::sleep(HOTPLUG_POLL);
                     continue;
                 };
-                midi_in.ports().iter().any(|p| {
-                    midi_in
-                        .port_name(p)
-                        .is_ok_and(|n| n == current_name)
-                })
+                midi_in
+                    .ports()
+                    .iter()
+                    .any(|p| midi_in.port_name(p).is_ok_and(|n| n == current_name))
             };
             if !still_present {
                 eprintln!(

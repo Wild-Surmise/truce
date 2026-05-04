@@ -517,7 +517,8 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
     let target = args.last().copied().unwrap_or("?");
     let target_label = std::path::Path::new(target)
-        .file_name().map_or_else(|| target.to_string(), |n| n.to_string_lossy().into_owned());
+        .file_name()
+        .map_or_else(|| target.to_string(), |n| n.to_string_lossy().into_owned());
     let is_verify = args.contains(&"--verify");
     let (verb_present, verb_past) = if is_verify {
         ("verify", "verified")

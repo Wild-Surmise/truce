@@ -209,7 +209,9 @@ impl Scaffold {
     /// emit lint-noisy boilerplate that would surface in every user's
     /// project.
     fn cargo_clippy(&self) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = build_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let out = Command::new("cargo")
             .args([
                 "clippy",
@@ -247,7 +249,9 @@ impl Scaffold {
         bin: &str,
         features: &[&str],
     ) -> Result<PathBuf, String> {
-        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = build_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cmd = Command::new("cargo");
         cmd.arg("build").args(["--package", package, "--bin", bin]);
         if !features.is_empty() {
@@ -286,7 +290,9 @@ impl Scaffold {
     /// Shared body for `cargo check` / `cargo build` / `cargo test`.
     /// All hold `build_lock` (cache safety) and share the target dir.
     fn run_cargo(&self, subcommand: &str) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = build_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let out = Command::new("cargo")
             .arg(subcommand)
             .arg("--workspace")
@@ -319,7 +325,9 @@ impl Scaffold {
     /// outputs. xtask honors this env var for both inner cargo
     /// invocations and its own staging-path resolution.
     fn truce_subcommand(&self, args: &[&str]) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = build_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Wipe the staged-bundles dir so this test's assertions don't
         // pick up artifacts from earlier `truce_subcommand` runs.
         // Cargo build artifacts under `release/` survive — that's the

@@ -148,7 +148,11 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
     let au_manufacturer = &config.vendor.au_manufacturer;
 
-    let aax_category = if let Some(cat) = &plugin.aax_category { quote! { Some(#cat) } } else { quote! { None } };
+    let aax_category = if let Some(cat) = &plugin.aax_category {
+        quote! { Some(#cat) }
+    } else {
+        quote! { None }
+    };
 
     let expanded = quote! {
         ::truce::core::PluginInfo {
@@ -709,7 +713,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             clippy::float_cmp,
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
-            clippy::cast_precision_loss,
+            clippy::cast_precision_loss
         )]
         let invalid = match f.kind {
             ParamKind::Bool => d != 0.0 && d != 1.0,
@@ -737,9 +741,17 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         },
     };
 
-    let unit = if let Some(u) = &a.unit { parse_unit_tokens(u) } else { quote! { ::truce::params::ParamUnit::None } };
+    let unit = if let Some(u) = &a.unit {
+        parse_unit_tokens(u)
+    } else {
+        quote! { ::truce::params::ParamUnit::None }
+    };
 
-    let flags = if let Some(fl) = &a.flags { parse_flags_tokens(fl) } else { quote! { ::truce::params::ParamFlags::AUTOMATABLE } };
+    let flags = if let Some(fl) = &a.flags {
+        parse_flags_tokens(fl)
+    } else {
+        quote! { ::truce::params::ParamFlags::AUTOMATABLE }
+    };
 
     Some(quote! {
         ::truce::params::ParamInfo {
@@ -783,12 +795,12 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
             clippy::float_cmp,
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
-            clippy::cast_precision_loss,
+            clippy::cast_precision_loss
         )]
         let err = match f.kind {
-            ParamKind::Bool if d != 0.0 && d != 1.0 => Some(format!(
-                "BoolParam default {name} must be 0 or 1; got {d}"
-            )),
+            ParamKind::Bool if d != 0.0 && d != 1.0 => {
+                Some(format!("BoolParam default {name} must be 0 or 1; got {d}"))
+            }
             ParamKind::Int if !d.is_finite() || (d as i64 as f64) != d => Some(format!(
                 "IntParam '{name}' default must be an integer literal; got {d}"
             )),
@@ -819,7 +831,11 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 
     match f.kind {
         ParamKind::Float => {
-            let smooth = if let Some(s) = &a.smooth { parse_smooth_tokens(s) } else { quote! { ::truce::params::SmoothingStyle::None } };
+            let smooth = if let Some(s) = &a.smooth {
+                parse_smooth_tokens(s)
+            } else {
+                quote! { ::truce::params::SmoothingStyle::None }
+            };
             quote! { ::truce::params::FloatParam::new(#info, #smooth) }
         }
         ParamKind::Bool => quote! { ::truce::params::BoolParam::new(#info) },
@@ -1629,7 +1645,10 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let name_strs: Vec<_> = variant_names.iter().map(std::string::String::as_str).collect();
+    let name_strs: Vec<_> = variant_names
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let expanded = quote! {
         #[allow(clippy::expl_impl_clone_on_copy)]

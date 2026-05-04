@@ -31,12 +31,12 @@ pub struct StateCursor<'a> {
 }
 
 impl<'a> StateCursor<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.pos)
     }
@@ -220,7 +220,7 @@ impl<T: State> StateBinding<T> {
     /// context's `<P>` since `StateBinding` cares only about the
     /// `get_state` / `set_state` channel on the underlying
     /// `EditorBridge`, never about parameter typing.
-    #[must_use] 
+    #[must_use]
     pub fn new<P: ?Sized>(context: &PluginContext<P>) -> Self {
         let bridge_for_get = Arc::clone(context.bridge());
         let bridge_for_set = Arc::clone(context.bridge());

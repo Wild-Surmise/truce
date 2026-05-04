@@ -38,7 +38,7 @@ pub enum ChannelConfig {
 }
 
 impl ChannelConfig {
-    #[must_use] 
+    #[must_use]
     pub fn channel_count(&self) -> u32 {
         match self {
             Self::Mono => 1,
@@ -49,7 +49,7 @@ impl ChannelConfig {
 }
 
 impl BusLayout {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inputs: Vec::new(),
@@ -57,7 +57,7 @@ impl BusLayout {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn stereo() -> Self {
         Self::new()
             .with_input("Main", ChannelConfig::Stereo)
@@ -67,7 +67,7 @@ impl BusLayout {
     /// Append a main audio input bus. First call → main audio in;
     /// subsequent calls → sidechain inputs (use [`Self::with_sidechain_input`]
     /// if you prefer to be explicit).
-    #[must_use] 
+    #[must_use]
     pub fn with_input(mut self, name: &'static str, channels: ChannelConfig) -> Self {
         let kind = if self.inputs.is_empty() {
             BusKind::Main
@@ -85,7 +85,7 @@ impl BusLayout {
     /// Append a sidechain input bus. Equivalent to [`Self::with_input`]
     /// after the first input has already been added, but lets call
     /// sites express intent.
-    #[must_use] 
+    #[must_use]
     pub fn with_sidechain_input(mut self, name: &'static str, channels: ChannelConfig) -> Self {
         self.inputs.push(BusConfig {
             name,
@@ -95,7 +95,7 @@ impl BusLayout {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_output(mut self, name: &'static str, channels: ChannelConfig) -> Self {
         self.outputs.push(BusConfig {
             name,
@@ -114,12 +114,12 @@ impl BusLayout {
             .map(|(i, _)| i)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn total_input_channels(&self) -> u32 {
         self.inputs.iter().map(|b| b.channels.channel_count()).sum()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn total_output_channels(&self) -> u32 {
         self.outputs
             .iter()

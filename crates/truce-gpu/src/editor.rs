@@ -46,7 +46,7 @@ pub struct GpuEditor<P: Params> {
 unsafe impl<P: Params> Send for GpuEditor<P> {}
 
 impl<P: Params + 'static> GpuEditor<P> {
-    #[must_use] 
+    #[must_use]
     pub fn new(inner: BuiltinEditor<P>) -> Self {
         let size = inner.size();
         Self {
@@ -302,7 +302,11 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // the same physical resolution the WgpuBackend internally
         // computed when sizing the headless target.
         // Window dimensions stay below u32::MAX after scaling.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let (phys_w, phys_h) = (
             (lw as f32 * scale).round() as u32,
             (lh as f32 * scale).round() as u32,

@@ -122,7 +122,7 @@ impl TransportInfo {
     /// `truce-test`) so that transport-aware widgets render a
     /// populated readout in marketing screenshots instead of a
     /// `(no host transport)` placeholder.
-    #[must_use] 
+    #[must_use]
     pub fn for_screenshot() -> Self {
         Self {
             playing: true,
@@ -142,7 +142,7 @@ pub struct EventList {
 }
 
 impl EventList {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self { events: Vec::new() }
     }
@@ -174,17 +174,17 @@ impl EventList {
         self.events.iter()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&Event> {
         self.events.get(index)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.events.len()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }

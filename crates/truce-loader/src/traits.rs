@@ -91,7 +91,7 @@ pub trait PluginLogic: Send + 'static {
 
 /// Default hit test: circular for knobs, rectangular for others,
 /// skip meters.
-#[must_use] 
+#[must_use]
 pub fn default_hit_test(widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> {
     for (i, w) in widgets.iter().enumerate() {
         if w.widget_type == WidgetType::Meter {

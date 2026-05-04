@@ -140,7 +140,7 @@ impl Default for BaseviewTranslator {
 }
 
 impl BaseviewTranslator {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             last_cursor: (0.0, 0.0),
@@ -152,7 +152,7 @@ impl BaseviewTranslator {
     /// The last cursor position we saw from a `CursorMoved`, in logical
     /// points. Useful when a caller needs to query cursor state outside
     /// the event stream (e.g. for its own overlays).
-    #[must_use] 
+    #[must_use]
     pub fn last_cursor(&self) -> (f32, f32) {
         self.last_cursor
     }
@@ -311,7 +311,7 @@ impl Default for InteractionState {
 }
 
 impl InteractionState {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             knob_regions: Vec::new(),
@@ -377,7 +377,7 @@ impl InteractionState {
     }
 
     /// Check if a mouse position hits a widget. Returns the region index if so.
-    #[must_use] 
+    #[must_use]
     pub fn hit_test(&self, mx: f32, my: f32) -> Option<usize> {
         for (idx, region) in self.knob_regions.iter().enumerate() {
             match region.widget_type {
@@ -408,13 +408,13 @@ impl InteractionState {
     }
 
     /// Get the widget type by region index.
-    #[must_use] 
+    #[must_use]
     pub fn widget_type_at(&self, idx: usize) -> Option<WidgetType> {
         self.knob_regions.get(idx).map(|r| r.widget_type)
     }
 
     /// Get the region by index.
-    #[must_use] 
+    #[must_use]
     pub fn region_at(&self, idx: usize) -> Option<&WidgetRegion> {
         self.knob_regions.get(idx)
     }
@@ -440,7 +440,7 @@ impl InteractionState {
     }
 
     /// Update during a drag. Returns (`param_id`, `new_normalized_value`) if dragging.
-    #[must_use] 
+    #[must_use]
     pub fn update_drag(&self, mouse_y: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
         let dy = drag.start_y - mouse_y;
@@ -450,7 +450,7 @@ impl InteractionState {
     }
 
     /// Update during a horizontal slider drag. Returns (`param_id`, `new_value`).
-    #[must_use] 
+    #[must_use]
     pub fn update_slider_drag(&self, mouse_x: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
         let margin = 4.0;
@@ -466,7 +466,7 @@ impl InteractionState {
 
     /// Test if a point is inside the open dropdown popup.
     /// Returns the absolute option index (accounting for scroll) if hit, or None.
-    #[must_use] 
+    #[must_use]
     // Hit-test math operates on f32 logical pixels bounded by the
     // window size; `(my - py - padding) / item_h` lands in
     // `[0, visible_count]`.
@@ -510,7 +510,7 @@ impl InteractionState {
     }
 
     /// Whether a dropdown popup is currently open.
-    #[must_use] 
+    #[must_use]
     pub fn dropdown_is_open(&self) -> bool {
         self.dropdown.is_some()
     }
@@ -526,7 +526,11 @@ impl InteractionState {
     /// Scroll the dropdown popup by `delta` items (positive = down, negative = up).
     // Dropdown option counts stay below i32::MAX in practice (UI lists
     // never reach 2 billion).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss
+    )]
     pub fn dropdown_scroll(&mut self, delta: i32) {
         if let Some(ref mut dd) = self.dropdown {
             let max_offset = dd.options.len().saturating_sub(dd.visible_count);
@@ -850,7 +854,11 @@ fn handle_mouse_down(
 
 // Layout / hit-test math is f32 logical pixels bounded by window size;
 // `((avail_h - padding * 2.0) / item_h)` lands in `[0, options.len()]`.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 fn open_dropdown(
     region_idx: usize,
     param_id: u32,

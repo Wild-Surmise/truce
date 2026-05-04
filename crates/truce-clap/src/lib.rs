@@ -115,7 +115,10 @@ impl GuiChangeQueue {
     }
 
     fn drain_to(&self, out: &mut Vec<GuiParamChange>) {
-        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         out.append(&mut pending);
     }
 }
@@ -212,7 +215,7 @@ fn resolved_name(info: &PluginInfo) -> &'static str {
 }
 
 impl DescriptorHolder {
-    #[must_use] 
+    #[must_use]
     pub fn new(info: &PluginInfo) -> Self {
         let id = CString::new(info.clap_id).unwrap_or_default();
         let name = CString::new(resolved_name(info)).unwrap_or_default();

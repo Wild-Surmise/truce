@@ -41,25 +41,25 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn font(mut self, font: iced::Font) -> Self {
         self.font = font;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = THUMB_RADIUS * 2.0 + 30.0;
         let program = SliderProgram {

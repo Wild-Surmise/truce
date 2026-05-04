@@ -278,7 +278,7 @@ fn resolve_target_dir() -> Option<PathBuf> {
 /// `OUT_DIR` should keep using the private `resolve_target_dir()`
 /// fallback chain — it can detect the dir from `OUT_DIR` itself
 /// without needing a workspace-root anchor.
-#[must_use] 
+#[must_use]
 pub fn target_dir(root: &Path) -> PathBuf {
     if let Ok(d) = std::env::var("CARGO_TARGET_DIR")
         && !d.is_empty()

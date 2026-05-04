@@ -239,7 +239,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {
-                use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorLeft};
+                use baseview::MouseEvent::{
+                    ButtonPressed, ButtonReleased, CursorLeft, CursorMoved, WheelScrolled,
+                };
                 match mouse {
                     CursorMoved { position, .. } => {
                         // Window dimensions stay below 2^23; the f64

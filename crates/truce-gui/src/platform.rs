@@ -46,7 +46,7 @@ unsafe impl HasRawWindowHandle for ParentWindow {
 
 /// Query the backing scale factor from the parent `NSView`'s window.
 #[cfg(target_os = "macos")]
-#[must_use] 
+#[must_use]
 pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     use objc::{msg_send, sel, sel_impl};
 
@@ -92,7 +92,7 @@ pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
 
 /// Query the main screen's backing scale factor (no parent window needed).
 #[cfg(target_os = "macos")]
-#[must_use] 
+#[must_use]
 pub fn main_screen_scale() -> f64 {
     use objc::{msg_send, sel, sel_impl};
     unsafe {
@@ -141,7 +141,7 @@ impl EditorScale {
     /// Construct with an initial scale. Non-finite or non-positive
     /// values clamp to 1.0 so callers never have to defend against
     /// `0.0 * size` collapsing the surface.
-    #[must_use] 
+    #[must_use]
     pub fn new(initial: f64) -> Self {
         let v = if initial.is_finite() && initial > 0.0 {
             initial
@@ -199,10 +199,7 @@ impl EditorScale {
     /// host callbacks, never through accumulating arithmetic, so an
     /// epsilon-based check would either thrash on noise (there is
     /// none) or miss a legitimate `1.0 → 1.0001` host signal.
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::float_cmp,
-    )]
+    #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn take_change(&self, last: &mut f32) -> Option<f32> {
         let cur = self.get() as f32;
         if cur == *last {
@@ -316,7 +313,7 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
 ///
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned surface.
-#[must_use] 
+#[must_use]
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,

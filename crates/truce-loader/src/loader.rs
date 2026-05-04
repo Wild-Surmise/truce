@@ -296,7 +296,7 @@ impl NativeLoader {
         true
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn plugin(&self) -> Option<&dyn PluginLogic> {
         self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
@@ -305,7 +305,7 @@ impl NativeLoader {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_reload_pending(&self) -> bool {
         self.reload_pending.load(Ordering::Relaxed)
     }
@@ -316,7 +316,7 @@ impl NativeLoader {
     /// share the same `NativeLoader` use this to detect "the other
     /// side already reloaded" without having to drive reload
     /// themselves.
-    #[must_use] 
+    #[must_use]
     pub fn load_counter(&self) -> u64 {
         self.load_counter
     }

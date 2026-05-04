@@ -2,21 +2,21 @@ use std::f64::consts::LN_10;
 
 /// Convert decibels to linear gain.
 #[inline]
-#[must_use] 
+#[must_use]
 pub fn db_to_linear(db: f64) -> f64 {
     (db * LN_10 / 20.0).exp()
 }
 
 /// Convert linear gain to decibels.
 #[inline]
-#[must_use] 
+#[must_use]
 pub fn linear_to_db(linear: f64) -> f64 {
     20.0 * linear.log10()
 }
 
 /// Convert a MIDI note number to frequency in Hz (A4 = 440 Hz).
 #[inline]
-#[must_use] 
+#[must_use]
 pub fn midi_note_to_freq(note: u8) -> f64 {
     440.0 * 2.0f64.powf((f64::from(note) - 69.0) / 12.0)
 }
@@ -27,7 +27,7 @@ pub fn midi_note_to_freq(note: u8) -> f64 {
 /// Values above 0 dB clamp to 1.0. Silence (< -60 dB) maps to 0.0.
 /// Apply smoothing externally (e.g., exponential decay per frame).
 #[inline]
-#[must_use] 
+#[must_use]
 pub fn meter_display(linear_peak: f32) -> f32 {
     if linear_peak < 1e-6 {
         return 0.0;
@@ -44,7 +44,7 @@ pub fn meter_display(linear_peak: f32) -> f32 {
 /// Rules: ASCII alphanumerics pass through lowercased; every other
 /// character (including runs of them) collapses to a single `-`;
 /// leading and trailing dashes are trimmed.
-#[must_use] 
+#[must_use]
 pub fn slugify(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_dash = false;

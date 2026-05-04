@@ -45,25 +45,25 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn font(mut self, font: iced::Font) -> Self {
         self.font = font;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.size + if self.label.is_some() { 16.0 } else { 0.0 };
         let program = XYPadProgram {

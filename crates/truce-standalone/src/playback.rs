@@ -314,7 +314,7 @@ impl CaptureSink {
     /// Get a cheap-clone handle suitable for the audio
     /// callback. Multiple pushers can coexist; the writer thread
     /// shuts down via the shared flag, not channel close.
-    #[must_use] 
+    #[must_use]
     pub fn pusher(&self) -> CapturePusher {
         CapturePusher {
             chunk_tx: self.chunk_tx.clone(),

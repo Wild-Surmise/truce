@@ -6,12 +6,12 @@
 //! `target/bundles/`; `cargo truce install` then copies those bundles
 //! to system paths.
 
+use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
-use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_build(args: &[String]) -> Res {

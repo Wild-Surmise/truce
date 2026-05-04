@@ -202,7 +202,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
@@ -415,15 +415,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Get the raw pixel data after rendering (RGBA premultiplied).
-    #[must_use] 
+    #[must_use]
     pub fn pixel_data(&self) -> Option<&[u8]> {
-        self.backend.as_ref().map(super::backend_cpu::CpuBackend::data)
+        self.backend
+            .as_ref()
+            .map(super::backend_cpu::CpuBackend::data)
     }
 
     // --- Public API for external backends (truce-gpu) ---
 
     /// Whether the editor has an active context.
-    #[must_use] 
+    #[must_use]
     pub fn has_context(&self) -> bool {
         self.context.is_some()
     }

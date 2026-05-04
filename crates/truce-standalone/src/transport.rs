@@ -59,7 +59,7 @@ impl Transport {
             .store((bpm * 1000.0) as u64, Ordering::Relaxed);
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_playing(&self) -> bool {
         self.inner.playing.load(Ordering::Relaxed)
     }
@@ -89,7 +89,7 @@ impl Transport {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss,
+        clippy::cast_precision_loss
     )]
     #[must_use]
     pub fn tick_audio(&self, num_frames: usize) -> TransportInfo {

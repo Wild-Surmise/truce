@@ -429,7 +429,9 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
             // Discrete param: test exact step positions. Tolerance
             // sized for one-step quantization (half a step).
             let steps = steps.get();
-            let v: Vec<f64> = (0..=steps).map(|i| f64::from(i) / f64::from(steps)).collect();
+            let v: Vec<f64> = (0..=steps)
+                .map(|i| f64::from(i) / f64::from(steps))
+                .collect();
             (v, (0.5 / f64::from(steps)).max(1e-6))
         } else {
             // Continuous param: tighter tolerance — round-trip should
@@ -728,7 +730,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// toward this budget if its max channel delta exceeds the
     /// threshold, so sub-perceptual AA wobble doesn't have to inflate
     /// `tolerance` to numbers that would also hide real regressions.
-    #[must_use] 
+    #[must_use]
     pub fn tolerance(mut self, t: usize) -> Self {
         self.tolerance = t;
         self
@@ -742,7 +744,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// Practical values: `1`–`3` ignore tiny rasterizer / filter
     /// drift between machines without masking real visual changes;
     /// `8`+ starts to hide things a human would notice.
-    #[must_use] 
+    #[must_use]
     pub fn pixel_threshold(mut self, d: u8) -> Self {
         self.pixel_threshold = d;
         self
@@ -829,11 +831,10 @@ fn compare_against_reference(
     manifest_dir_hint: Option<&std::path::Path>,
 ) {
     let render_dir = workspace_target_screenshots_dir(manifest_dir_hint);
-    let render_path = render_dir.join(
-        ref_path
-            .file_name()
-            .map(std::path::Path::new).map_or_else(|| PathBuf::from("screenshot.png"), std::path::Path::to_path_buf),
-    );
+    let render_path = render_dir.join(ref_path.file_name().map(std::path::Path::new).map_or_else(
+        || PathBuf::from("screenshot.png"),
+        std::path::Path::to_path_buf,
+    ));
 
     if !ref_path.exists() {
         // No baseline — save the current render so the user can
@@ -915,7 +916,10 @@ fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>)
     // a stable anchor regardless of where `cargo test` runs from. Fall
     // back to CWD only when no hint is available — old code paths or
     // direct calls into this function.
-    let start = manifest_dir_hint.map_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), std::path::Path::to_path_buf);
+    let start = manifest_dir_hint.map_or_else(
+        || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
     let mut dir = start.clone();
     let mut topmost_package: Option<PathBuf> = None;
     loop {

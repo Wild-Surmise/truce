@@ -326,9 +326,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     for fmt in o.formats {
         eprint!("  Staging {}... ", fmt.label());
         let result = match fmt {
-            PkgFormat::Clap => {
-                stage_clap(root, p, &staging, o.config.macos.application_identity())
-            }
+            PkgFormat::Clap => stage_clap(root, p, &staging, o.config.macos.application_identity()),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging).map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
@@ -406,7 +404,14 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         }
     }
 
-    let pkg_path = run_productbuild(p, dist_dir, &dist_xml_path, &components_dir, &resources_dir, o)?;
+    let pkg_path = run_productbuild(
+        p,
+        dist_dir,
+        &dist_xml_path,
+        &components_dir,
+        &resources_dir,
+        o,
+    )?;
 
     // Step 7: Notarize + staple
     if o.config.macos.packaging.notarize && !o.no_notarize {
@@ -590,8 +595,8 @@ fn build_and_lipo_format(
                 )
             })
             .collect();
-        let output = crate::target_dir(root)
-            .join(format!("release/lib{}{suffix}.dylib", p.dylib_stem()));
+        let output =
+            crate::target_dir(root).join(format!("release/lib{}{suffix}.dylib", p.dylib_stem()));
         lipo_into(&inputs, &output)?;
     }
     Ok(())

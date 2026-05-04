@@ -702,11 +702,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // post-clamp normalized value is what the host
                         // expects for `IComponentHandler::performEdit`.
                         let norm = params_for_set.set_normalized_returning_normalized(id, value);
-                        ffi::truce_vst3_perform_edit(
-                            ctx_raw.as_ptr().cast_mut(),
-                            id,
-                            norm,
-                        );
+                        ffi::truce_vst3_perform_edit(ctx_raw.as_ptr().cast_mut(), id, norm);
                     }),
                     end_edit: Box::new(move |id| {
                         ffi::truce_vst3_end_edit(ctx_raw.as_ptr().cast_mut(), id);

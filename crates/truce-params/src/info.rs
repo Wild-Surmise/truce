@@ -37,7 +37,7 @@ pub enum ParamUnit {
 
 impl ParamUnit {
     /// Format-agnostic unit string for host display.
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Db => "dB",

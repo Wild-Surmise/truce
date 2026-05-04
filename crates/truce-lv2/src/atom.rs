@@ -134,7 +134,10 @@ impl<'a> AtomSequenceReader<'a> {
                 return;
             }
             let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
-            let data_start = self.seq.cast::<u8>().add(core::mem::size_of::<AtomSequence>());
+            let data_start = self
+                .seq
+                .cast::<u8>()
+                .add(core::mem::size_of::<AtomSequence>());
             let mut offset = 0usize;
             while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
                 let ev_ptr = data_start.add(offset).cast::<AtomEventHeader>();
@@ -536,7 +539,9 @@ pub unsafe fn write_time_position_sequence(
         let obj_body_start = body_start.add(ev_header_size);
         // Per lv2/atom/atom.h: `id` first, then `otype`.
         *obj_body_start.cast::<Urid>() = 0; // id = blank
-        *obj_body_start.add(core::mem::size_of::<Urid>()).cast::<Urid>() = urid.time_position;
+        *obj_body_start
+            .add(core::mem::size_of::<Urid>())
+            .cast::<Urid>() = urid.time_position;
 
         let mut prop_offset = obj_header_size;
         let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();

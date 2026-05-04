@@ -63,30 +63,30 @@ pub struct PortLayout {
 }
 
 impl PortLayout {
-    #[must_use] 
+    #[must_use]
     pub fn audio_in_start(&self) -> u32 {
         0
     }
-    #[must_use] 
+    #[must_use]
     pub fn audio_out_start(&self) -> u32 {
         self.num_audio_in
     }
-    #[must_use] 
+    #[must_use]
     pub fn control_start(&self) -> u32 {
         self.num_audio_in + self.num_audio_out
     }
-    #[must_use] 
+    #[must_use]
     pub fn meter_start(&self) -> u32 {
         self.control_start() + self.num_params
     }
     /// Index of the DSP input atom port. Always present: carries
     /// `time:Position` (transport) for every plugin type and
     /// additionally `midi:MidiEvent` for instruments / note effects.
-    #[must_use] 
+    #[must_use]
     pub fn atom_in_port(&self) -> u32 {
         self.meter_start() + self.num_meters
     }
-    #[must_use] 
+    #[must_use]
     pub fn midi_out_port(&self) -> Option<u32> {
         if self.has_midi_out {
             Some(self.atom_in_port() + 1)
@@ -97,11 +97,11 @@ impl PortLayout {
     /// Index of the DSP→UI notification atom port. Always present: the
     /// DSP writes host transport (and any future plugin-defined notify
     /// messages) here, and the UI listens via `ui:portNotification`.
-    #[must_use] 
+    #[must_use]
     pub fn notify_out_port(&self) -> u32 {
         self.atom_in_port() + 1 + u32::from(self.has_midi_out)
     }
-    #[must_use] 
+    #[must_use]
     pub fn total(&self) -> u32 {
         self.notify_out_port() + 1
     }
@@ -214,7 +214,7 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
 /// # Safety
 /// Called by the LV2 host during plugin instantiation. `features` must be
 /// a null-terminated array of `LV2_Feature` pointers (or null if none).
-#[must_use] 
+#[must_use]
 pub unsafe fn instantiate<P: PluginExport>(
     sample_rate: f64,
     _bundle_path: *const c_char,
@@ -540,7 +540,7 @@ pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
 
 /// # Safety
 /// `uri` must be a valid null-terminated C string or null.
-#[must_use] 
+#[must_use]
 pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void {
     unsafe {
         if uri.is_null() {
@@ -564,7 +564,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
 /// URI under the vendor's URL so that LV2 hosts that expect well-formed
 /// web URIs (notably the lilv reference loader used by Ardour/Reaper) are
 /// happy. Falls back to `urn:truce:{id}` if the vendor URL is empty.
-#[must_use] 
+#[must_use]
 pub fn plugin_uri(info: &PluginInfo) -> String {
     if info.url.is_empty() {
         return format!("urn:truce:{}", info.clap_id);
@@ -766,7 +766,7 @@ pub use atom::AtomSequence;
 pub use ui::{Lv2UiDescriptor, ui_descriptor};
 
 /// Derive the plugin's LV2 UI URI (plugin URI + "#ui").
-#[must_use] 
+#[must_use]
 pub fn ui_uri(info: &PluginInfo) -> String {
     format!("{}#ui", plugin_uri(info))
 }

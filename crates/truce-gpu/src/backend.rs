@@ -130,7 +130,11 @@ impl GlyphAtlas {
     // Quantized cache key — `(size * 10.0) as u32` deliberately
     // truncates to one decimal place for HashMap stability. Atlas
     // dimensions and glyph metrics fit comfortably in f32.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     fn ensure_glyph(&mut self, font: &fontdue::Font, ch: char, size: f32) {
         let key = (ch, (size * 10.0) as u32);
         if self.glyphs.contains_key(&key) {
@@ -652,7 +656,7 @@ impl WgpuBackend {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the backend.
-    #[must_use] 
+    #[must_use]
     pub unsafe fn from_window(
         window: &baseview::Window,
         logical_w: u32,

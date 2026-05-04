@@ -19,7 +19,7 @@ pub const METER_ID_BASE: u32 = 1 << 24;
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations
 /// on `FloatParam` and `IntParam` fields.
-#[must_use] 
+#[must_use]
 pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
     match info.unit {
         ParamUnit::Db => format!("{value:.1} dB"),
@@ -97,7 +97,7 @@ pub trait Params: Send + Sync + 'static {
     /// `PluginExport::param_infos_static`. Gated by `Self: Sized` so
     /// adding the method preserves dyn-compatibility for the existing
     /// `&self`-method shape (`&dyn Params` skips this slot).
-    #[must_use] 
+    #[must_use]
     fn param_infos_static() -> Vec<ParamInfo>
     where
         Self: Sized,
@@ -207,18 +207,22 @@ pub trait Params: Send + Sync + 'static {
         let mut seen: Vec<(u32, &'static str)> = Vec::with_capacity(all.len());
         for info in all.drain(..) {
             for (prev_id, prev_name) in &seen {
-                assert!(*prev_id != info.id, 
+                assert!(
+                    *prev_id != info.id,
                     "duplicate parameter ID {}: '{}' and '{}' (likely a \
                      parent / nested-struct collision; the per-struct \
                      compile-time check can't see across nested types)",
-                    info.id, prev_name, info.name,
+                    info.id,
+                    prev_name,
+                    info.name,
                 );
             }
             seen.push((info.id, info.name));
         }
         for meter_id in self.meter_ids() {
             for (prev_id, prev_name) in &seen {
-                assert!(*prev_id != meter_id, 
+                assert!(
+                    *prev_id != meter_id,
                     "meter ID {meter_id} collides with parameter ID for '{prev_name}'",
                 );
             }

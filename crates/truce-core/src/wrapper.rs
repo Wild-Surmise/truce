@@ -35,7 +35,7 @@ pub struct ParamCStrings {
 
 impl ParamCStrings {
     /// Build all four `CStrings` for one parameter.
-    #[must_use] 
+    #[must_use]
     pub fn from_info(info: &ParamInfo) -> Self {
         Self {
             name: CString::new(info.name).unwrap_or_default(),
@@ -70,8 +70,8 @@ impl ParamCStrings {
 /// `vec![BusLayout::new()]` explicitly.
 #[must_use]
 pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
-    P::bus_layouts()
-        .first().map_or_else(|| {
+    P::bus_layouts().first().map_or_else(
+        || {
             // `bus_layouts() == vec![]` means the plugin author returned
             // an empty layout list. `aumi` and other zero-bus plugins
             // are supposed to return `[BusLayout::new()]` (with zero
@@ -85,7 +85,9 @@ pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
                  vec![BusLayout::new()] explicitly.",
                 std::any::type_name::<P>()
             )
-        }, |l| (l.total_input_channels(), l.total_output_channels()))
+        },
+        |l| (l.total_input_channels(), l.total_output_channels()),
+    )
 }
 
 /// Pick the plugin's first bus layout, or panic with a clear message.

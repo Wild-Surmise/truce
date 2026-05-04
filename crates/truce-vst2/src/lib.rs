@@ -691,29 +691,20 @@ unsafe fn open_editor_inner<P: PluginExport>(
                 ClosureBridge {
                     begin_edit: Box::new(move |id| {
                         if !effect_ptr.as_ptr().is_null() {
-                            truce_vst2_host_begin_edit(
-                                effect_ptr.as_ptr().cast_mut(),
-                                id,
-                            );
+                            truce_vst2_host_begin_edit(effect_ptr.as_ptr().cast_mut(), id);
                         }
                     }),
                     set_param: Box::new(move |id, value| {
-                        let norm =
-                            param_f32(params_for_set.set_normalized_returning_normalized(id, value));
+                        let norm = param_f32(
+                            params_for_set.set_normalized_returning_normalized(id, value),
+                        );
                         if !effect_ptr.as_ptr().is_null() {
-                            truce_vst2_host_automate(
-                                effect_ptr.as_ptr().cast_mut(),
-                                id,
-                                norm,
-                            );
+                            truce_vst2_host_automate(effect_ptr.as_ptr().cast_mut(), id, norm);
                         }
                     }),
                     end_edit: Box::new(move |id| {
                         if !effect_ptr.as_ptr().is_null() {
-                            truce_vst2_host_end_edit(
-                                effect_ptr.as_ptr().cast_mut(),
-                                id,
-                            );
+                            truce_vst2_host_end_edit(effect_ptr.as_ptr().cast_mut(), id);
                         }
                     }),
                     request_resize: Box::new(|_w, _h| false),

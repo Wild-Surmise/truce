@@ -147,19 +147,15 @@ fn build_rust_framework_dylib(
             dt,
         )?;
         let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
-        let saved = release_lib_for_target(
-            root,
-            &format!("{}_v3", p.dylib_stem()),
-            Some(arch.triple()),
-        );
+        let saved =
+            release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(arch.triple()));
         fs_ctx::copy(&src, &saved)?;
     }
     let fw_inputs: Vec<PathBuf> = archs
         .iter()
         .map(|a| release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple())))
         .collect();
-    let lipo_dst =
-        crate::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
+    let lipo_dst = crate::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
     lipo_into(&fw_inputs, &lipo_dst)?;
     Ok(lipo_dst)
 }
@@ -431,12 +427,7 @@ fn embed_framework_into_app(
 /// signature), then appex (embeds its entitlements), then app (wraps
 /// everything). Re-signing an inner bundle invalidates the outer, so
 /// signing in the wrong order leaves the whole thing broken.
-fn sign_au_v3_inside_out(
-    final_app: &Path,
-    build_dir: &Path,
-    fw_name: &str,
-    sign_id: &str,
-) -> Res {
+fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign_id: &str) -> Res {
     let runtime_flags: &[&str] = if is_production_identity(sign_id) {
         &["--options", "runtime", "--timestamp"]
     } else {

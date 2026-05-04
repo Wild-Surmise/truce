@@ -56,7 +56,7 @@ pub trait PluginExport: Plugin + Sized {
     /// back to the runtime construction otherwise — so plugins with
     /// hand-written `Params` impls that don't override the static
     /// path keep working unchanged.
-    #[must_use] 
+    #[must_use]
     fn param_infos_static() -> Vec<ParamInfo> {
         let from_params = <Self::Params as Params>::param_infos_static();
         if from_params.is_empty() {
@@ -88,7 +88,7 @@ pub trait PluginExport: Plugin + Sized {
     ///
     /// VST2 / VST3 / AU never call this — they don't need the answer
     /// at registration time.
-    #[must_use] 
+    #[must_use]
     fn has_editor_static() -> bool {
         Self::create().editor().is_some()
     }

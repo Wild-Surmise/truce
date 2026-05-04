@@ -495,11 +495,7 @@ where
                 let value = params_format.get_plain(id).unwrap_or(0.0);
                 params_format.format_value(id, value).unwrap_or_default()
             }),
-            get_meter: Box::new(move |id| {
-                plugin_meter
-                    .try_lock()
-                    .map_or(0.0, |p| p.get_meter(id))
-            }),
+            get_meter: Box::new(move |id| plugin_meter.try_lock().map_or(0.0, |p| p.get_meter(id))),
             get_state: Box::new(move || {
                 plugin_save
                     .try_lock()

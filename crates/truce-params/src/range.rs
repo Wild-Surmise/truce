@@ -129,7 +129,7 @@ impl ParamRange {
     /// Discrete / Enum variants with degenerate bounds (`min > max`,
     /// or `count <= 1`) return `None` — semantically continuous,
     /// because there's nothing to step through.
-    #[must_use] 
+    #[must_use]
     pub fn step_count(&self) -> Option<std::num::NonZeroU32> {
         let raw: u32 = match self {
             Self::Linear { .. } | Self::Logarithmic { .. } => 0,
@@ -162,7 +162,7 @@ mod tests {
         clippy::float_cmp,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss,
+        clippy::cast_precision_loss
     )]
 
     use super::*;

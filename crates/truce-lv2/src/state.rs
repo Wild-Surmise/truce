@@ -130,7 +130,13 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         let mut size = 0usize;
         let mut type_: Urid = 0;
         let mut state_flags: u32 = 0;
-        let data = retrieve(handle, key, &raw mut size, &raw mut type_, &raw mut state_flags);
+        let data = retrieve(
+            handle,
+            key,
+            &raw mut size,
+            &raw mut type_,
+            &raw mut state_flags,
+        );
         if data.is_null() || size == 0 {
             return 0;
         }

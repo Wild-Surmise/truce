@@ -8,7 +8,7 @@ use crate::events::EventBody;
 /// realtime — return `None`; the framework's `EventBody` enum doesn't
 /// model them yet, so callers that care about `SysEx` must inspect the
 /// raw bytes themselves rather than relying on this conversion.
-#[must_use] 
+#[must_use]
 pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
     if bytes.is_empty() {
         return None;
@@ -70,7 +70,7 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
 /// length — emitting all 3 bytes for a 2-byte status produces a
 /// spurious trailing 0 that downstream parsers interpret as a Note Off
 /// (running-status confusion).
-#[must_use] 
+#[must_use]
 pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     match event {
         EventBody::NoteOn {

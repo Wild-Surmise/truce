@@ -20,7 +20,7 @@ impl EguiRenderer {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the renderer.
-    #[must_use] 
+    #[must_use]
     pub unsafe fn from_window(window: &baseview::Window, width: u32, height: u32) -> Option<Self> {
         // Zero-sized configure panics inside wgpu. Some hosts (notably
         // VST3 in iZotope's RX shell) hand the editor a zero-extent

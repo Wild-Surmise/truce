@@ -20,7 +20,7 @@ use keyboard_types::Code;
 /// note number, shifted by `octave_offset` octaves. Returns `None`
 /// for keys not on the piano layout.
 #[cfg(feature = "gui")]
-#[must_use] 
+#[must_use]
 pub fn code_to_midi_note(code: Code, octave_offset: i8) -> Option<u8> {
     let base: i16 = 48 + (i16::from(octave_offset) * 12); // C3 default
 
@@ -62,7 +62,7 @@ pub fn code_to_midi_note(code: Code, octave_offset: i8) -> Option<u8> {
 
 /// Map `Z` / `X` to `-1` / `+1` octave shift.
 #[cfg(feature = "gui")]
-#[must_use] 
+#[must_use]
 pub fn code_to_octave_shift(code: Code) -> Option<i8> {
     match code {
         Code::KeyZ => Some(-1),

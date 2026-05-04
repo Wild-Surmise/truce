@@ -16,7 +16,7 @@ pub trait Plugin: Send + 'static {
         Self: Sized;
 
     /// Supported bus layouts. The host picks one.
-    #[must_use] 
+    #[must_use]
     fn bus_layouts() -> Vec<BusLayout>
     where
         Self: Sized,

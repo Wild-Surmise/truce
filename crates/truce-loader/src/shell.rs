@@ -62,7 +62,7 @@ impl<P: Params + 'static> HotShell<P> {
     }
 
     /// Try to get a custom editor from the loaded plugin.
-    #[must_use] 
+    #[must_use]
     pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
         let loader = self.loader.lock();
         let plugin = loader.plugin()?;
@@ -71,7 +71,7 @@ impl<P: Params + 'static> HotShell<P> {
 
     /// Try to create a `BuiltinEditor` from the loaded plugin's layout.
     /// Returns `None` if no plugin is loaded or the layout has zero size.
-    #[must_use] 
+    #[must_use]
     pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
         let loader = self.loader.lock();
         let plugin = loader.plugin()?;
@@ -221,7 +221,9 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn latency(&self) -> u32 {
         let loader = self.loader.lock();
-        loader.plugin().map_or(0, super::traits::PluginLogic::latency)
+        loader
+            .plugin()
+            .map_or(0, super::traits::PluginLogic::latency)
     }
 
     fn tail(&self) -> u32 {

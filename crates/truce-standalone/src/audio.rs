@@ -119,7 +119,7 @@ impl InputController {
 
     /// Read the current state. Source of truth for the audio
     /// callback's zero-fill decision.
-    #[must_use] 
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
@@ -135,7 +135,7 @@ impl InputController {
     /// Currently-resolved input device name, or `None` if no
     /// device has been opened (or the worker resolved to the
     /// system default with no nameable device).
-    #[must_use] 
+    #[must_use]
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
     }
@@ -172,7 +172,7 @@ impl OutputController {
 
     /// Read the current mute state. Source of truth for the audio
     /// callback's zero-fill decision.
-    #[must_use] 
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
@@ -186,7 +186,7 @@ impl OutputController {
 
     /// Currently-resolved output device name, or `None` if not
     /// resolvable.
-    #[must_use] 
+    #[must_use]
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
     }
@@ -222,13 +222,13 @@ pub fn list_devices() {
 }
 
 /// Snapshot of available output devices (`(default_name, all_names)`).
-#[must_use] 
+#[must_use]
 pub fn list_output_devices() -> (Option<String>, Vec<String>) {
     enumerate_devices(true)
 }
 
 /// Snapshot of available input devices (`(default_name, all_names)`).
-#[must_use] 
+#[must_use]
 pub fn list_input_devices() -> (Option<String>, Vec<String>) {
     enumerate_devices(false)
 }
@@ -1047,8 +1047,10 @@ fn audio_callback<P: PluginExport>(
         input_bufs.clear();
     }
     let input_slices: Vec<&[f32]> = input_bufs.iter().map(std::vec::Vec::as_slice).collect();
-    let mut output_slices: Vec<&mut [f32]> =
-        channel_bufs.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
+    let mut output_slices: Vec<&mut [f32]> = channel_bufs
+        .iter_mut()
+        .map(std::vec::Vec::as_mut_slice)
+        .collect();
 
     // The slices we pass here all live within this stack frame, so
     // the safe wrapper's borrow-checker proof of `'a` is enough —

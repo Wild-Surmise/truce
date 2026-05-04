@@ -189,7 +189,9 @@ pub(crate) fn cmd_doctor() -> Res {
     eprintln!();
     eprintln!("  SDKs");
     let aax_sdk = config.as_ref().and_then(resolve_aax_sdk_path);
-    if let Some(p) = aax_sdk { eprintln!("    {} AAX SDK at {}", tag_ok(), p.display()) } else {
+    if let Some(p) = aax_sdk {
+        eprintln!("    {} AAX SDK at {}", tag_ok(), p.display())
+    } else {
         let hint = if cfg!(target_os = "windows") {
             "[windows].aax_sdk_path"
         } else {

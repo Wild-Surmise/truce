@@ -482,9 +482,9 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
         (*one).seq_header.atom.size = len_u32(
             core::mem::size_of::<AtomSequenceBody>()
-            + core::mem::size_of::<i64>()
-            + core::mem::size_of::<Atom>()
-            + body_size,
+                + core::mem::size_of::<i64>()
+                + core::mem::size_of::<Atom>()
+                + body_size,
         );
         (*one).seq_header.body.unit = 0;
         (*one).seq_header.body.pad = 0;
@@ -897,7 +897,7 @@ fn build_editor_context<P: PluginExport>(
 }
 
 /// Build a static UI descriptor for this plugin type. Monomorphized per P.
-#[must_use] 
+#[must_use]
 pub fn ui_descriptor<P: PluginExport>(uri: &'static CStr) -> Lv2UiDescriptor {
     Lv2UiDescriptor {
         uri: uri.as_ptr(),

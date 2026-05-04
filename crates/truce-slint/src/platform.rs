@@ -73,7 +73,9 @@ pub fn ensure_platform() {
         if state.get().is_some() {
             return;
         }
-        if let Ok(()) = slint::platform::set_platform(Box::new(TrucePlatform)) { state.set(Some(Ok(()))) } else {
+        if let Ok(()) = slint::platform::set_platform(Box::new(TrucePlatform)) {
+            state.set(Some(Ok(())))
+        } else {
             state.set(Some(Err(())));
             log::warn!(
                 "[truce-slint] slint::platform::set_platform returned Err — \

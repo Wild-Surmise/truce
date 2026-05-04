@@ -83,7 +83,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// The font set via the editor's `with_font()`, or `Font::DEFAULT`.
-    #[must_use] 
+    #[must_use]
     pub fn font(&self) -> iced::Font {
         self.font
     }
@@ -94,7 +94,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// Access the underlying params (for info lookups).
-    #[must_use] 
+    #[must_use]
     pub fn params(&self) -> &P {
         &self.params
     }

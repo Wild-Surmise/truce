@@ -451,7 +451,8 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let n = inst.output_events
+        let n = inst
+            .output_events
             .iter()
             .filter(|e| try_encode_au_midi(e).is_some())
             .count();
@@ -551,31 +552,22 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // via AUEventListenerNotify so hosts (Logic, Live,
                         // Reaper) group subsequent set_param calls into one
                         // undo step and one automation gesture.
-                        truce_au_v2_host_begin_param_gesture(
-                            ctx_for_begin.as_ptr().cast_mut(),
-                            id,
-                        );
+                        truce_au_v2_host_begin_param_gesture(ctx_for_begin.as_ptr().cast_mut(), id);
                     }),
                     set_param: Box::new(move |id, value| {
                         // One combined trait dispatch (set_normalized
                         // + get_plain) instead of two — the
                         // `#[derive(Params)]` impl can compute both in
                         // a single match-arm walk.
-                        let plain = param_f32(params_for_set.set_normalized_returning_plain(id, value));
-                        truce_au_v2_host_set_param(
-                            ctx_raw.as_ptr().cast_mut(),
-                            id,
-                            plain,
-                        );
+                        let plain =
+                            param_f32(params_for_set.set_normalized_returning_plain(id, value));
+                        truce_au_v2_host_set_param(ctx_raw.as_ptr().cast_mut(), id, plain);
                     }),
                     end_edit: Box::new(move |id| {
                         // Closes the gesture started by begin_edit so the
                         // host commits the undo group / stops automation
                         // recording.
-                        truce_au_v2_host_end_param_gesture(
-                            ctx_for_end.as_ptr().cast_mut(),
-                            id,
-                        );
+                        truce_au_v2_host_end_param_gesture(ctx_for_end.as_ptr().cast_mut(), id);
                     }),
                     request_resize: Box::new(|_w, _h| false),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),

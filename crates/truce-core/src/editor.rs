@@ -46,13 +46,13 @@ impl<T> SendPtr<T> {
     ///
     /// # Safety
     /// The pointed-to data must still be alive.
-    #[must_use] 
+    #[must_use]
     pub unsafe fn get(&self) -> &T {
         unsafe { &*self.0 }
     }
 
     /// Get the raw pointer.
-    #[must_use] 
+    #[must_use]
     pub fn as_ptr(&self) -> *const T {
         self.0
     }
@@ -319,7 +319,7 @@ impl<P: ?Sized> PluginContext<P> {
     /// Access the underlying bridge handle. Editors that want to clone
     /// the bridge into a worker thread without cloning the surrounding
     /// `PluginContext` use this.
-    #[must_use] 
+    #[must_use]
     pub fn bridge(&self) -> &Arc<dyn EditorBridge> {
         &self.bridge
     }
@@ -327,7 +327,7 @@ impl<P: ?Sized> PluginContext<P> {
     /// Access the typed param store as an `Arc`. Use this when you
     /// need to capture the params in a `'static` closure (e.g. an iced
     /// `Subscription` or a worker thread).
-    #[must_use] 
+    #[must_use]
     pub fn params(&self) -> &Arc<P> {
         &self.params
     }
@@ -361,7 +361,7 @@ impl<P: ?Sized> PluginContext<P> {
         self.bridge.set_param(id, normalized);
         self.bridge.end_edit(id);
     }
-    #[must_use] 
+    #[must_use]
     pub fn request_resize(&self, w: u32, h: u32) -> bool {
         self.bridge.request_resize(w, h)
     }
@@ -384,14 +384,14 @@ impl<P: ?Sized> PluginContext<P> {
     pub fn get_meter(&self, id: impl Into<u32>) -> f32 {
         self.bridge.get_meter(id.into())
     }
-    #[must_use] 
+    #[must_use]
     pub fn get_state(&self) -> Vec<u8> {
         self.bridge.get_state()
     }
     pub fn set_state(&self, data: Vec<u8>) {
         self.bridge.set_state(data);
     }
-    #[must_use] 
+    #[must_use]
     pub fn transport(&self) -> Option<TransportInfo> {
         self.bridge.transport()
     }
@@ -411,7 +411,7 @@ impl PluginContext<dyn Params> {
 impl<P: Params + 'static> PluginContext<P> {
     /// Drop the typed `<P>` and return the dyn-erased context that
     /// crosses the `Editor::open` trait-object boundary.
-    #[must_use] 
+    #[must_use]
     pub fn dyn_erase(self) -> PluginContext<dyn Params> {
         PluginContext {
             bridge: self.bridge,

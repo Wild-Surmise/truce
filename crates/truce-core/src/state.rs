@@ -3,7 +3,7 @@ const STATE_MAGIC: &[u8; 4] = b"OAST";
 const STATE_VERSION: u32 = 1;
 
 /// Serialize plugin state: parameter values + optional extra state.
-#[must_use] 
+#[must_use]
 pub fn serialize_state(
     plugin_id_hash: u64,
     param_ids: &[u32],
@@ -44,7 +44,7 @@ pub struct DeserializedState {
 }
 
 /// Deserialize plugin state.
-#[must_use] 
+#[must_use]
 pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<DeserializedState> {
     if data.len() < 16 {
         return None;
@@ -195,7 +195,7 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
 /// shouldn't share state with the same plugin's CLAP build) should
 /// add a per-format ID field to [`PluginInfo`] and route through it
 /// instead.
-#[must_use] 
+#[must_use]
 pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
     hash_plugin_id(info.clap_id)
 }
@@ -209,7 +209,7 @@ pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
 /// session. If a stronger hash is ever needed, it must be selected via
 /// the version byte in the envelope, not by replacing this function in
 /// place.
-#[must_use] 
+#[must_use]
 pub fn hash_plugin_id(id: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
     for byte in id.bytes() {

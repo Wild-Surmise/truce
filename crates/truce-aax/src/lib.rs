@@ -547,7 +547,7 @@ pub unsafe fn _get_param_info(index: u32, out: *mut TruceAaxParamInfo) {
     }
 }
 
-#[must_use] 
+#[must_use]
 pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
@@ -776,7 +776,8 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
 /// the indexable view agree.
 pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    let n = inst.output_events
+    let n = inst
+        .output_events
         .iter()
         .filter(|e| try_encode_aax_midi(e).is_some())
         .count();
@@ -886,7 +887,10 @@ pub unsafe fn _save_state<P: PluginExport>(
         // be effectively gone. The cache content is just an
         // `Option<(u64, Arc<Vec<u8>>)>`, with no invariants a panic
         // could break, so `into_inner()` is sound.
-        let mut guard = inst.state_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = inst
+            .state_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
             // `Arc::clone` on a hit — refcount bump, no Vec copy.
             Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
@@ -1138,7 +1142,9 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
         // free. The `Box`-based replacement clippy suggests doesn't fit
         // because the source allocation is Vec's, not Box's.
         #[allow(clippy::same_length_and_capacity)]
-        unsafe { drop(Vec::from_raw_parts(data, len as usize, len as usize)) };
+        unsafe {
+            drop(Vec::from_raw_parts(data, len as usize, len as usize))
+        };
     }
 }
 

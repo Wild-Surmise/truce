@@ -221,7 +221,13 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
             ui.horizontal(|ui| {
                 param_knob(ui, state, P::Depth, "Depth");
                 param_selector(ui, state, P::Rate, "Rate", len_u32(Rate::variant_count()));
-                param_selector(ui, state, P::Shape, "Shape", len_u32(Shape::variant_count()));
+                param_selector(
+                    ui,
+                    state,
+                    P::Shape,
+                    "Shape",
+                    len_u32(Shape::variant_count()),
+                );
             });
 
             // Keep the UI animating so the beat position readout updates

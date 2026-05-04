@@ -315,7 +315,10 @@ pub(crate) fn read_cargo_config_env(key: &str) -> Option<String> {
     // Supports both `KEY = "value"` and `KEY = { value = "...", force = true }`
     match env.get(key)? {
         toml::Value::String(s) => Some(s.clone()),
-        toml::Value::Table(t) => t.get("value")?.as_str().map(std::string::ToString::to_string),
+        toml::Value::Table(t) => t
+            .get("value")?
+            .as_str()
+            .map(std::string::ToString::to_string),
         _ => None,
     }
 }

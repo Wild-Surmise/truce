@@ -17,7 +17,7 @@ use crate::plugin::Plugin;
 
 /// Drive a fresh plugin through `Editor::screenshot()` and return raw
 /// RGBA pixels + physical dimensions. No PNG save.
-#[must_use] 
+#[must_use]
 pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
@@ -28,7 +28,7 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
 /// bytes), then render. Used by the `__truce_screenshot` FFI so
 /// `cargo truce screenshot --state` can capture the editor under
 /// arbitrary pre-saved state without needing a test harness.
-#[must_use] 
+#[must_use]
 pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();

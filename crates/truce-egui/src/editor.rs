@@ -189,7 +189,7 @@ impl<P: Params + 'static> EguiEditor<P> {
 
     /// Set custom visuals (theme). Use `truce_egui::theme::dark()` for
     /// the default dark theme matching truce-gui.
-    #[must_use] 
+    #[must_use]
     pub fn with_visuals(mut self, visuals: egui::Visuals) -> Self {
         self.visuals = Some(visuals);
         self
@@ -201,7 +201,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// EguiEditor::new(params, (400, 300), my_ui)
     ///     .with_font(truce_gui::font::JETBRAINS_MONO)
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn with_font(mut self, font_data: &'static [u8]) -> Self {
         self.font = Some(font_data);
         self
@@ -321,7 +321,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             let scale = self.scale.get();
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
-            window.resize(baseview::Size::new(f64::from(pending.0), f64::from(pending.1)));
+            window.resize(baseview::Size::new(
+                f64::from(pending.0),
+                f64::from(pending.1),
+            ));
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.resize(phys_w, phys_h);
             }
@@ -334,7 +337,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {
-                use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorEntered, CursorLeft};
+                use baseview::MouseEvent::{
+                    ButtonPressed, ButtonReleased, CursorEntered, CursorLeft, CursorMoved,
+                    WheelScrolled,
+                };
                 // The explicit `CursorEntered => Ignored` arm signals the
                 // event was considered and intentionally ignored (vs.
                 // `CursorLeft` which we forward as `PointerGone`); the
@@ -456,7 +462,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     // points. Round so a physical 800px@2× reports as 400
                     // logical, not 399 (truncating cast). Window
                     // dimensions stay well below u32::MAX.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        clippy::cast_precision_loss
+                    )]
                     let logical_size = (
                         (pw as f32 / scale).round() as u32,
                         (ph as f32 / scale).round() as u32,
@@ -532,7 +542,10 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
 }
 
 fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
-    use keyboard_types::Key::{Character, Enter, Tab, Backspace, Escape, Delete, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Home, End, PageUp, PageDown};
+    use keyboard_types::Key::{
+        ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Character, Delete, End, Enter,
+        Escape, Home, PageDown, PageUp, Tab,
+    };
     Some(match key {
         Character(s) => match s.as_str() {
             "a" | "A" => egui::Key::A,

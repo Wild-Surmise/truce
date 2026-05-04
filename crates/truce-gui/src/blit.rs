@@ -48,7 +48,7 @@ pub struct BlitPipeline {
 }
 
 impl BlitPipeline {
-    #[must_use] 
+    #[must_use]
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
