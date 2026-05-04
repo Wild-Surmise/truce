@@ -76,6 +76,31 @@ pub trait Params: Send + Sync + 'static {
         into.extend(self.param_infos());
     }
 
+    /// Static parameter metadata, available without an instance.
+    ///
+    /// Format wrappers' `register_*` paths (see
+    /// [`crate::PluginExport::param_infos_static`] in `truce-core`)
+    /// call this to learn the parameter set without constructing a
+    /// full plugin — historically each format built a throwaway
+    /// instance just to read `&self.param_infos()`, paying for any
+    /// allocation the constructor did (DSP buffers, FFT plans, image
+    /// atlases, etc.) at static-init time. The derive macro overrides
+    /// this with a `LazyLock`-cached `Vec<ParamInfo>` built from the
+    /// same compile-time metadata it uses for [`Self::param_infos`],
+    /// so registration becomes allocation-free after the first call.
+    ///
+    /// Default impl returns an empty vec — hand-written `Params` impls
+    /// that don't override fall through to the runtime path inside
+    /// `PluginExport::param_infos_static`. Gated by `Self: Sized` so
+    /// adding the method preserves dyn-compatibility for the existing
+    /// `&self`-method shape (`&dyn Params` skips this slot).
+    fn param_infos_static() -> Vec<ParamInfo>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
     /// Number of parameters.
     fn count(&self) -> usize;
 

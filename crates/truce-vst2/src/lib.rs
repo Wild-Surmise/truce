@@ -788,8 +788,14 @@ pub fn register_vst2<P: PluginExport>() {
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
 
-    let temp_plugin = P::create();
-    let infos = temp_plugin.params().param_infos();
+    // Static metadata path: derive emits a `LazyLock`-cached
+    // `Vec<ParamInfo>` so registration doesn't need to construct a
+    // plugin instance just to read parameter shape. Hand-written
+    // `PluginExport` impls without a `Params::param_infos_static`
+    // override fall back to the historical
+    // `Self::create().params().param_infos()` walk inside the trait
+    // default — see `PluginExport::param_infos_static`.
+    let infos = P::param_infos_static();
     let bypass_param_id = infos
         .iter()
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))

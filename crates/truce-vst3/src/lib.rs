@@ -768,8 +768,14 @@ fn vst3_cid(id: &str) -> [u8; 16] {
 
 pub fn register_vst3<P: PluginExport>() {
     let info = P::info();
-    let instance = P::create();
-    let param_infos = instance.params().param_infos();
+    // Static metadata path: derive emits a `LazyLock`-cached
+    // `Vec<ParamInfo>` so registration skips the
+    // `Self::create().params().param_infos()` walk and the plugin
+    // construction it implies. Hand-written `PluginExport` impls
+    // without a `Params::param_infos_static` override fall back to
+    // the historical runtime path inside `PluginExport`'s default
+    // impl.
+    let param_infos = P::param_infos_static();
 
     let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
     for pi in &param_infos {

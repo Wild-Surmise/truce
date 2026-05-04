@@ -647,9 +647,14 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 pub fn register_au<P: PluginExport>() {
     let info = P::info();
 
-    // Build param descriptors
-    let instance = P::create();
-    let param_infos = instance.params().param_infos();
+    // Static metadata path: derive emits a `LazyLock`-cached
+    // `Vec<ParamInfo>` so registration doesn't construct a plugin
+    // instance just to read parameter shape. Hand-written
+    // `PluginExport` impls without a `Params::param_infos_static`
+    // override fall back to the historical
+    // `Self::create().params().param_infos()` walk inside the trait
+    // default — see `PluginExport::param_infos_static`.
+    let param_infos = P::param_infos_static();
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
 
     for pi in &param_infos {

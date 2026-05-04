@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::plugin::Plugin;
-use truce_params::Params;
+use truce_params::{ParamInfo, Params};
 
 /// Unified export trait for all plugin formats.
 ///
@@ -36,4 +36,58 @@ pub trait PluginExport: Plugin + Sized {
     /// raw pointers. The Arc is cloned (cheap ref-count bump), not the
     /// params themselves.
     fn params_arc(&self) -> Arc<Self::Params>;
+
+    /// Static parameter metadata for registration-time access.
+    ///
+    /// Format wrappers' `register_*` paths (`truce-vst2`, `truce-vst3`,
+    /// `truce-au`, `truce-aax`) call this instead of the historical
+    /// `Self::create().params().param_infos()` walk, which constructed
+    /// a full plugin instance — including any allocation the
+    /// constructor did (DSP buffers, FFT plans, image atlases) — just
+    /// to read static metadata. On platforms where registration runs
+    /// from C++ static initializers (notably AAX `Describe`) those
+    /// allocations sit in a fragile init-order regime; avoiding them
+    /// closes a class of platform-dependent registration bugs.
+    ///
+    /// Default impl prefers
+    /// [`Params::param_infos_static`](truce_params::Params::param_infos_static)
+    /// when it returns a non-empty vec (the `#[derive(Params)]` path
+    /// emits an override built from compile-time metadata) and falls
+    /// back to the runtime construction otherwise — so plugins with
+    /// hand-written `Params` impls that don't override the static
+    /// path keep working unchanged.
+    fn param_infos_static() -> Vec<ParamInfo> {
+        let from_params = <Self::Params as Params>::param_infos_static();
+        if !from_params.is_empty() {
+            from_params
+        } else {
+            Self::create().params().param_infos()
+        }
+    }
+
+    /// Static "does this plugin have an editor" predicate. AAX's
+    /// `Describe` path needs to know this at registration time
+    /// (`has_editor` field on the static descriptor); the historical
+    /// way to learn it was `Self::create().editor().is_some()`, which
+    /// — paired with [`Self::param_infos_static`] — was the second
+    /// reason every format's registration walk constructed a plugin.
+    ///
+    /// Default impl falls back to that runtime path so unannotated
+    /// plugins keep working. Plugins that want to avoid the
+    /// static-init plugin construction (notably for AAX hosts that
+    /// run `Describe` very early) override with a `const`-style
+    /// answer:
+    ///
+    /// ```ignore
+    /// impl PluginExport for MyPlugin {
+    ///     // ...
+    ///     fn has_editor_static() -> bool { true }
+    /// }
+    /// ```
+    ///
+    /// VST2 / VST3 / AU never call this — they don't need the answer
+    /// at registration time.
+    fn has_editor_static() -> bool {
+        Self::create().editor().is_some()
+    }
 }

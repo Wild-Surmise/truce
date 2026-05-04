@@ -261,15 +261,14 @@ pub fn register_aax<P: PluginExport>() {
             bypass_param_id: u32::MAX, // filled below
         };
 
-        // Build param info + check for editor. Constructing a full
-        // plugin instance just to read static metadata is wasteful
-        // (same shape in VST2 / AU / VST3) but unavoidable while
-        // `PluginExport::param_infos` lives on the instance rather
-        // than as an associated `const` / `fn`. The instance dies at
-        // the end of this closure; the cost is one construction at
-        // library load.
-        let mut temp = P::create();
-        let param_infos = temp.params().param_infos();
+        // Static metadata path: derive emits a `LazyLock`-cached
+        // `Vec<ParamInfo>`, and `has_editor_static` is a const-style
+        // predicate plugins can override. Together they let the AAX
+        // `Describe` block — which runs from C++ static init on some
+        // hosts — skip plugin construction entirely. Plugins without
+        // overrides fall back to the runtime path inside the
+        // `PluginExport` defaults, matching the historical behavior.
+        let param_infos = P::param_infos_static();
         let bypass_param_id = param_infos
             .iter()
             .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
@@ -294,7 +293,7 @@ pub fn register_aax<P: PluginExport>() {
             });
         }
 
-        let has_editor = temp.editor().is_some();
+        let has_editor = P::has_editor_static();
         let mut desc = descriptor;
         desc.num_params = params.len() as u32;
         desc.has_editor = has_editor as i32;

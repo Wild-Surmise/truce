@@ -211,6 +211,11 @@ impl ParamField {
 /// A nested Params field (delegates to inner struct).
 struct NestedField {
     ident: syn::Ident,
+    /// Field type, retained so the derive can call associated
+    /// functions on it without an instance — specifically
+    /// [`Params::param_infos_static`] for the registration-time
+    /// "no temp plugin" path.
+    ty: syn::Type,
 }
 
 /// A meter slot field.
@@ -464,7 +469,10 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
         };
 
         if has_nested_attr(f) {
-            nested.push(NestedField { ident });
+            nested.push(NestedField {
+                ident,
+                ty: f.ty.clone(),
+            });
             continue;
         }
 
@@ -676,75 +684,34 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
     ))
 }
 
-/// Generate a constructor call for a field with `#[param(...)]` attributes.
-fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
+/// Build the `ParamInfo { ... }` literal for a `#[param(...)]` field.
+///
+/// Shared between [`gen_field_constructor`] (which wraps it in a
+/// `FloatParam`/`BoolParam`/etc. constructor at runtime) and the
+/// derive's static-metadata path
+/// ([`Params::param_infos_static`](truce_params::Params::param_infos_static)),
+/// which lifts the same literal into a `LazyLock<Vec<ParamInfo>>` so
+/// format wrappers can read parameter metadata without constructing a
+/// plugin instance. Returns `None` when a compile-time validation
+/// (default-out-of-range etc.) failed; the caller's `compile_error!`
+/// path handles that branch.
+fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     let a = &f.attrs;
-
-    // `f.id()` carries the `expect`-guarded "must run after auto-assign"
-    // invariant; using it here surfaces the order-of-call contract at
-    // construction time instead of silently minting `id = 0`. Today
-    // every caller drives this via `assign_param_ids` first, but a
-    // future refactor that calls `gen_field_constructor` out of order
-    // panics with a precise message rather than producing colliding
-    // id=0 params.
     let id = f.id();
     let name = a.name.as_deref().unwrap_or("Unnamed");
     let short_name = a.short_name.as_deref().unwrap_or(name);
     let group = a.group.as_deref().unwrap_or("");
     let default_plain = a.default.unwrap_or(0.0);
 
-    // Compile-time sanity check on `default = ...`. Catches the
-    // user-error cases that used to silently saturate at runtime
-    // (`as u32` on a negative `default_plain`, `as i64` on a
-    // fractional value). The variant-count range check for
-    // EnumParam still runs at construction time because we don't
-    // have `variant_count()` at expansion time without per-call
-    // const-eval plumbing.
     if let Some(d) = a.default {
-        let err = match f.kind {
-            ParamKind::Bool => {
-                if d != 0.0 && d != 1.0 {
-                    Some(format!(
-                        "BoolParam default {} must be 0 or 1; got {}",
-                        name, d
-                    ))
-                } else {
-                    None
-                }
-            }
-            ParamKind::Int => {
-                if !d.is_finite() || (d as i64 as f64) != d {
-                    Some(format!(
-                        "IntParam '{}' default must be an integer literal; got {}",
-                        name, d
-                    ))
-                } else {
-                    None
-                }
-            }
-            ParamKind::Enum => {
-                if !d.is_finite() || d < 0.0 || (d as u32 as f64) != d {
-                    Some(format!(
-                        "EnumParam '{}' default must be a non-negative integer (variant index); got {}",
-                        name, d
-                    ))
-                } else {
-                    None
-                }
-            }
-            ParamKind::Float => {
-                if !d.is_finite() {
-                    Some(format!(
-                        "FloatParam '{}' default must be finite; got {}",
-                        name, d
-                    ))
-                } else {
-                    None
-                }
-            }
+        let invalid = match f.kind {
+            ParamKind::Bool => d != 0.0 && d != 1.0,
+            ParamKind::Int => !d.is_finite() || (d as i64 as f64) != d,
+            ParamKind::Enum => !d.is_finite() || d < 0.0 || (d as u32 as f64) != d,
+            ParamKind::Float => !d.is_finite(),
         };
-        if let Some(msg) = err {
-            return quote! { compile_error!(#msg); };
+        if invalid {
+            return None;
         }
     }
 
@@ -753,7 +720,6 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         None => match f.kind {
             ParamKind::Bool => quote! { ::truce::params::ParamRange::Discrete { min: 0, max: 1 } },
             ParamKind::Enum => {
-                // Auto-infer variant count from the enum type's ParamEnum impl
                 if let Some(ref enum_ty) = f.enum_type {
                     quote! { ::truce::params::ParamRange::Enum { count: <#enum_ty as ::truce::params::ParamEnum>::variant_count() } }
                 } else {
@@ -774,7 +740,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         None => quote! { ::truce::params::ParamFlags::AUTOMATABLE },
     };
 
-    let info = quote! {
+    Some(quote! {
         ::truce::params::ParamInfo {
             id: #id,
             name: #name,
@@ -784,6 +750,65 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
             default_plain: #default_plain,
             flags: #flags,
             unit: #unit,
+        }
+    })
+}
+
+/// Generate a constructor call for a field with `#[param(...)]` attributes.
+///
+/// `f.id()` carries the `expect`-guarded "must run after auto-assign"
+/// invariant; using it here surfaces the order-of-call contract at
+/// construction time instead of silently minting `id = 0`. Today every
+/// caller drives this via `assign_param_ids` first, but a future
+/// refactor that calls `gen_field_constructor` out of order panics
+/// with a precise message rather than producing colliding id=0 params.
+fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
+    let a = &f.attrs;
+    let name = a.name.as_deref().unwrap_or("Unnamed");
+
+    // Compile-time sanity check on `default = ...`. Catches the
+    // user-error cases that used to silently saturate at runtime
+    // (`as u32` on a negative `default_plain`, `as i64` on a
+    // fractional value). The variant-count range check for EnumParam
+    // still runs at construction time because we don't have
+    // `variant_count()` at expansion time without per-call const-eval
+    // plumbing.
+    if let Some(d) = a.default {
+        let err = match f.kind {
+            ParamKind::Bool if d != 0.0 && d != 1.0 => {
+                Some(format!("BoolParam default {} must be 0 or 1; got {}", name, d))
+            }
+            ParamKind::Int if !d.is_finite() || (d as i64 as f64) != d => Some(format!(
+                "IntParam '{}' default must be an integer literal; got {}",
+                name, d
+            )),
+            ParamKind::Enum if !d.is_finite() || d < 0.0 || (d as u32 as f64) != d => {
+                Some(format!(
+                    "EnumParam '{}' default must be a non-negative integer (variant index); got {}",
+                    name, d
+                ))
+            }
+            ParamKind::Float if !d.is_finite() => Some(format!(
+                "FloatParam '{}' default must be finite; got {}",
+                name, d
+            )),
+            _ => None,
+        };
+        if let Some(msg) = err {
+            return quote! { compile_error!(#msg); };
+        }
+    }
+
+    let info = match gen_param_info_literal(f) {
+        Some(tokens) => tokens,
+        None => {
+            // Validation block above already returned a `compile_error!`
+            // for every shape that `gen_param_info_literal` rejects.
+            // Surface a fallback diagnostic so a future divergence
+            // between the two checks fails loudly instead of silently
+            // emitting bad code.
+            let msg = format!("invalid `#[param]` attributes on field `{}`", name);
+            return quote! { compile_error!(#msg); };
         }
     };
 
@@ -937,6 +962,54 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 #(into.push(#own_infos);)*
                 #(self.#nested_idents.append_param_infos(into);)*
             }
+        }
+    };
+
+    // --- param_infos_static ---
+    // Same shape as `param_infos`, but each entry is the raw
+    // `ParamInfo { ... }` literal (built by
+    // `gen_param_info_literal`) rather than a runtime `self.<f>.info`
+    // read. Lifted into a `LazyLock<Vec<ParamInfo>>` so format
+    // wrappers' `register_*` paths can read parameter metadata
+    // without constructing a plugin instance — see the
+    // `PluginExport::param_infos_static` doc on why that matters
+    // (AAX `Describe` runs at C++ static init time).
+    let own_info_literals: Vec<proc_macro2::TokenStream> = param_fields
+        .iter()
+        .filter_map(gen_param_info_literal)
+        .collect();
+    let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .map(|n| {
+            let ty = &n.ty;
+            quote! {
+                infos.extend(<#ty as ::truce::params::Params>::param_infos_static());
+            }
+        })
+        .collect();
+    let static_infos_body = if nested_fields.is_empty() {
+        quote! { vec![#(#own_info_literals),*] }
+    } else {
+        quote! {
+            {
+                let mut infos: Vec<::truce::params::ParamInfo> = vec![#(#own_info_literals),*];
+                #(#nested_static_calls)*
+                infos
+            }
+        }
+    };
+    let param_infos_static_impl = quote! {
+        fn param_infos_static() -> Vec<::truce::params::ParamInfo>
+        where
+            Self: ::std::marker::Sized,
+        {
+            // `LazyLock` so the first call computes the metadata and
+            // every later registration reads the cache. `clone()` is
+            // a single Vec allocation — cheap relative to the avoided
+            // plugin construction. (`ParamInfo` is `Clone`.)
+            static INFOS: ::std::sync::LazyLock<Vec<::truce::params::ParamInfo>> =
+                ::std::sync::LazyLock::new(|| #static_infos_body);
+            INFOS.clone()
         }
     };
 
@@ -1321,6 +1394,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
 
             #append_infos_impl
+
+            #param_infos_static_impl
 
             fn count(&self) -> usize {
                 #count_expr
