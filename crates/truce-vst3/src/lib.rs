@@ -533,7 +533,11 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         EventBody::PitchBend { channel, value } => {
             // 14-bit signed [-1, 1] → unsigned 0..16383, 8192 = center.
             let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
-            (0xE0 | (channel & 0x0F), (n & 0x7F) as u8, ((n >> 7) & 0x7F) as u8)
+            (
+                0xE0 | (channel & 0x0F),
+                (n & 0x7F) as u8,
+                ((n >> 7) & 0x7F) as u8,
+            )
         }
         EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
         _ => return None,

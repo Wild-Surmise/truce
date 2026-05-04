@@ -523,7 +523,11 @@ pub unsafe fn write_time_position_sequence(
         // layout. `atom_typed_size` is parameterized so `time:bar` /
         // `time:frame` / `time:beatsPerBar` / `time:beatUnit` can use
         // the spec's `xsd:long` / `xsd:int` types instead of `xsd:double`.
-        let mut write_typed = |key: Urid, atom_type: Urid, value_size: usize, write_value: &dyn Fn(*mut u8)| -> bool {
+        let mut write_typed = |key: Urid,
+                               atom_type: Urid,
+                               value_size: usize,
+                               write_value: &dyn Fn(*mut u8)|
+         -> bool {
             if key == 0 || atom_type == 0 {
                 return false;
             }
@@ -563,33 +567,40 @@ pub unsafe fn write_time_position_sequence(
         // stream — strict hosts (Ardour, Carla) reject malformed
         // objects.
         let mut ok = true;
-        ok = ok && write_typed(urid.time_speed, urid.atom_double, 8, &|p| {
-            *(p as *mut f64) = if info.playing { 1.0 } else { 0.0 };
-        });
-        ok = ok && write_typed(urid.time_beats_per_minute, urid.atom_double, 8, &|p| {
-            *(p as *mut f64) = info.tempo;
-        });
-        ok = ok && write_typed(urid.time_bar_beat, urid.atom_float, 4, &|p| {
-            *(p as *mut f32) = bar_beat as f32;
-        });
+        ok = ok
+            && write_typed(urid.time_speed, urid.atom_double, 8, &|p| {
+                *(p as *mut f64) = if info.playing { 1.0 } else { 0.0 };
+            });
+        ok = ok
+            && write_typed(urid.time_beats_per_minute, urid.atom_double, 8, &|p| {
+                *(p as *mut f64) = info.tempo;
+            });
+        ok = ok
+            && write_typed(urid.time_bar_beat, urid.atom_float, 4, &|p| {
+                *(p as *mut f32) = bar_beat as f32;
+            });
         // LV2 spec types: `time:bar` is `xsd:long`, `time:frame` is
         // `xsd:long`, `time:beatsPerBar` is `xsd:int`, `time:beatUnit`
         // is `xsd:int`. Strict hosts (Ardour, Carla) type-check the
         // atom value and reject `xsd:double` for these. Round-trip
         // works in-tree because our reader (`read_atom_number`)
         // accepts any numeric type, but cross-host interop suffers.
-        ok = ok && write_typed(urid.time_bar, urid.atom_long, 8, &|p| {
-            *(p as *mut i64) = bar_index;
-        });
-        ok = ok && write_typed(urid.time_frame, urid.atom_long, 8, &|p| {
-            *(p as *mut i64) = info.position_samples;
-        });
-        ok = ok && write_typed(urid.time_beats_per_bar, urid.atom_int, 4, &|p| {
-            *(p as *mut i32) = info.time_sig_num as i32;
-        });
-        ok = ok && write_typed(urid.time_beat_unit, urid.atom_int, 4, &|p| {
-            *(p as *mut i32) = info.time_sig_den as i32;
-        });
+        ok = ok
+            && write_typed(urid.time_bar, urid.atom_long, 8, &|p| {
+                *(p as *mut i64) = bar_index;
+            });
+        ok = ok
+            && write_typed(urid.time_frame, urid.atom_long, 8, &|p| {
+                *(p as *mut i64) = info.position_samples;
+            });
+        ok = ok
+            && write_typed(urid.time_beats_per_bar, urid.atom_int, 4, &|p| {
+                *(p as *mut i32) = info.time_sig_num as i32;
+            });
+        ok = ok
+            && write_typed(urid.time_beat_unit, urid.atom_int, 4, &|p| {
+                *(p as *mut i32) = info.time_sig_den as i32;
+            });
         if !ok {
             // Drop the whole notify event if any property didn't fit.
             // The notify-out port's `rsz:minimumSize 4096` is sized

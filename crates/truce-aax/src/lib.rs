@@ -257,7 +257,7 @@ pub fn register_aax<P: PluginExport>() {
             plugin_id: fourcc(&info.fourcc) ^ 0x01010101,
             is_instrument: is_instrument as i32,
             category,
-            has_editor: 0, // filled below
+            has_editor: 0,             // filled below
             bypass_param_id: u32::MAX, // filled below
         };
 
@@ -917,8 +917,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
                 }),
                 set_param: Box::new(move |id, value| {
-                    let normalized =
-                        params_for_set.set_normalized_returning_normalized(id, value);
+                    let normalized = params_for_set.set_normalized_returning_normalized(id, value);
                     set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
                 }),
                 end_edit: Box::new(move |id| {

@@ -612,7 +612,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // Reset the pending-size cell to the editor's current size so a
         // stale `set_size` from before this open() doesn't immediately
         // re-resize the freshly built window.
-        self.pending_size.store(pack_size(self.size), Ordering::Relaxed);
+        self.pending_size
+            .store(pack_size(self.size), Ordering::Relaxed);
         let pending_size = self.pending_size.clone();
 
         let window = baseview::Window::open_parented(

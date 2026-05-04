@@ -417,7 +417,11 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
         ),
         EventBody::PitchBend { channel, value } => {
             let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
-            (0xE0 | (channel & 0x0F), (n & 0x7F) as u8, ((n >> 7) & 0x7F) as u8)
+            (
+                0xE0 | (channel & 0x0F),
+                (n & 0x7F) as u8,
+                ((n >> 7) & 0x7F) as u8,
+            )
         }
         EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
         _ => return None,
@@ -543,8 +547,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // + get_plain) instead of two — the
                         // `#[derive(Params)]` impl can compute both in
                         // a single match-arm walk.
-                        let plain =
-                            params_for_set.set_normalized_returning_plain(id, value) as f32;
+                        let plain = params_for_set.set_normalized_returning_plain(id, value) as f32;
                         truce_au_v2_host_set_param(
                             ctx_raw.as_ptr() as *mut std::ffi::c_void,
                             id,

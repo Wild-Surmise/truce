@@ -852,7 +852,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Windows the per-monitor DPI from the parent HWND. Any
         // `set_scale_factor` the host issues after open will overwrite
         // through the same shared cell.
-        self.scale.set(crate::platform::query_backing_scale(&parent));
+        self.scale
+            .set(crate::platform::query_backing_scale(&parent));
         let scale = self.scale.get();
         let scale_f32 = scale as f32;
         self.backend = CpuBackend::new(w, h, scale_f32);

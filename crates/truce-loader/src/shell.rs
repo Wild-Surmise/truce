@@ -312,10 +312,8 @@ impl<P: Params + 'static> HotEditor<P> {
             .name("truce-gui-reload".into())
             .spawn(move || {
                 hot_debug!("[truce-gui-reload] watcher thread started");
-                const POLL_INTERVAL: std::time::Duration =
-                    std::time::Duration::from_millis(500);
-                const STOP_CHECK: std::time::Duration =
-                    std::time::Duration::from_millis(50);
+                const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+                const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
                 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
                 let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
 

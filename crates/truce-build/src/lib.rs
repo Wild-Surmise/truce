@@ -276,11 +276,7 @@ pub fn target_dir(root: &Path) -> PathBuf {
         && !d.is_empty()
     {
         let p = PathBuf::from(&d);
-        return if p.is_absolute() {
-            p
-        } else {
-            root.join(p)
-        };
+        return if p.is_absolute() { p } else { root.join(p) };
     }
     if let Some(custom) = read_cargo_config_target_dir(root) {
         return if custom.is_absolute() {

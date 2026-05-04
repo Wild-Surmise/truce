@@ -111,8 +111,7 @@ pub struct Lv2UiResize {
 #[repr(C)]
 pub struct Lv2UiTouch {
     pub handle: *mut c_void,
-    pub touch:
-        Option<unsafe extern "C" fn(handle: *mut c_void, port_index: u32, grabbed: bool)>,
+    pub touch: Option<unsafe extern "C" fn(handle: *mut c_void, port_index: u32, grabbed: bool)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -780,8 +779,7 @@ fn build_editor_context<P: PluginExport>(
         .collect();
     // Begin/end_edit only need (id → port_index); a thinner clone keeps
     // the gesture closures from holding the full ParamRange.
-    let slots_for_begin: Vec<(u32, u32)> =
-        slots.iter().map(|s| (s.id, s.port_index)).collect();
+    let slots_for_begin: Vec<(u32, u32)> = slots.iter().map(|s| (s.id, s.port_index)).collect();
     let slots_for_end = slots_for_begin.clone();
     // `Lv2UiController = *mut c_void`. `SendPtr` is the workspace's
     // canonical Send/Sync wrapper for raw pointers held across
@@ -826,8 +824,7 @@ fn build_editor_context<P: PluginExport>(
         ClosureBridge {
             begin_edit: Box::new(move |id: u32| {
                 let Some(func) = touch_fn else { return };
-                let Some((_, port_index)) =
-                    slots_for_begin.iter().find(|(pid, _)| *pid == id)
+                let Some((_, port_index)) = slots_for_begin.iter().find(|(pid, _)| *pid == id)
                 else {
                     return;
                 };
@@ -835,9 +832,7 @@ fn build_editor_context<P: PluginExport>(
             }),
             end_edit: Box::new(move |id: u32| {
                 let Some(func) = touch_fn else { return };
-                let Some((_, port_index)) =
-                    slots_for_end.iter().find(|(pid, _)| *pid == id)
-                else {
+                let Some((_, port_index)) = slots_for_end.iter().find(|(pid, _)| *pid == id) else {
                     return;
                 };
                 unsafe { func(touch_handle as *mut c_void, *port_index, false) };

@@ -68,12 +68,8 @@ pub struct Vst2Callbacks {
     /// Format the param's *current* plain value for display. The shim
     /// can call this directly inside `effGetParamDisplay` without
     /// having to round-trip a value through normalize/denormalize.
-    pub param_format_current: unsafe extern "C" fn(
-        ctx: *mut c_void,
-        id: u32,
-        out: *mut c_char,
-        out_len: u32,
-    ) -> u32,
+    pub param_format_current:
+        unsafe extern "C" fn(ctx: *mut c_void, id: u32, out: *mut c_char, out_len: u32) -> u32,
     /// Number of *encodable* plugin → host MIDI events queued by the
     /// last `process()` call. Unsupported event types (MIDI 2.0,
     /// ParamChange, Transport) are filtered out so the C shim can

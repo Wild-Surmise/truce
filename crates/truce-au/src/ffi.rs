@@ -118,8 +118,7 @@ pub struct AuCallbacks {
     /// iterate `0..count` without checking for skipped slots.
     pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill `out` with the index-th encodable output event.
-    pub output_event_at:
-        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuMidiEvent),
+    pub output_event_at: unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuMidiEvent),
 
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
