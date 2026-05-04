@@ -30,7 +30,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use truce_core::cast::sample_count_usize;
+use truce_utils::cast::sample_count_usize;
 
 // ---------------------------------------------------------------------------
 // Fixtures

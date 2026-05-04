@@ -8,6 +8,12 @@ description = "Core types for the truce audio plugin framework"
 
 [dependencies]
 truce-params = { workspace = true }
+# `cast` + `slugify` live in `truce-utils` (dependency-free) so
+# `cargo-truce` and other build-time consumers can use them without
+# inheriting `truce-core`'s `truce-params` + `png` publish chain.
+# `truce-core` re-exports both at the crate root for backwards-compat
+# with existing `truce_core::cast::*` and `truce_core::slugify` callers.
+truce-utils = { workspace = true }
 png = "0.18"
 
 [lints]

@@ -19,10 +19,10 @@ use std::process::Command;
 
 /// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
 /// identifier suitable for LV2 bundle / file / IRI use. Thin re-export
-/// of [`truce_core::slugify`]; kept under the `package::stage` module
+/// of [`truce_utils::slugify`]; kept under the `package::stage` module
 /// path because every cargo-truce caller already imports from here.
 pub(crate) fn lv2_slug(name: &str) -> String {
-    truce_core::slugify(name)
+    truce_utils::slugify(name)
 }
 
 /// Stage an LV2 bundle into `staging/{slug}.lv2/`. Copies the built

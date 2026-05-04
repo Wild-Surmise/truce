@@ -1143,8 +1143,8 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
         // because the source allocation is Vec's, not Box's.
         #[allow(clippy::same_length_and_capacity)]
         unsafe {
-            drop(Vec::from_raw_parts(data, len as usize, len as usize))
-        };
+            drop(Vec::from_raw_parts(data, len as usize, len as usize));
+        }
     }
 }
 

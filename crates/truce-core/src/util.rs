@@ -37,28 +37,10 @@ pub fn meter_display(linear_peak: f32) -> f32 {
     ((db + 60.0) / 60.0).clamp(0.0, 1.0)
 }
 
-/// Slug a plugin's display name into a lowercase, hyphenated,
-/// ASCII-safe identifier suitable for filesystem paths, LV2 bundle
-/// names, and IRI components.
-///
-/// Rules: ASCII alphanumerics pass through lowercased; every other
-/// character (including runs of them) collapses to a single `-`;
-/// leading and trailing dashes are trimmed.
-#[must_use]
-pub fn slugify(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_dash = false;
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-            prev_dash = false;
-        } else if !prev_dash {
-            out.push('-');
-            prev_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
-}
+// `slugify` lives in `truce-utils` (dependency-free) so it can be
+// shared with `cargo-truce` without forcing the `truce-core` →
+// `truce-params` chain into the CLI's publish dependencies.
+// Re-exported at the crate root via `pub use truce_utils::slugify`.
 
 #[cfg(test)]
 mod tests {
@@ -82,14 +64,5 @@ mod tests {
     fn a4_is_440() {
         let freq = midi_note_to_freq(69);
         assert!((freq - 440.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn slugify_basic() {
-        assert_eq!(slugify("My Plugin"), "my-plugin");
-        assert_eq!(slugify("Hello!! World"), "hello-world");
-        assert_eq!(slugify("--leading and trailing--"), "leading-and-trailing");
-        assert_eq!(slugify("ABC123"), "abc123");
-        assert_eq!(slugify(""), "");
     }
 }

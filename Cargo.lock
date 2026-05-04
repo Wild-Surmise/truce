@@ -690,8 +690,8 @@ dependencies = [
  "tinytemplate",
  "toml 1.1.2+spec-1.1.0",
  "truce-build",
- "truce-core",
  "truce-shim-types",
+ "truce-utils",
 ]
 
 [[package]]
@@ -6075,6 +6075,7 @@ version = "0.22.2"
 dependencies = [
  "png 0.18.1",
  "truce-params",
+ "truce-utils",
 ]
 
 [[package]]
@@ -6453,6 +6454,10 @@ dependencies = [
  "truce-driver",
  "truce-params",
 ]
+
+[[package]]
+name = "truce-utils"
+version = "0.22.2"
 
 [[package]]
 name = "truce-vst2"

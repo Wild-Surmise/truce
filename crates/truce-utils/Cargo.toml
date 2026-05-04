@@ -1,0 +1,12 @@
+[package]
+name = "truce-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Lightweight, dependency-free utilities shared across the truce workspace (numeric-cast helpers, slug)"
+
+[lints]
+workspace = true

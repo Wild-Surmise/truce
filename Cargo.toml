@@ -34,6 +34,7 @@ members = [
     "crates/truce-shim-types",
     "crates/truce-dsp",
     "crates/truce-font",
+    "crates/truce-utils",
 ]
 
 [workspace.package]
@@ -63,9 +64,10 @@ pedantic = { level = "warn", priority = -1 }
 # whose crate is published to crates.io and consumed by another
 # published crate via `workspace = true` (cargo strips `path` at
 # publish time and needs a registry version to record). Today that's
-# only `truce-shim-types`. Other entries are git-only / dev-only;
-# omitting `version =` removes one place per release that has to
-# track `[workspace.package].version`.
+# `truce-shim-types`, `truce-build`, and `truce-utils` — all three
+# pulled in by `cargo-truce`'s lib half. Other entries are git-only /
+# dev-only; omitting `version =` removes one place per release that
+# has to track `[workspace.package].version`.
 [workspace.dependencies]
 truce = { path = "crates/truce" }
 truce-core = { path = "crates/truce-core" }
@@ -80,16 +82,17 @@ truce-vst2 = { path = "crates/truce-vst2" }
 truce-lv2 = { path = "crates/truce-lv2" }
 truce-aax = { path = "crates/truce-aax" }
 truce-test = { path = "crates/truce-test" }
-truce-build = { path = "crates/truce-build" }
 truce-loader = { path = "crates/truce-loader" }
 truce-derive = { path = "crates/truce-derive" }
 truce-gpu = { path = "crates/truce-gpu" }
 truce-egui = { path = "crates/truce-egui" }
 truce-iced = { path = "crates/truce-iced" }
 truce-slint = { path = "crates/truce-slint" }
-truce-shim-types = { version = "0.22.2", path = "crates/truce-shim-types" }
 truce-dsp = { path = "crates/truce-dsp" }
 truce-font = { path = "crates/truce-font" }
+truce-build = { version = "0.22.2", path = "crates/truce-build" }
+truce-shim-types = { version = "0.22.2", path = "crates/truce-shim-types" }
+truce-utils = { version = "0.22.2", path = "crates/truce-utils" }
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
 # (responder / tracking-area / layer-contents cleanup — see the fork's
