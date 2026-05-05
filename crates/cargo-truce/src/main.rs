@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         }
 
         // Build/install commands — forwarded to the engine in lib.rs.
-        "install" | "build" | "package" | "remove" | "run" | "screenshot" | "status"
+        "install" | "build" | "package" | "uninstall" | "run" | "screenshot" | "status"
         | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
             cargo_truce::run(&args)
         }
@@ -180,18 +180,18 @@ Build / Install / Package:
       faster-compile dev-profile build (fine when iterating outside
       a DAW); release otherwise.
 
-  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
-      Remove installed plugin bundles for this project.
+  uninstall [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
+      Uninstall plugin bundles for this project.
       Default: all formats, all plugins, both user + system scopes.
       Asks for confirmation. AAX and AU v3 are always system-scope —
       `--user` skips them with the same one-line note as install.
       -p <crate>   Filter by cargo crate name (e.g. -p truce-example-gain)
       -n <name>    Filter by display name (e.g. -n 'Truce Gain')
-      --user       Only remove bundles in the per-user directories
-      --system     Only remove bundles in the system directories
-      --stale      Remove vendor bundles NOT in the current project
+      --user       Only uninstall bundles in the per-user directories
+      --system     Only uninstall bundles in the system directories
+      --stale      Uninstall vendor bundles NOT in the current project
                    (renamed/deleted plugins still on the system)
-      --dry-run    Show what would be removed without deleting
+      --dry-run    Show what would be uninstalled without deleting
       --yes        Skip confirmation prompt
 
 Validation / Inspection:

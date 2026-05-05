@@ -26,7 +26,7 @@ cargo truce install --system       # install for all users (sudo / admin)
 cargo truce install --clap         # single format only
 cargo truce build                  # bundle into target/bundles/ without installing
 cargo truce package                # build a signed .pkg / .exe in target/dist/
-cargo truce remove                 # uninstall plugins (mirrors install scope flags)
+cargo truce uninstall              # remove installed plugins (mirrors install scope flags)
 cargo truce validate               # run auval (AU) + pluginval (VST3) + clap-validator
 cargo truce doctor                 # check toolchain, SDKs, signing certs, install paths
 cargo truce run                    # build and launch standalone

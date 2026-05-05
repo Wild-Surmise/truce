@@ -1,4 +1,4 @@
-//! `cargo truce remove` — uninstall plugin bundles for the current project,
+//! `cargo truce uninstall` — remove plugin bundles for the current project,
 //! or with `--stale` evict vendor-matching bundles no longer in `truce.toml`.
 
 #[cfg(target_os = "macos")]
@@ -31,7 +31,7 @@ fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
     }
     // `lsregister -u ""` interprets the empty string as the current
     // directory and unregisters whatever app-bundle the CWD happens to
-    // be — alarming if the user invoked `cargo truce remove` from inside
+    // be — alarming if the user invoked `cargo truce uninstall` from inside
     // some other `.app`. Skip the call instead.
     if let Some(app_path_str) = app_path.to_str() {
         let _ = Command::new(
@@ -66,7 +66,7 @@ fn clear_au_caches() {
 }
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn cmd_remove(args: &[String]) -> Res {
+pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     let config = load_config()?;
 
     let mut clap = false;
@@ -100,7 +100,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--system" => set_cli_install_scope(&mut cli_scope, InstallScope::System)?,
             "--ask" => {
                 return Err(
-                    "--ask is not valid for `cargo truce remove` (no end user to prompt). \
+                    "--ask is not valid for `cargo truce uninstall` (no end user to prompt). \
                      Use --user or --system."
                         .into(),
                 );
@@ -567,11 +567,11 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce remove [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
-                          [--user|--system] [-p <crate>] [-n <name>]
-                          [--stale] [--dry-run] [--yes]
+Usage: cargo truce uninstall [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+                             [--user|--system] [-p <crate>] [-n <name>]
+                             [--stale] [--dry-run] [--yes]
 
-Remove installed plugin bundles for this project. Default: all formats,
+Uninstall plugin bundles for this project. Default: all formats,
 all plugins, both user + system scopes. Asks for confirmation. AAX and
 AU v3 are always system-scope — `--user` skips them.
 
@@ -583,12 +583,12 @@ Options:
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.app, macOS only)
   --aax            AAX only
-  --user           Only remove from per-user directories.
-  --system         Only remove from system directories.
+  --user           Only uninstall from per-user directories.
+  --system         Only uninstall from system directories.
   -p <crate>       Filter by cargo crate name.
   -n <name>        Filter by display name.
-  --stale          Remove vendor bundles NOT in the current project.
-  --dry-run        Show what would be removed without deleting.
+  --stale          Uninstall vendor bundles NOT in the current project.
+  --dry-run        Show what would be uninstalled without deleting.
   --yes, -y        Skip confirmation prompt.
   -h, --help       Show this message"
     );

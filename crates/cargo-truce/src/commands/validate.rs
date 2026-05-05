@@ -23,7 +23,7 @@ fn warn_on_scope_collision(format: &str, user_path: &Path, system_path: &Path) {
         eprintln!("        • system: {}", system_path.display());
         eprintln!(
             "        Hosts pick one at scan time; remove the stale copy with \
-             `cargo truce remove --user` or `--system`."
+             `cargo truce uninstall --user` or `--system`."
         );
     }
 }

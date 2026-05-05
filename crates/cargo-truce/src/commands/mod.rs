@@ -7,12 +7,12 @@ pub(crate) mod doctor;
 pub(crate) mod install;
 pub(crate) mod log_stream_au;
 pub(crate) mod package;
-pub(crate) mod remove;
 pub(crate) mod reset_aax;
 pub(crate) mod reset_au;
 pub(crate) mod run;
 pub(crate) mod screenshot;
 pub(crate) mod status;
+pub(crate) mod uninstall;
 pub(crate) mod validate;
 
 use crate::{Config, PluginDef};

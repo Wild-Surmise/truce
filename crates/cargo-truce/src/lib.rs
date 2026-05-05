@@ -97,7 +97,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "install" => commands::install::cmd_install(&args[1..]),
         "build" => commands::build::cmd_build(&args[1..]),
         "package" => commands::package::cmd_package(&args[1..]),
-        "remove" => commands::remove::cmd_remove(&args[1..]),
+        "uninstall" => commands::uninstall::cmd_uninstall(&args[1..]),
         "run" => commands::run::cmd_run(&args[1..]),
         "screenshot" => commands::screenshot::cmd_screenshot(&args[1..]),
         "status" => commands::status::cmd_status(),

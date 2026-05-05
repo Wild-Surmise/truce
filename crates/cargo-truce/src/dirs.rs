@@ -31,7 +31,7 @@ pub fn home_dir() -> Option<PathBuf> {
 /// surrounding command can print one line ("can't determine home
 /// directory: set HOME / USERPROFILE") instead of panicking on the
 /// `Option::unwrap` the audit flagged across `cmd_status`,
-/// `cmd_remove`, install paths, and `cmd_reset_au`.
+/// `cmd_uninstall`, install paths, and `cmd_reset_au`.
 //
 // Gated to macOS: every caller (`cmd_status`, `cmd_reset_au` macOS impl)
 // is itself macOS-gated, so on Linux/Windows this would be dead code.

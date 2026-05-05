@@ -178,7 +178,7 @@ parameters don't sync.
   changing IDs or reinstalling, `cargo truce reset-au` flushes the AU
   caches and restarts `pkd` / `AudioComponentRegistrar` (use
   `cargo truce reset-aax` for the Pro Tools AAX cache). If that
-  doesn't help, follow up with `cargo truce remove --au2 --au3 -p
+  doesn't help, follow up with `cargo truce uninstall --au2 --au3 -p
   <crate>` and reinstall.
 - **v2 and v3 collision.** If `au3_subtype` equals `fourcc`, hosts
   may only surface one of them. Use distinct subtypes (e.g. `MyFx`

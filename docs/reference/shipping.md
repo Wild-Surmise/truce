@@ -78,7 +78,7 @@ a per-invocation developer choice — `cargo truce install` has no
 
 Full per-platform table in [formats/README.md](../formats/).
 
-`cargo truce remove` mirrors the same flags. By default it scans
+`cargo truce uninstall` mirrors the same flags. By default it scans
 both scopes (handy when you switched scope mid-iteration); pass
 `--user` / `--system` to limit. `cargo truce doctor` prints both
 paths per format with a writable / sudo / not-present marker, and

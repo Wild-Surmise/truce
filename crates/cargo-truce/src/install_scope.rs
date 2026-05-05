@@ -140,7 +140,7 @@ pub(crate) fn effective_scope(
 }
 
 /// Set the CLI scope slot, rejecting a second flag with a different
-/// value. `cargo truce install` and `cargo truce remove` both accept
+/// value. `cargo truce install` and `cargo truce uninstall` both accept
 /// `--user` / `--system` and need the same mutual-exclusion check;
 /// the helper centralizes the error message so both sites stay in
 /// sync.
