@@ -135,11 +135,6 @@ pub struct BaseviewTranslator {
 }
 
 impl BaseviewTranslator {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The last cursor position we saw from a `CursorMoved`, in logical
     /// points. Useful when a caller needs to query cursor state outside
     /// the event stream (e.g. for its own overlays).
@@ -297,10 +292,6 @@ pub struct DragState {
 }
 
 impl InteractionState {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     /// Read and clear the explicit repaint flag set by event handlers.
     pub fn take_repaint_request(&mut self) -> bool {

@@ -17,6 +17,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
 use truce_core::state;
+use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_register};
 use truce_params::Params;
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
@@ -31,7 +32,7 @@ use std::sync::Arc;
 /// overflow we want most-recent-wins (`force_push`) so a rapid
 /// double-recall doesn't get the audio thread to apply a stale state
 /// after the host already moved on.
-type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct Vst3Instance<P: PluginExport> {
     plugin: P,
@@ -67,7 +68,7 @@ struct Vst3Instance<P: PluginExport> {
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
-    /// `cb_process` and calls [`truce_core::state::apply_state`]
+    /// `cb_process` and calls [`state::apply_state`]
     /// under its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
 }
@@ -162,7 +163,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            truce_core::state::apply_state(&mut inst.plugin, &state);
+            state::apply_state(&mut inst.plugin, &state);
         }
 
         // Convert MIDI events
@@ -826,6 +827,19 @@ fn vst3_cid(id: &str) -> [u8; 16] {
 }
 
 pub fn register_vst3<P: PluginExport>() {
+    // Called from the export macro's `extern "C" fn init()` static
+    // initializer. Catch any panic so it doesn't cross the FFI
+    // boundary and abort the host process.
+    run_register::<P>("VST3", || {
+        let Some((num_inputs, num_outputs)) = default_io_channels::<P>() else {
+            log_missing_bus_layout::<P>("VST3");
+            return;
+        };
+        register_vst3_inner::<P>(num_inputs, num_outputs);
+    });
+}
+
+fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
     // Static metadata path: derive emits a `LazyLock`-cached
     // `Vec<ParamInfo>` so registration skips the
@@ -898,8 +912,8 @@ pub fn register_vst3<P: PluginExport>() {
         cid: vst3_cid(info.vst3_id),
         category: category.into_raw(),
         subcategories: subcategories.into_raw(),
-        num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
-        num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
+        num_inputs,
+        num_outputs,
         has_midi_output,
     }));
 

@@ -1177,10 +1177,7 @@ impl WgpuBackend {
     /// Ensure the current (last) batch targets `image`. If not, close the
     /// current batch and open a new one. Call before pushing indices.
     fn ensure_batch(&mut self, image: Option<ImageId>) {
-        let needs_new = match self.batches.last() {
-            None => true,
-            Some(last) => last.image != image,
-        };
+        let needs_new = self.batches.last().is_none_or(|last| last.image != image);
         if needs_new {
             self.batches.push(DrawBatch {
                 index_start: len_u32(self.indices.len()),

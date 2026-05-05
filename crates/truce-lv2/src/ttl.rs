@@ -14,24 +14,20 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use truce_core::export::PluginExport;
+use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
+use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, Params};
+
+use crate::{PortLayout, derive_port_layout, plugin_uri, ui_uri};
+
 /// Install-time override for `doap:name` in the generated LV2 TTL.
 /// Populated by `cargo truce install` from the `lv2_name` field in
 /// `truce.toml`.
 const LV2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_LV2_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
-    match LV2_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    resolve_name_override(LV2_NAME_OVERRIDE, info.name)
 }
-
-use truce_core::info::{PluginCategory, PluginInfo};
-use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit};
-
-use crate::{PortLayout, derive_port_layout, plugin_uri, ui_uri};
-use truce_core::export::PluginExport;
-use truce_params::Params;
 
 /// Emit an LV2 bundle for the plugin. Assumes the `.so` has already been
 /// placed at `bundle_dir.join(&so_name)`.

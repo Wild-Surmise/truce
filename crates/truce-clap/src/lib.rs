@@ -23,6 +23,7 @@ pub mod __macro_deps {
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
+use std::mem::transmute;
 use std::ptr;
 use std::sync::Arc;
 
@@ -113,7 +114,7 @@ type GuiChangeQueue = crossbeam_queue::ArrayQueue<GuiParamChange>;
 /// overflow we want most-recent-wins (`force_push`) so a rapid
 /// double-recall doesn't get the audio thread to apply a stale state
 /// after the host already moved on.
-type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 // ---------------------------------------------------------------------------
 // Internal wrapper struct held as plugin_data
@@ -150,7 +151,7 @@ struct ClapPluginData<P: PluginExport> {
     /// editor (`set_state` callback) deserialize on their thread and
     /// push the result; the audio thread pops at the top of
     /// `clap_plugin_process` and calls
-    /// [`truce_core::state::apply_state`] under its exclusive
+    /// [`state::apply_state`] under its exclusive
     /// `&mut plugin`. Sidesteps the data race that the previous
     /// "cast to `&mut` from the GUI thread" pattern produced.
     pending_state: Arc<StateLoadQueue>,
@@ -748,7 +749,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // newest blob and the older one is dropped — preferred to
         // the audio thread chasing stale state across blocks.
         if let Some(state) = data.pending_state.pop() {
-            truce_core::state::apply_state(&mut data.plugin, &state);
+            state::apply_state(&mut data.plugin, &state);
         }
 
         // Convert CLAP input events to our EventList — sort by
@@ -802,7 +803,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     std::slice::from_raw_parts(ptr, num_frames)
                 };
                 data.input_slices
-                    .push(std::mem::transmute::<&[f32], &'static [f32]>(slice));
+                    .push(transmute::<&[f32], &'static [f32]>(slice));
             }
         }
 
@@ -820,7 +821,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     std::slice::from_raw_parts_mut(ptr, num_frames)
                 };
                 data.output_slices
-                    .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(slice));
+                    .push(transmute::<&mut [f32], &'static mut [f32]>(slice));
             }
         }
 
@@ -832,7 +833,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // pattern as `RawBufferScratch::build`.
         let data_ptr: *mut ClapPluginData<P> = data;
         let s = &mut *data_ptr;
-        let mut audio_buffer = std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
+        let mut audio_buffer = transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
             AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, num_frames),
         );
 
@@ -1720,7 +1721,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 set_state: Box::new(move |bytes| {
                     if let Some(deserialized) =
-                        truce_core::state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                        state::deserialize_state(&bytes, plugin_id_hash_for_set)
                     {
                         let _ = pending_state_for_set.force_push(deserialized);
                     }

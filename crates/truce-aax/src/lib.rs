@@ -11,15 +11,20 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{CString, c_void};
+use std::mem;
 use std::os::raw::c_char;
+use std::ptr;
 use std::slice;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::bus::BusLayout;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
+use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_params::{ParamFlags, Params};
@@ -148,7 +153,7 @@ pub struct TruceAaxTransportSnapshot {
 /// overflow we want most-recent-wins (`force_push`) so a rapid
 /// double-recall doesn't get the audio thread to apply a stale state
 /// after the host already moved on.
-type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AaxInstance<P: PluginExport> {
     plugin: P,
@@ -172,7 +177,7 @@ struct AaxInstance<P: PluginExport> {
     /// `collect_values` + `serialize_state` on every call. The blob
     /// is `Arc`-wrapped so cache hits hand back a refcount bump
     /// instead of copying multi-KB Vec contents per call.
-    state_cache: std::sync::Mutex<Option<(u64, std::sync::Arc<Vec<u8>>)>>,
+    state_cache: Mutex<Option<(u64, Arc<[u8]>)>>,
     /// Monotonically-incrementing counter bumped by `_set_param` (audio
     /// thread) and `_load_state` (main thread). `_save_state` snapshots
     /// it before reading params and re-checks after serialization; if
@@ -181,11 +186,11 @@ struct AaxInstance<P: PluginExport> {
     /// previous `AtomicBool`-based dirty flag had a race where
     /// `swap(false)` could clear a bit that the audio thread had just
     /// re-set, leaving the cache one update behind.
-    state_revision: std::sync::atomic::AtomicU64,
+    state_revision: AtomicU64,
     /// Bounded SPSC handoff for state loads. Host (`_load_state`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
-    /// `_process` and calls [`truce_core::state::apply_state`] under
+    /// `_process` and calls [`state::apply_state`] under
     /// its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
 }
@@ -226,9 +231,23 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 }
 
 pub fn register_aax<P: PluginExport>() {
+    // The AAX shim's `extern "C" fn init()` static initializer
+    // (`.init_array` / `__mod_init_func` / `.CRT$XCU`) calls this
+    // function. A panic crossing that boundary aborts the host
+    // process — wrap the body so a plugin-author misconfiguration
+    // logs cleanly and leaves INFO unset (host sees no plugin).
+    run_register::<P>("AAX", || {
+        let Some(layout) = first_bus_layout::<P>() else {
+            log_missing_bus_layout::<P>("AAX");
+            return;
+        };
+        register_aax_inner::<P>(&layout);
+    });
+}
+
+fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
     INFO.get_or_init(|| {
         let info = P::info();
-        let layout = truce_core::wrapper::first_bus_layout::<P>();
 
         // Leak the name/vendor CStrings via `into_raw()` — they live for
         // the process lifetime and are owned by the static `INFO`.
@@ -600,10 +619,10 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         scratch: truce_core::buffer::RawBufferScratch::default(),
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
-        state_cache: std::sync::Mutex::new(None),
+        state_cache: Mutex::new(None),
         // Start at 1 so the first cached entry (revision 0) never
         // matches and we always serialize on the first save_state call.
-        state_revision: std::sync::atomic::AtomicU64::new(1),
+        state_revision: AtomicU64::new(1),
         pending_state: Arc::new(StateLoadQueue::new(1)),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
@@ -650,9 +669,9 @@ pub unsafe fn _process<P: PluginExport>(
     // re-captures the restored values rather than handing back the
     // stale cache.
     if let Some(state) = inst.pending_state.pop() {
-        truce_core::state::apply_state(&mut inst.plugin, &state);
+        state::apply_state(&mut inst.plugin, &state);
         inst.state_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
+            .fetch_add(1, Ordering::Release);
     }
 
     // Convert MIDI
@@ -867,7 +886,7 @@ pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, v
     // `_save_state` — anyone seeing the bumped revision also sees the
     // param store.
     inst.state_revision
-        .fetch_add(1, std::sync::atomic::Ordering::Release);
+        .fetch_add(1, Ordering::Release);
 }
 
 pub unsafe fn _format_param<P: PluginExport>(
@@ -887,7 +906,7 @@ pub unsafe fn _format_param<P: PluginExport>(
         let bytes = text.as_bytes();
         let len = bytes.len().min((out_len as usize) - 1);
         unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
             *out.add(len) = 0;
         }
     }
@@ -920,7 +939,7 @@ pub unsafe fn _save_state<P: PluginExport>(
     // wrote the cache; this counter scheme detects that case.
     let revision_before = inst
         .state_revision
-        .load(std::sync::atomic::Ordering::Acquire);
+        .load(Ordering::Acquire);
 
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.plugin.params().collect_values();
@@ -928,7 +947,7 @@ pub unsafe fn _save_state<P: PluginExport>(
         state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
     };
 
-    let blob: std::sync::Arc<Vec<u8>> = {
+    let blob: Arc<[u8]> = {
         // Recover from poisoning rather than bypassing the cache for
         // the rest of the plugin's lifetime. A panic anywhere on the
         // main thread (the only `_save_state` caller in Pro Tools)
@@ -936,23 +955,23 @@ pub unsafe fn _save_state<P: PluginExport>(
         // — the next save would re-serialize, the next after that
         // would too, and the hot-path optimization would be
         // effectively gone. The cache content is just an
-        // `Option<(u64, Arc<Vec<u8>>)>`, with no invariants a panic
+        // `Option<(u64, Arc<[u8]>)>`, with no invariants a panic
         // could break, so `into_inner()` is sound.
         let mut guard = inst
             .state_cache
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner);
         match guard.as_ref() {
-            // `Arc::clone` on a hit — refcount bump, no Vec copy.
-            Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
+            // `Arc::clone` on a hit — refcount bump, no copy.
+            Some((rev, blob)) if *rev == revision_before => Arc::clone(blob),
             _ => {
-                let fresh = std::sync::Arc::new(serialize_now(inst));
+                let fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
                 let revision_after = inst
                     .state_revision
-                    .load(std::sync::atomic::Ordering::Acquire);
+                    .load(Ordering::Acquire);
                 if revision_after == revision_before {
                     // No audio update during serialization — safe to cache.
-                    *guard = Some((revision_before, std::sync::Arc::clone(&fresh)));
+                    *guard = Some((revision_before, Arc::clone(&fresh)));
                 }
                 // else: audio updated mid-read; return the blob but
                 // skip caching so the next call re-serializes.
@@ -967,9 +986,9 @@ pub unsafe fn _save_state<P: PluginExport>(
 /// length. The blob is copied into a fresh boxed slice the C side will
 /// later free with `_free_state` — taking `&[u8]` rather than `Vec<u8>`
 /// lets callers hand us either a freshly-built `Vec` or a borrow into
-/// an `Arc<Vec<u8>>` without an intermediate clone.
+/// an `Arc<[u8]>` without an intermediate clone.
 ///
-/// **Note on the `to_vec`:** the `Arc<Vec<u8>>` cache route still
+/// **Note on the `to_vec`:** the `Arc<[u8]>` cache route still
 /// pays a copy here because `_free_state` reconstitutes ownership via
 /// `Vec::from_raw_parts`, which requires the Rust global allocator
 /// **and** uniquely-owned bytes (no other Arc clones outstanding).
@@ -984,7 +1003,7 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
     let len = len_u32(blob.len());
     let mut boxed = blob.to_vec().into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
-    std::mem::forget(boxed);
+    mem::forget(boxed);
     unsafe { *out_data = ptr };
     len
 }
@@ -1003,7 +1022,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
         // — see the `pending_state` field comment for why
         // newest-wins is the right policy. The audio thread's drain
         // bumps `state_revision`, so the cache invalidation is
-        // covered there; we still drop the cached `Arc<Vec<u8>>` here
+        // covered there; we still drop the cached `Arc<[u8]>` here
         // so the multi-KB blob isn't pinned across the gap before
         // the next `_save_state` would replace it.
         let _ = inst.pending_state.force_push(deserialized);

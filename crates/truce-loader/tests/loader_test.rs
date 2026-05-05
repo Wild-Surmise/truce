@@ -66,9 +66,9 @@ mod test {
         let mut buffer = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs, 512) };
 
         // Create process context (0 dB gain = passthrough).
-        let events = EventList::new();
+        let events = EventList::default();
         let transport = TransportInfo::default();
-        let mut output_events = EventList::new();
+        let mut output_events = EventList::default();
         let param_fn = |_id: u32| -> f64 { 0.0 }; // 0 dB
         let meter_fn = |_id: u32, _v: f32| {};
         let mut context = ProcessContext::new(&transport, 44100.0, 512, &mut output_events)

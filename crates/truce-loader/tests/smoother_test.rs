@@ -67,7 +67,7 @@ fn smoother_ramps_gradually() {
     shell.reset(44100.0, 64);
 
     // Set gain to 0.0 initially.
-    let mut events = EventList::new();
+    let mut events = EventList::default();
     events.push(Event {
         sample_offset: 0,
         body: EventBody::ParamChange { id: 0, value: 0.0 },
@@ -80,7 +80,7 @@ fn smoother_ramps_gradually() {
     let mut buffer = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs, 64) };
 
     let transport = TransportInfo::default();
-    let mut output_events = EventList::new();
+    let mut output_events = EventList::default();
     let param_fn = |_: u32| 0.0;
     let meter_fn = |_: u32, _: f32| {};
     let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut output_events)
@@ -102,7 +102,7 @@ fn smoother_ramps_gradually() {
     let mut second_output = vec![0.0f32; 64];
     let mut outputs2: Vec<&mut [f32]> = vec![&mut second_output];
     let mut buffer2 = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs2, 64) };
-    let mut output_events2 = EventList::new();
+    let mut output_events2 = EventList::default();
     let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut output_events2)
         .with_params(&param_fn)
         .with_meters(&meter_fn);

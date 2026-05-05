@@ -237,7 +237,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 GpuWindowHandler {
                     inner,
                     gpu,
-                    translator: truce_gui::interaction::BaseviewTranslator::new(),
+                    translator: truce_gui::interaction::BaseviewTranslator::default(),
                     current_size: size,
                     bridge,
                     scale: scale_handle,

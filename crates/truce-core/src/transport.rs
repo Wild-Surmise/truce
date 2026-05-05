@@ -15,6 +15,7 @@
 //! could see stale tempo/beat values for one repaint frame.
 
 use std::cell::UnsafeCell;
+use std::ptr::{read_volatile, write_volatile};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -74,9 +75,16 @@ impl TransportSlot {
         self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
         // SAFETY: single-writer invariant means no other thread writes
         // `data` concurrently. Readers detect mid-update via the odd
-        // seq value.
+        // seq value, but Rust's memory model treats a non-atomic write
+        // overlapping a non-atomic read as a data race regardless of
+        // observable outcome (the read result would be discarded by
+        // the seq re-check anyway). `write_volatile` keeps the
+        // compiler from breaking the write into reorderable chunks
+        // and is the standard "least-bad" mitigation Rust offers
+        // until a true `Atomic<T: Copy>` lands. The seqlock crate
+        // applies the same pattern with the same caveat.
         unsafe {
-            *self.data.get() = *info;
+            write_volatile(self.data.get(), *info);
         }
         // Release pairs with `read`'s Acquire load — makes the data
         // write above visible to any reader that observes this
@@ -108,7 +116,10 @@ impl TransportSlot {
             // load above. The post-copy seq re-read confirms no
             // writer started during the copy; if that fails we
             // discard and retry rather than returning torn state.
-            let snapshot = unsafe { *self.data.get() };
+            // `read_volatile` is the same mitigation `write` uses on
+            // the producer side — see that doc-comment for the data-
+            // race rationale.
+            let snapshot = unsafe { read_volatile(self.data.get()) };
             let s2 = self.seq.load(Ordering::Acquire);
             if s1 == s2 {
                 return Some(snapshot);

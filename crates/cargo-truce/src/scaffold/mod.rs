@@ -195,19 +195,10 @@ impl Scaffolder {
     }
 }
 
-impl Default for Scaffolder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Wrapper around `fs::write` that returns the same `Res` shape
 /// the rest of cargo-truce uses, with the path threaded into the
 /// error so failures are diagnosable.
 fn write(path: &Path, content: String) -> Res {
-    fs::write(path, content).map_err(|e| {
-        let msg: Box<dyn std::error::Error> = format!("write {}: {}", path.display(), e).into();
-        msg
-    })?;
+    fs::write(path, content).map_err(|e| -> BoxErr { format!("write {}: {}", path.display(), e).into() })?;
     Ok(())
 }

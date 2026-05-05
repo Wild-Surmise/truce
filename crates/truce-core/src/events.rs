@@ -156,16 +156,11 @@ pub struct EventList {
 }
 
 impl EventList {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Construct an `EventList` with backing capacity already reserved.
     ///
     /// Format wrappers build their per-instance event lists at
     /// construction time and reuse them across blocks via `clear()`.
-    /// Without this, the first `push` after `EventList::new()` hits
+    /// Without this, the first `push` after `EventList::default()` hits
     /// the global allocator on the audio thread; pre-allocating with
     /// the max event count an audio block is likely to carry keeps
     /// the first block alloc-free.

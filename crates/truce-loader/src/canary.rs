@@ -146,13 +146,6 @@ pub struct ProbePlugin {
     last_load_state: std::cell::RefCell<Vec<u8>>,
 }
 
-impl ProbePlugin {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 impl PluginLogic for ProbePlugin {
     fn reset(&mut self, _sr: f64, _bs: usize) {}
 

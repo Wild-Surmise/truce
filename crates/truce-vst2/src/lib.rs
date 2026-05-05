@@ -14,8 +14,10 @@ use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
+use truce_core::bus::BusLayout;
 use truce_core::process::ProcessContext;
 use truce_core::state;
+use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
 use truce_params::{ParamFlags, Params};
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
@@ -30,7 +32,7 @@ use std::sync::Arc;
 /// overflow we want most-recent-wins (`force_push`) so a rapid
 /// double-recall doesn't get the audio thread to apply a stale state
 /// after the host already moved on.
-type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct Vst2Instance<P: PluginExport> {
     plugin: P,
@@ -56,7 +58,7 @@ struct Vst2Instance<P: PluginExport> {
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
-    /// `cb_process` and calls [`truce_core::state::apply_state`]
+    /// `cb_process` and calls [`state::apply_state`]
     /// under its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
 }
@@ -243,7 +245,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            truce_core::state::apply_state(&mut inst.plugin, &state);
+            state::apply_state(&mut inst.plugin, &state);
         }
 
         // Convert MIDI events
@@ -800,8 +802,20 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 }
 
 pub fn register_vst2<P: PluginExport>() {
+    // Called from the export macro's `extern "C" fn init()` static
+    // initializer. Catch any panic so it doesn't cross the FFI
+    // boundary and abort the host process.
+    run_register::<P>("VST2", || {
+        let Some(layout) = first_bus_layout::<P>() else {
+            log_missing_bus_layout::<P>("VST2");
+            return;
+        };
+        register_vst2_inner::<P>(&layout);
+    });
+}
+
+fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
     let info = P::info();
-    let layout = truce_core::wrapper::first_bus_layout::<P>();
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();

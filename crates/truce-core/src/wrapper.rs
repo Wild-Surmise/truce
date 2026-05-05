@@ -15,7 +15,9 @@
 //! to direct `CString::new` etc. when the format genuinely needs
 //! something none of the other formats does.
 
+use std::any::type_name;
 use std::ffi::CString;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use truce_params::ParamInfo;
 
@@ -47,67 +49,93 @@ impl ParamCStrings {
 }
 
 /// `(input_channels, output_channels)` for the plugin's default bus
-/// layout. Falls back to `(0, 2)` (stereo-out, no input — the most
-/// useful default for instruments / generators) when the plugin
-/// declares no layouts. Used by every format's vtable / descriptor
-/// to advertise channel counts at registration time.
+/// layout, or `None` when the plugin declares no layouts.
+/// Used by every format's vtable / descriptor to advertise channel
+/// counts at registration time.
 ///
 /// **Note for `aumi` (MIDI processor) plugins:** the convention is
 /// `bus_layouts: [BusLayout::new()]`, which has zero input *and* zero
-/// output channels. This helper returns `(0, 0)` for that case — which
-/// is correct for AU (the AU shim's `channelCapabilities` returns
-/// `[0, 0]` and the host treats the plugin as MIDI-only) but **wrong
-/// for AAX**, which requires every plugin to advertise at least
-/// stereo audio I/O. AAX maps `(0, 0)` → `(2, 2)` (synthesizing a
-/// stereo passthrough) inside `truce-aax::register_aax` after this
+/// output channels. This helper returns `Some((0, 0))` for that case
+/// — which is correct for AU (the AU shim's `channelCapabilities`
+/// returns `[0, 0]` and the host treats the plugin as MIDI-only) but
+/// **wrong for AAX**, which requires every plugin to advertise at
+/// least stereo audio I/O. AAX maps `(0, 0)` → `(2, 2)` (synthesizing
+/// a stereo passthrough) inside `truce-aax::register_aax` after this
 /// helper returns. Don't push that remap into this helper — only AAX
 /// needs it.
 ///
-/// # Panics
-///
-/// Panics if `P::bus_layouts()` returns an empty list — that's a
-/// plugin-author bug; zero-bus plugins (e.g. `aumi`) must return
-/// `vec![BusLayout::new()]` explicitly.
+/// `None` indicates a plugin-author bug: zero-bus plugins must return
+/// `vec![BusLayout::new()]` explicitly. Callers should log a
+/// diagnostic and skip registration (see how each `register_*` entry
+/// point handles this) rather than substitute a silent default that
+/// would misreport channel counts to the host.
 #[must_use]
-pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
-    P::bus_layouts().first().map_or_else(
-        || {
-            // `bus_layouts() == vec![]` means the plugin author returned
-            // an empty layout list. `aumi` and other zero-bus plugins
-            // are supposed to return `[BusLayout::new()]` (with zero
-            // channels) instead. Falling back to `(0, 2)` here was a
-            // historical default that contradicted the doc above and
-            // hid the configuration bug. Panic loudly so the author
-            // fixes their `bus_layouts()` impl.
-            panic!(
-                "{}::bus_layouts() returned an empty list. Plugins with \
-                 no audio I/O (e.g. aumi MIDI-effects) should return \
-                 vec![BusLayout::new()] explicitly.",
-                std::any::type_name::<P>()
-            )
-        },
-        |l| (l.total_input_channels(), l.total_output_channels()),
-    )
+pub fn default_io_channels<P: PluginExport>() -> Option<(u32, u32)> {
+    P::bus_layouts()
+        .first()
+        .map(|l| (l.total_input_channels(), l.total_output_channels()))
 }
 
-/// Pick the plugin's first bus layout, or panic with a clear message.
+/// Pick the plugin's first bus layout, or `None` when the plugin
+/// declares no layouts.
 /// Used by wrappers (AAX, VST2) that need to read the layout *before*
-/// host-side bus-config negotiation (so a missing layout is a static
-/// plugin-author bug — clearer to fail loudly at registration than
-/// silently misreport channel counts).
+/// host-side bus-config negotiation, where a missing layout would
+/// otherwise produce silently-misreported channel counts.
 ///
 /// For `aumi` plugins the returned layout is typically `BusLayout::new()`
-/// (zero in / zero out). AAX synthesizes (2, 2) from that case in
+/// (zero in / zero out). AAX synthesizes `(2, 2)` from that case in
 /// `register_aax`; see [`default_io_channels`] for the rationale.
 ///
-/// # Panics
-///
-/// Panics if `P::bus_layouts()` is empty — same plugin-author
-/// contract as [`default_io_channels`].
+/// `None` is the same plugin-author-bug indicator as
+/// [`default_io_channels`]: log a diagnostic and skip registration.
 #[must_use]
-pub fn first_bus_layout<P: PluginExport>() -> BusLayout {
-    P::bus_layouts()
-        .into_iter()
-        .next()
-        .expect("plugin must declare at least one bus layout in `Plugin::bus_layouts()`")
+pub fn first_bus_layout<P: PluginExport>() -> Option<BusLayout> {
+    P::bus_layouts().into_iter().next()
+}
+
+/// Standard diagnostic emitted by `register_*` when [`first_bus_layout`]
+/// or [`default_io_channels`] returns `None`. Centralised so every
+/// wrapper prints the same actionable message.
+pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
+    eprintln!(
+        "[truce {format}] {}::bus_layouts() returned an empty list — \
+         plugin will not register. Plugins with no audio I/O (e.g. \
+         aumi MIDI-effects) should return vec![BusLayout::new()] \
+         explicitly.",
+        type_name::<P>(),
+    );
+}
+
+/// Run a `register_*` body under [`std::panic::catch_unwind`].
+///
+/// Format wrappers' `register_*` entry points are called from
+/// `extern "C" fn init` static initializers (`.init_array` /
+/// `__mod_init_func` / `.CRT$XCU`) emitted by the export macros. A
+/// panic that escapes those entry points crosses an `extern "C"`
+/// boundary and aborts the host process — a `panic = "abort"`
+/// configuration would do the same. Catching the unwind here turns
+/// any panic during registration into a logged diagnostic plus
+/// "host sees no plugin," which is the same outcome a plugin author
+/// would expect from a missing `bus_layouts` declaration.
+///
+/// `AssertUnwindSafe` is applied internally — the panic is treated
+/// as fatal-for-this-plugin, so leaving an `Arc` ref-count or
+/// `OnceLock` half-set is acceptable: the host won't load the
+/// plugin and the process will exit shortly after registration
+/// finishes anyway.
+pub fn run_register<P>(format: &str, body: impl FnOnce()) {
+    let result = catch_unwind(AssertUnwindSafe(body));
+    if let Err(payload) = result {
+        let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "<non-string panic payload>"
+        };
+        eprintln!(
+            "[truce {format}] panic during register for {}: {msg}",
+            type_name::<P>(),
+        );
+    }
 }

@@ -814,7 +814,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 bar_start_beats: 0.0,
                 ..Default::default()
             };
-            let mut output_events_block = EventList::new();
+            let mut output_events_block = EventList::default();
             let mut ctx = ProcessContext::new(
                 &transport_info,
                 self.sample_rate,

@@ -149,7 +149,7 @@ mod tests {
 
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 512) };
 
-        let mut events = EventList::new();
+        let mut events = EventList::default();
         events.push(Event {
             sample_offset: 0,
             body: EventBody::NoteOn {
@@ -160,7 +160,7 @@ mod tests {
         });
 
         let transport = TransportInfo::default();
-        let mut output_events = EventList::new();
+        let mut output_events = EventList::default();
         let mut context = ProcessContext::new(&transport, 44100.0, 512, &mut output_events);
 
         plugin.process(&mut buffer, &events, &mut context);

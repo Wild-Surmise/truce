@@ -16,6 +16,7 @@
 //!   failure the previous device's name remains in place and the
 //!   audio callback keeps running unchanged.
 
+use std::mem::transmute;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -672,7 +673,7 @@ fn open_output_stream<P: PluginExport>(
     // the closure on a single dedicated audio thread per stream.
     // Amortizes the `vec![0.0; num_frames]` per-channel allocation and
     // the `channel_bufs.clone()` for the effect input mirror, plus the
-    // two `EventList::new()`s per block (input drain + plugin output)
+    // two `EventList::default()`s per block (input drain + plugin output)
     // — both `clear()`ed and reused, capacity-preserving.
     let mut channel_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
     let mut input_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
@@ -1074,14 +1075,12 @@ fn audio_callback<P: PluginExport>(
         // slice is read only inside this `audio_callback` and the
         // scratch is `clear()`ed at the top of the next block before
         // anyone could observe a dangling element.
-        input_slices.push(unsafe { std::mem::transmute::<&[f32], &'static [f32]>(slice) });
+        input_slices.push(unsafe { transmute::<&[f32], &'static [f32]>(slice) });
     }
     for buf in channel_bufs.iter_mut() {
         let slice: &mut [f32] = buf.as_mut_slice();
         // SAFETY: same reasoning as the input slice push above.
-        output_slices.push(unsafe {
-            std::mem::transmute::<&mut [f32], &'static mut [f32]>(slice)
-        });
+        output_slices.push(unsafe { transmute::<&mut [f32], &'static mut [f32]>(slice) });
     }
 
     // SAFETY: The slices stored in `input_slices` / `output_slices`
@@ -1096,9 +1095,11 @@ fn audio_callback<P: PluginExport>(
     let mut audio_buffer = unsafe {
         let in_ptr: *mut Vec<&'static [f32]> = input_slices;
         let out_ptr: *mut Vec<&'static mut [f32]> = output_slices;
-        std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
-            AudioBuffer::from_slices(&*in_ptr, &mut *out_ptr, num_frames),
-        )
+        transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(AudioBuffer::from_slices(
+            &*in_ptr,
+            &mut *out_ptr,
+            num_frames,
+        ))
     };
 
     let transport_info = transport.tick_audio(num_frames);

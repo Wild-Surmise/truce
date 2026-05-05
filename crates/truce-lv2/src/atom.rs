@@ -756,7 +756,7 @@ mod tests {
             (*seq).atom.size = len_u32(buf.len() - core::mem::size_of::<Atom>());
         }
 
-        let mut source = EventList::new();
+        let mut source = EventList::default();
         source.push(Event {
             sample_offset: 0,
             body: EventBody::NoteOn {

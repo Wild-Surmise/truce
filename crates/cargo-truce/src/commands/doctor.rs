@@ -315,14 +315,14 @@ fn show_scope_paths() {
             "AAX",
             "system",
             true,
-            &PathBuf::from("/Library/Application Support/Avid/Audio/Plug-Ins"),
+            Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
             "aaxplugin",
         );
         report_fixed(
             "AU v3",
             "system",
             true,
-            &PathBuf::from("/Applications"),
+            Path::new("/Applications"),
             // /Applications/ also holds every non-plug-in Mac app,
             // so a count by ".app" would be meaningless — skip it.
             "",

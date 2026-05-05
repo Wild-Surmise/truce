@@ -73,7 +73,7 @@ fn plain_param_not_double_denormalized() {
     let mut buffer = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs, 512) };
 
     // ParamChange with PLAIN value -27.0 dB (this is what VST3/CLAP wrappers send).
-    let mut events = EventList::new();
+    let mut events = EventList::default();
     events.push(Event {
         sample_offset: 0,
         body: EventBody::ParamChange {
@@ -83,7 +83,7 @@ fn plain_param_not_double_denormalized() {
     });
 
     let transport = TransportInfo::default();
-    let mut output_events = EventList::new();
+    let mut output_events = EventList::default();
     let param_fn = |_id: u32| -> f64 { 0.0 };
     let meter_fn = |_id: u32, _v: f32| {};
     let mut ctx = ProcessContext::new(&transport, 44100.0, 512, &mut output_events)

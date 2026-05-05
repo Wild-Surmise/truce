@@ -254,8 +254,8 @@ pub unsafe fn instantiate<P: PluginExport>(
 
             last_control: vec![None; control_port_count],
 
-            event_list: EventList::new(),
-            output_events: EventList::new(),
+            event_list: EventList::default(),
+            output_events: EventList::default(),
 
             urid_map,
 
@@ -385,10 +385,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             if !v.is_finite() {
                 continue;
             }
-            let changed = match inst.last_control[i] {
-                None => true,
-                Some(prev) => (v - prev).abs() > f32::EPSILON,
-            };
+            let changed = inst.last_control[i].is_none_or(|prev| (v - prev).abs() > f32::EPSILON);
             if changed {
                 inst.last_control[i] = Some(v);
                 let pid = inst.param_infos[i].id;
