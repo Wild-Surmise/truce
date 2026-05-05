@@ -48,8 +48,4 @@ arg-parsing shell that drives it. Embedding the engine in your own
 tooling is supported but mostly intended for internal use — most
 plugin authors only need the `cargo truce` CLI.
 
-> Note: the engine used to live in a separate `truce-xtask` crate;
-> it was merged into cargo-truce in 0.13.x to reduce the published
-> surface and keep help / dispatch / scaffolding in one place.
-
 Part of [truce](https://github.com/truce-audio/truce).

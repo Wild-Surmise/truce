@@ -136,9 +136,7 @@ pub fn main_screen_scale() -> f64 {
 /// Most-recent-write wins. The handler tracks a `last_applied_scale`
 /// alongside its `EditorScale` clone and, when it observes a divergence
 /// at frame start, recomputes physical sizes and reconfigures its
-/// surface / renderer. Replaces the previous mix of per-backend
-/// `Option<f64>` editor fields and dead `set_scale_factor` impls (see
-/// `docs/internal/codebase-audit-2026-05-02/open-issues.md`).
+/// surface / renderer.
 #[derive(Clone)]
 pub struct EditorScale {
     inner: Arc<AtomicU64>,

@@ -28,7 +28,9 @@ pub use ttl::emit_bundle;
 pub use types::*;
 
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::mem::transmute;
 use std::ptr;
+use std::sync::Arc;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
@@ -40,7 +42,6 @@ use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
 use crate::urid::UridMap;
-use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Port layout
@@ -433,12 +434,10 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         //    check against every output pointer; if they alias, we
         //    copy the input into `inst.input_scratch[ch]` first and
         //    hand the scratch slice to the plugin.
-        // 3. **No auto input→output copy.** Earlier revisions
-        //    silently copied each input channel into the matching
-        //    output channel; that clobbered the previous-block tail
-        //    of any plugin reading its own output (delay/reverb
-        //    feedback). Plugins that want pass-through must do
-        //    `output.copy_from_slice(input)` themselves.
+        // 3. **No auto input→output copy.** Plugins that want
+        //    pass-through must do `output.copy_from_slice(input)`
+        //    themselves; auto-copying clobbers the previous-block tail
+        //    that delay/reverb feedback paths read back from the output.
         inst.input_slices.clear();
         inst.output_slices.clear();
 
@@ -477,7 +476,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 }
             };
             inst.input_slices
-                .push(std::mem::transmute::<&[f32], &'static [f32]>(sl));
+                .push(transmute::<&[f32], &'static [f32]>(sl));
         }
         for &ptr in &inst.audio_outputs {
             let sl: &mut [f32] = if ptr.is_null() {
@@ -486,13 +485,27 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 std::slice::from_raw_parts_mut(ptr, n)
             };
             inst.output_slices
-                .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(sl));
+                .push(transmute::<&mut [f32], &'static mut [f32]>(sl));
         }
 
-        let mut audio = AudioBuffer::from_slices(&inst.input_slices, &mut inst.output_slices, n);
-        inst.transport_slot.write(&transport);
-        let mut ctx = ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
-        let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+        // The scratch elements carry `'static` lifetimes (the slices
+        // actually point into the host's per-block buffers); a direct
+        // borrow would unify the AudioBuffer's lifetime with `'static`
+        // and pin the scratch forever. A fresh reborrow through a raw
+        // pointer scopes the borrow to `s`, so the post-process clears
+        // below can re-borrow `inst.input_slices` / `inst.output_slices`
+        // mutably.
+        {
+            let inst_ptr: *mut Lv2Instance<P> = inst;
+            let s = &mut *inst_ptr;
+            let mut audio: AudioBuffer<'_> = transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
+                AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, n),
+            );
+            inst.transport_slot.write(&transport);
+            let mut ctx =
+                ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
+            let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+        }
 
         // Copy meter readings out to the host. The plugin's process() has
         // already written the latest peaks into the HotShell via
@@ -518,6 +531,15 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         if !inst.notify_out_port.is_null() {
             atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
         }
+
+        // Drop the channel-slice borrows we transmuted to `'static`
+        // for the duration of this call. The host's port pointers may
+        // change between `run()` invocations (LV2 hosts are free to
+        // re-`connect_port` between blocks); leaving the slice scratch
+        // populated pins dangling pointers. Clear keeps the underlying
+        // capacity so the next block doesn't allocate.
+        inst.input_slices.clear();
+        inst.output_slices.clear();
     }
 }
 
@@ -551,7 +573,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
             return ptr::null();
         };
         if uri == state::LV2_STATE__INTERFACE_URI {
-            return std::ptr::from_ref(state::state_interface::<P>()).cast::<c_void>();
+            return ptr::from_ref(state::state_interface::<P>()).cast::<c_void>();
         }
         ptr::null()
     }

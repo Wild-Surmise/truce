@@ -250,13 +250,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 /// One image registered via `register_image`. Owns its wgpu texture
 /// (kept alive so the bind group's view stays valid) and the bind group.
 struct ImageEntry {
-    #[allow(dead_code)]
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
-    #[allow(dead_code)]
-    width: u32,
-    #[allow(dead_code)]
-    height: u32,
 }
 
 /// A contiguous run of indices that share a single bind group.
@@ -1079,19 +1074,6 @@ impl WgpuBackend {
         self.clear_color = None;
     }
 
-    /// Access the shared `wgpu::Device` used by this backend.
-    ///
-    /// Useful for callers that built the backend via [`Self::new`] and want
-    /// to allocate additional resources against the same device.
-    pub fn device(&self) -> &Arc<wgpu::Device> {
-        &self.device
-    }
-
-    /// Access the shared `wgpu::Queue` used by this backend.
-    pub fn queue(&self) -> &Arc<wgpu::Queue> {
-        &self.queue
-    }
-
     fn create_msaa_view(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -1489,10 +1471,8 @@ impl RenderBackend for WgpuBackend {
         });
 
         let entry = ImageEntry {
-            texture,
+            _texture: texture,
             bind_group,
-            width,
-            height,
         };
 
         if let Some((idx, slot)) = self

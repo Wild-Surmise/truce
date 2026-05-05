@@ -134,10 +134,8 @@ pub struct CaptureSpec {
 
 impl Default for CaptureSpec {
     /// Audio + final meters captured; output events + block snapshots
-    /// off. Earlier revisions had a derived `Default` that produced
-    /// `audio: false` (useless for almost every test) plus a private
-    /// `defaults()` constructor that returned the right values — easy
-    /// footgun. The `Default` impl now *is* the canonical defaults.
+    /// off. Anything else is rarely the right starting point for a
+    /// driver test.
     fn default() -> Self {
         Self {
             audio: true,
@@ -735,7 +733,7 @@ impl<P: PluginExport> PluginDriver<P> {
         let mut transport_pos_beats = self.transport.position_beats;
         let beats_per_second = self.transport.bpm / 60.0;
 
-        let meter_ids: Vec<u32> = plugin.params().meter_ids().into_iter().collect();
+        let meter_ids: Vec<u32> = plugin.params().meter_ids();
 
         // Validate `InputSource::Buffer` shape up front so a mismatched
         // channel count panics before the run starts (rather than
@@ -960,13 +958,14 @@ fn fill_input_block(
     for b in in_bufs.iter_mut() {
         b.resize(block_len, 0.0);
     }
-    match (input, constant_value) {
-        (_, Some(v)) => {
-            for b in in_bufs {
-                b.fill(v);
-            }
+    if let Some(v) = constant_value {
+        for b in in_bufs {
+            b.fill(v);
         }
-        (InputSource::Buffer(bufs), _) => {
+        return;
+    }
+    match input {
+        InputSource::Buffer(bufs) => {
             for (dst, src) in in_bufs.iter_mut().zip(bufs.iter()) {
                 let start = cursor.min(src.len());
                 let end = (cursor + block_len).min(src.len());
@@ -979,7 +978,7 @@ fn fill_input_block(
                 }
             }
         }
-        (InputSource::Generator(g), _) => {
+        InputSource::Generator(g) => {
             if let Some((first, rest)) = in_bufs.split_first_mut() {
                 for (i, slot) in first.iter_mut().enumerate() {
                     *slot = g(cursor + i, sample_rate);
@@ -989,6 +988,12 @@ fn fill_input_block(
                 }
             }
         }
-        _ => unreachable!(),
+        // Silence / Constant always come paired with a `Some` in
+        // `constant_value`, handled by the early-return above.
+        InputSource::Silence | InputSource::Constant(_) => {
+            for b in in_bufs {
+                b.fill(0.0);
+            }
+        }
     }
 }

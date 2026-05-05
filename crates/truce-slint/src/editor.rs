@@ -4,10 +4,7 @@
 //! Each frame, renders the Slint UI to a pixel buffer via `SoftwareRenderer`,
 //! uploads it to a wgpu texture, and blits to the surface.
 //!
-//! Runs the same code path on every macOS host, AAX included — the
-//! old setContents-on-NSView AAX workaround was stripped 2026-04-23
-//! once patched baseview made the standard wgpu path viable inside
-//! Pro Tools' DFW container.
+//! Runs the same code path on every macOS host, AAX included.
 
 use std::iter;
 use std::rc::Rc;

@@ -4,6 +4,8 @@
 //! delegates widget rendering to `BuiltinEditor::render_to()` through
 //! the GPU backend, then presents.
 
+#[cfg(feature = "hot-debug")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
@@ -117,9 +119,8 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             if let Ok(mut inner) = self.inner.lock() {
                 #[cfg(feature = "hot-debug")]
                 if !inner.has_context() {
-                    static WARNED: std::sync::atomic::AtomicBool =
-                        std::sync::atomic::AtomicBool::new(false);
-                    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    static WARNED: AtomicBool = AtomicBool::new(false);
+                    if !WARNED.swap(true, Ordering::Relaxed) {
                         eprintln!("[truce-gpu] WARNING: on_frame called but inner has no context");
                     }
                 }

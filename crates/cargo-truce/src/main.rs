@@ -30,14 +30,6 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        "new-workspace" => {
-            eprintln!(
-                "Error: `cargo truce new-workspace` was removed.\n\
-                 Use `cargo truce new <name> --workspace <plugin1> [plugin2 ...]` instead."
-            );
-            ExitCode::FAILURE
-        }
-
         // Build/install commands — forwarded to the engine in lib.rs.
         "install" | "build" | "package" | "uninstall" | "run" | "screenshot" | "status"
         | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
@@ -249,7 +241,7 @@ Run 'cargo truce new <name>' to scaffold a new project."
     );
 }
 
-type Res = Result<(), Box<dyn std::error::Error>>;
+use cargo_truce::{BoxErr, Res};
 
 // ---------------------------------------------------------------------------
 // new — single standalone plugin
@@ -326,7 +318,7 @@ struct NewArgs {
     workspace_mode: bool,
 }
 
-fn parse_new_args(args: &[String]) -> Result<NewArgs, Box<dyn std::error::Error>> {
+fn parse_new_args(args: &[String]) -> Result<NewArgs, BoxErr> {
     let mut name: Option<String> = None;
     let mut plugin_names: Vec<String> = Vec::new();
     let mut default_kind = PluginKind::Effect;

@@ -1,6 +1,10 @@
 //! ABI canary — runtime verification that shell and dylib have
 //! compatible type layouts and vtable ordering.
 
+use std::cell::RefCell;
+use std::mem::{align_of, size_of};
+use std::ptr;
+
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
@@ -42,21 +46,21 @@ impl AbiCanary {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            trait_object_size: std::mem::size_of::<*const dyn PluginLogic>() * 2,
-            audio_buffer_size: std::mem::size_of::<AudioBuffer>(),
-            process_context_size: std::mem::size_of::<ProcessContext>(),
-            process_status_size: std::mem::size_of::<ProcessStatus>(),
-            event_size: std::mem::size_of::<Event>(),
-            event_body_size: std::mem::size_of::<EventBody>(),
-            transport_size: std::mem::size_of::<Transport>(),
-            widget_region_size: std::mem::size_of::<WidgetRegion>(),
-            theme_size: std::mem::size_of::<Theme>(),
-            plugin_layout_size: std::mem::size_of::<GridLayout>(),
-            color_size: std::mem::size_of::<Color>(),
-            vec_u8_size: std::mem::size_of::<Vec<u8>>(),
-            option_usize_size: std::mem::size_of::<Option<usize>>(),
-            audio_buffer_align: std::mem::align_of::<AudioBuffer>(),
-            process_status_align: std::mem::align_of::<ProcessStatus>(),
+            trait_object_size: size_of::<*const dyn PluginLogic>() * 2,
+            audio_buffer_size: size_of::<AudioBuffer>(),
+            process_context_size: size_of::<ProcessContext>(),
+            process_status_size: size_of::<ProcessStatus>(),
+            event_size: size_of::<Event>(),
+            event_body_size: size_of::<EventBody>(),
+            transport_size: size_of::<Transport>(),
+            widget_region_size: size_of::<WidgetRegion>(),
+            theme_size: size_of::<Theme>(),
+            plugin_layout_size: size_of::<GridLayout>(),
+            color_size: size_of::<Color>(),
+            vec_u8_size: size_of::<Vec<u8>>(),
+            option_usize_size: size_of::<Option<usize>>(),
+            audio_buffer_align: align_of::<AudioBuffer>(),
+            process_status_align: align_of::<ProcessStatus>(),
             result_normal_disc: discriminant_byte(&ProcessStatus::Normal),
             result_tail_disc: discriminant_byte(&ProcessStatus::Tail(0)),
             result_keepalive_disc: discriminant_byte(&ProcessStatus::KeepAlive),
@@ -120,7 +124,7 @@ impl AbiCanary {
 }
 
 fn discriminant_byte<T>(value: &T) -> u8 {
-    unsafe { *std::ptr::from_ref::<T>(value).cast::<u8>() }
+    unsafe { *ptr::from_ref::<T>(value).cast::<u8>() }
 }
 
 fn rustc_hash() -> u64 {
@@ -143,7 +147,7 @@ fn rustc_hash() -> u64 {
 /// `load_state` slot isn't swapped with another `&mut self` slot.
 #[derive(Default)]
 pub struct ProbePlugin {
-    last_load_state: std::cell::RefCell<Vec<u8>>,
+    last_load_state: RefCell<Vec<u8>>,
 }
 
 impl PluginLogic for ProbePlugin {

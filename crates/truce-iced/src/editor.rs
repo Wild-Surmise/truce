@@ -173,19 +173,12 @@ where
     ///
     /// `Fn` (not `FnOnce`) so `open()` and `screenshot()` can each
     /// produce a fresh `M`. Hosts that destroy and recreate the editor
-    /// (CLAP `gui_destroy`/`gui_create`) call `open()` more than once;
-    /// `screenshot()` builds a separate offscreen iced program. Going
-    /// through `M::new` from the screenshot path used to panic for
-    /// `AutoPlugin`, whose `IcedPlugin::new` is `panic!("must be
-    /// created via from_layout")` — the closure carries the construction
-    /// invariant the trait method can't.
-    ///
-    /// Replaces an earlier `unsafe { std::ptr::read(&auto as *const
-    /// AutoPlugin as *const M) }` reinterpret guarded only by a
-    /// `debug_assert_eq` on size — release builds skipped the
-    /// check, alignment / Drop / repr layout weren't validated, and
-    /// the "M is constrained to `AutoPlugin`" invariant lived in a
-    /// comment instead of the type system.
+    /// (CLAP `gui_destroy` / `gui_create`) call `open()` more than once;
+    /// `screenshot()` builds a separate offscreen iced program. The
+    /// closure also carries the construction invariant for `AutoPlugin`,
+    /// whose `IcedPlugin::new` is `panic!("must be created via
+    /// from_layout")` — going through `M::new` instead would panic on
+    /// the screenshot path.
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
@@ -753,9 +746,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         let (w, h) = self.size;
 
         // Create the plugin model. The closure is `Fn`, not `FnOnce`,
-        // so destroy/recreate cycles (CLAP `gui_destroy`/`gui_create`,
-        // some VST3 hosts) work — earlier versions `take()`'d the
-        // closure once and panicked on the second open.
+        // so destroy/recreate cycles (CLAP `gui_destroy` / `gui_create`,
+        // some VST3 hosts that close+reopen the editor) reuse it.
         let plugin = (self.make_plugin)(self.params.clone());
 
         let mut param_cache = ParamCache::new(self.params.clone());
@@ -890,10 +882,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn set_scale_factor(&mut self, factor: f64) {
-        // Write to the shared cell; the runtime's `tick()` picks up
-        // the change on its next frame and reconfigures the surface
-        // and viewport. Replaces the previous reach-in-and-mutate
-        // pattern that duplicated the reconfigure logic.
+        // Write to the shared cell; the runtime's `tick()` picks up the
+        // change on its next frame and reconfigures the surface and
+        // viewport.
         self.scale.set(factor);
     }
 }

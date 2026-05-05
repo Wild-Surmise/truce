@@ -93,10 +93,7 @@ pub fn audio_tap(capacity_frames: usize, channels: u16) -> (AudioTapProducer, Au
     );
 
     let cap = capacity_frames * channels as usize;
-    let mut data = Vec::with_capacity(cap);
-    for _ in 0..cap {
-        data.push(AtomicU32::new(0));
-    }
+    let data: Vec<AtomicU32> = (0..cap).map(|_| AtomicU32::new(0)).collect();
     let shared = Arc::new(AudioTapShared {
         data: data.into_boxed_slice(),
         cap,

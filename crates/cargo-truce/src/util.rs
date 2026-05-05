@@ -11,6 +11,8 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Path-aware wrappers around `std::fs`. `io::Error` alone doesn't include
 /// the path that triggered it, so a bare `fs::copy(src, dst)?` on a root-owned
@@ -104,14 +106,14 @@ pub(crate) fn shared_lib_name(stem: &str) -> String {
 // `OnceLock` matches that lifecycle: `set_build_profile` calls
 // `OnceLock::set` (idempotent if the same profile is set twice — the
 // second call's value is discarded), and reads never wait on a lock.
-static PROFILE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static PROFILE: OnceLock<String> = OnceLock::new();
 
 /// Set the active cargo profile by name. `"release"` / `"debug"` map
 /// to cargo's built-in profiles; any other name maps to a custom
 /// profile defined in the user's `Cargo.toml` (e.g. `[profile.shell]
 /// inherits = "release"` for the shell-mode build).
 pub(crate) fn set_build_profile(name: &str) {
-    let _ = PROFILE.set(name.to_string());
+    PROFILE.get_or_init(|| name.to_string());
 }
 
 /// Convenience wrapper for the common boolean-debug case. Equivalent
@@ -123,8 +125,7 @@ pub(crate) fn set_debug_profile(debug: bool) {
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
 /// the project's `Cargo.toml` (single-crate plugin or workspace root)
 /// must declare a `[profile.shell]` table so `cargo build --profile
-/// shell` resolves. Plugins scaffolded before 0.13.x predate the
-/// custom profile and need a one-line addition.
+/// shell` resolves.
 ///
 /// Returns `Ok(())` when the profile is declared. Otherwise returns
 /// an error string the caller can propagate; the message includes
@@ -331,8 +332,7 @@ pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
 ///    (`cargo truce new --workspace`). Reads each plugin's own
 ///    `[features].default` and returns the **union**, so `install`
 ///    tries the formats declared by at least one plugin and skips the
-///    rest (vs. the old fall-through that tried *every* format and
-///    errored for any plugin that didn't declare it).
+///    rest.
 pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
 
@@ -367,16 +367,7 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
             }
         }
     }
-    if !union.is_empty() {
-        return union;
-    }
-
-    // Last-ditch fallback: assume every format (legacy behavior, kept
-    // so projects without truce.toml don't break).
-    ["clap", "vst3", "vst2", "lv2", "au", "aax"]
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect()
+    union
 }
 
 pub(crate) fn project_root() -> PathBuf {
@@ -418,8 +409,8 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&str]) -> crate::Res {
 /// user understands the password prompt that's about to appear. No-op on
 /// subsequent calls — sudo's own cred cache covers the rest of the install.
 fn announce_sudo_once() {
-    static ANNOUNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    static ANNOUNCED: AtomicBool = AtomicBool::new(false);
+    if !ANNOUNCED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "→ Installing to system plugin directories (/Library/Audio/Plug-Ins/, \
              /Library/Application Support/Avid/) — sudo required."
@@ -430,14 +421,14 @@ fn announce_sudo_once() {
 /// Process-global verbose flag. Set at the top of `cargo_truce::run`
 /// from `-v` / `--verbose` and consulted by helpers that have output
 /// worth gating (`codesign`'s "replacing existing signature", etc.).
-static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_verbose(v: bool) {
-    VERBOSE.store(v, std::sync::atomic::Ordering::Relaxed);
+    VERBOSE.store(v, Ordering::Relaxed);
 }
 
 pub(crate) fn is_verbose() -> bool {
-    VERBOSE.load(std::sync::atomic::Ordering::Relaxed)
+    VERBOSE.load(Ordering::Relaxed)
 }
 
 /// `eprintln!` that's a no-op unless `--verbose` was passed. Use for
@@ -457,7 +448,7 @@ pub(crate) use vprintln;
 /// (`cmd_install` / `cmd_build`) can print a summary at the end (always
 /// visible, regardless of verbose). Each per-format helper pushes one
 /// line per bundle it writes.
-static OUTPUTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static OUTPUTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Record an output destination + echo it under `--verbose`. Used by
 /// `install_clap` / `install_vst3` / `stage_clap` / `stage_vst3` / etc.
@@ -484,7 +475,7 @@ pub(crate) fn take_outputs() -> Vec<String> {
 /// no SDK configured, AU v3 with ad-hoc signing). Same pattern as
 /// `INSTALLED` but printed under a `Skipped:` header at the end of
 /// `cmd_install` so the user sees what didn't make it.
-static SKIPPED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static SKIPPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Append a soft-skip reason. One line per (format, plugin) target —
 /// callers should embed the plugin name in the message so the user
@@ -957,7 +948,6 @@ pub(crate) fn rustup_has_target(triple: &str) -> bool {
 /// no Linux caller today.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<String>> {
-    use std::sync::OnceLock;
     static CACHE: OnceLock<Option<std::collections::HashSet<String>>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
@@ -1409,7 +1399,7 @@ pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
         return None;
     }
     let vcvars = PathBuf::from(install).join(r"VC\Auxiliary\Build\vcvars64.bat");
-    if vcvars.exists() { Some(vcvars) } else { None }
+    vcvars.exists().then_some(vcvars)
 }
 
 /// Interactive `[y/N]` prompt that returns `true` only on an explicit yes.
@@ -1449,7 +1439,6 @@ fn paint(text: &str, ansi: &str) -> String {
 /// process — no need to re-stat the terminal on every line.
 fn doctor_use_color() -> bool {
     use std::io::IsTerminal;
-    use std::sync::OnceLock;
     static USE: OnceLock<bool> = OnceLock::new();
     *USE.get_or_init(|| {
         if env::var_os("NO_COLOR").is_some() {

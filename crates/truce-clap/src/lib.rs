@@ -25,8 +25,8 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ptr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF,
@@ -191,10 +191,11 @@ struct ClapPluginData<P: PluginExport> {
     host_scale: f64,
     host_scale_set_by_host: bool,
     /// Persistent input/output channel-slice scratch reused across
-    /// process callbacks so the audio thread doesn't `Vec::new()` per
-    /// block. The 'static lifetime is a structural lie — same trick
-    /// `truce_core::buffer::RawBufferScratch` uses; each `process()`
-    /// rebuilds the slices and the borrow lives only for that call.
+    /// process callbacks so the audio thread doesn't allocate per
+    /// block. The `'static` annotation is fictional — the slices
+    /// actually point into the host's per-block buffers; each
+    /// `process` call rebuilds them and clears them on exit so no
+    /// dangling pointer lives between blocks.
     input_slices: Vec<&'static [f32]>,
     output_slices: Vec<&'static mut [f32]>,
 }
@@ -398,9 +399,7 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
 unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        if data
-            .needs_rescan
-            .swap(false, Ordering::Relaxed)
+        if data.needs_rescan.swap(false, Ordering::Relaxed)
             && !data.host_params.is_null()
             && !data.host.is_null()
             && let Some(rescan) = (*data.host_params).rescan
@@ -795,12 +794,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         //    rather than being dropped — preserving channel layout
         //    avoids the silent re-mapping the densifying loop used to
         //    produce when only some channels were null.
-        // 3. **No auto input→output copy.** Earlier revisions copied
-        //    each input into the matching output as a "convenience for
-        //    in-place effects"; that clobbered the previous-block tail
-        //    of any plugin reading its own output (delay/reverb
-        //    feedback). Plugins that want pass-through must do
-        //    `output.copy_from_slice(input)` themselves.
+        // 3. **No auto input→output copy.** Plugins that want
+        //    pass-through must do `output.copy_from_slice(input)`
+        //    themselves; auto-copying clobbers the previous-block tail
+        //    that delay/reverb feedback paths read back from the output.
         debug_assert!(
             num_frames <= data.max_block_size,
             "host violated CLAP contract: process() got {num_frames} frames \
@@ -1048,6 +1045,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             }
         }
 
+        // Drop the channel-slice borrows we transmuted to `'static`
+        // for the duration of this call. The host's `audio_inputs` /
+        // `audio_outputs` buffers may be reused or freed once
+        // `clap_plugin_process` returns; leaving the slice scratch
+        // populated would pin dangling pointers across blocks. Clear
+        // does NOT shrink capacity, so the next block reuses the
+        // same allocation without touching the global allocator.
+        data.input_slices.clear();
+        data.output_slices.clear();
+
         match status {
             ProcessStatus::Normal => CLAP_PROCESS_CONTINUE,
             ProcessStatus::Tail(0) => CLAP_PROCESS_SLEEP,
@@ -1240,11 +1247,11 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         let (ids, values) = data.params_arc.collect_values();
-        // `plugin.save_state()` still goes through the plugin reference;
-        // see the matching note in `truce-vst3::cb_state_save` — user
-        // impls that mutate non-atomic state from `process` while also
-        // reading it from `save_state` race here. Most impls return
-        // `None` or copy from atomic params and are fine.
+        // `plugin.save_state()` reads through the plugin reference: a
+        // user impl that mutates non-atomic state from `process` while
+        // also reading it from `save_state` races here. The contract
+        // is "save_state must be safe to call concurrently with
+        // process"; impls that copy from atomic params are fine.
         let extra = data.plugin.save_state();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, extra.as_deref());
 
@@ -1668,11 +1675,9 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let host_params = SendPtr::new(data.host_params);
         let request_flush = move || {
             // `host_params` is null when the host omits the optional
-            // `clap_host_params` extension (the spec marks it
-            // optional). Earlier revisions dereferenced it
-            // unconditionally and crashed any host that didn't
-            // implement params. The `clap_plugin_on_main_thread` path
-            // checks the same way (line 364).
+            // `clap_host_params` extension (the spec marks it optional);
+            // dereferencing it would crash hosts that don't implement
+            // params.
             let hp = host_params.as_ptr();
             if hp.is_null() {
                 return;
@@ -1864,7 +1869,6 @@ impl<P: PluginExport> Extensions<P> {
     /// there's exactly one monomorphization and one `OnceLock` per
     /// binary in practice.
     fn get() -> &'static Self {
-        use std::sync::OnceLock;
         static PTR: OnceLock<usize> = OnceLock::new();
         let raw = *PTR.get_or_init(|| Box::into_raw(Box::new(Self::new())) as usize);
         // SAFETY: `raw` was produced by `Box::into_raw(Box::new(Self::new()))`

@@ -294,53 +294,14 @@ macro_rules! __plugin_hot_reload {
                     }
                 }
 
-                // Fallback: walk up from `CARGO_MANIFEST_DIR` (baked at
-                // compile time) looking for `target/`, then assume the
-                // default `release` subdir. Works for the in-tree dev
-                // workflow when no sidecar has been written; out-of-tree
-                // installs always go through the sidecar above.
-                let lib_crate = env!("CARGO_PKG_NAME").replace('-', "_");
-                // Single `if cfg!()` chain, not separate `#[cfg]` arms —
-                // the latter pattern looks like `lib_name` is reassigned
-                // (warning: `unused_assignments`) and silently leaves it
-                // uninitialized on a future target_os we forgot to add.
-                let lib_name: String = if cfg!(target_os = "macos") {
-                    format!("lib{lib_crate}.dylib")
-                } else if cfg!(target_os = "linux") {
-                    format!("lib{lib_crate}.so")
-                } else if cfg!(target_os = "windows") {
-                    format!("{lib_crate}.dll")
-                } else {
-                    panic!("truce hot-reload: unsupported target_os");
-                };
-
-                let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                let mut root = manifest_dir.clone();
-                let workspace_root = loop {
-                    if root.join("target").is_dir() {
-                        break Some(root);
-                    }
-                    if !root.pop() {
-                        break None;
-                    }
-                };
-                let Some(mut root) = workspace_root else {
-                    panic!(
-                        "truce hot-reload: no logic dylib path resolved. \
-                         The shell sidecar at $HOME/.truce/shell/{}.path \
-                         is missing or empty, no `target/` was found in \
-                         any ancestor of CARGO_MANIFEST_DIR ({}), and \
-                         TRUCE_LOGIC_PATH is unset. Run \
-                         `cargo truce install --shell` to write the \
-                         sidecar, or set TRUCE_LOGIC_PATH explicitly.",
-                        crate_name,
-                        manifest_dir.display()
-                    );
-                };
-                root.push("target");
-                root.push("release");
-                root.push(lib_name);
-                root
+                panic!(
+                    "truce hot-reload: no logic dylib path resolved. \
+                     The shell sidecar at $HOME/.truce/shell/{}.path is \
+                     missing or empty and TRUCE_LOGIC_PATH is unset. \
+                     Run `cargo truce install --shell` to write the \
+                     sidecar, or set TRUCE_LOGIC_PATH explicitly.",
+                    crate_name,
+                );
             }
         }
 

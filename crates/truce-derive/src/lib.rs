@@ -265,11 +265,10 @@ struct ParamAttrs {
 }
 
 fn type_last_segment(ty: &Type) -> Option<String> {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        path.segments.last().map(|seg| seg.ident.to_string())
-    } else {
-        None
-    }
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return None;
+    };
+    path.segments.last().map(|seg| seg.ident.to_string())
 }
 
 /// Extract the generic type argument from `EnumParam<T>`.
@@ -624,11 +623,10 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         "st" => quote! { ::truce::params::ParamUnit::Semitones },
         "pan" => quote! { ::truce::params::ParamUnit::Pan },
         "" | "none" => quote! { ::truce::params::ParamUnit::None },
-        // Loud compile-error rather than silent fallback. The previous
-        // version silently mapped typos like `"hz "` (trailing space)
-        // or `"DB"` (uppercase) to `ParamUnit::None`, hiding the bug
-        // until a user complained their plugin rendered "0.5" instead
-        // of "0.5 Hz" in the host.
+        // Loud compile-error rather than silent fallback — typos like
+        // `"hz "` (trailing space) or `"DB"` (uppercase) shouldn't map
+        // to `ParamUnit::None` and surface only as "0.5" instead of
+        // "0.5 Hz" in the host.
         other => {
             let msg =
                 format!("unknown unit `{other}` — supported: dB, Hz, ms, s, %, st, pan, none");
@@ -788,13 +786,13 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     let a = &f.attrs;
     let name = a.name.as_deref().unwrap_or("Unnamed");
 
-    // Compile-time sanity check on `default = ...`. Catches the
-    // user-error cases that used to silently saturate at runtime
-    // (`as u32` on a negative `default_plain`, `as i64` on a
-    // fractional value). The variant-count range check for EnumParam
-    // still runs at construction time because we don't have
-    // `variant_count()` at expansion time without per-call const-eval
-    // plumbing.
+    // Compile-time sanity check on `default = ...`. Surfaces user
+    // errors that would otherwise silently saturate at runtime (`as
+    // u32` on a negative `default_plain`, `as i64` on a fractional
+    // value). The variant-count range check for `EnumParam` still
+    // runs at construction time because `variant_count()` isn't
+    // visible to the macro at expansion time without per-call
+    // const-eval plumbing.
     if let Some(d) = a.default {
         // Integer round-trip exactness checks — an epsilon-based
         // comparison would silently accept fractional defaults like
@@ -1088,12 +1086,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
     // --- get_normalized ---
     //
-    // Reach into the matching param's `info.range` per id and call
-    // `normalize` / `denormalize` directly. The previous version dispatched
-    // through `self.param_infos()` (a `Vec<ParamInfo>` allocation) on every
-    // call, so every host-driven `set_normalized` / `get_normalized` round
-    // trip — and every `EditorBridge` paint frame that touches a normalized
-    // value — allocated. Per-id arms eliminate the allocation entirely.
+    // Per-id match arms reach into the matching param's `info.range`
+    // and call `normalize` / `denormalize` directly. Dispatching
+    // through `self.param_infos()` would allocate a `Vec<ParamInfo>`
+    // on every host-driven `set_normalized` / `get_normalized` round
+    // trip and every `EditorBridge` paint frame.
     let get_normalized_arms: Vec<_> = param_fields
         .iter()
         .map(|f| {
@@ -1842,11 +1839,10 @@ mod snake_to_pascal_tests {
 
     fn convert(s: &str) -> String {
         // Keywords need raw-ident syntax to round-trip through `syn::Ident`.
-        // Idents starting with a digit aren't constructible at all (not even
-        // as `Ident::new_raw`), which is why the audit's `r#3band` example
-        // is actually unreachable from real source — but a leading-`_`
-        // ident like `_3band` *is* valid and exercises the same branch
-        // after `split('_')` strips the underscore.
+        // Idents starting with a digit aren't constructible at all (not
+        // even as `Ident::new_raw`); a leading-`_` ident like `_3band`
+        // *is* valid and exercises the same branch after `split('_')`
+        // strips the underscore.
         let id = if matches!(s, "type" | "fn" | "let" | "match") {
             syn::Ident::new_raw(s, Span::call_site())
         } else {

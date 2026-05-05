@@ -88,7 +88,7 @@ impl Scaffolder {
         )?;
 
         let plugins = std::slice::from_ref(plugin);
-        let fourcc_map = resolve_fourccs(plugins).map_err(|e| -> BoxErr { e.into() })?;
+        let fourcc_map = resolve_fourccs(plugins)?;
         let truce_ctx = TruceTomlContext::new(vendor, plugins, &plugin.name, &fourcc_map, false);
         let truce_path = layout.truce_toml();
         write(
@@ -126,7 +126,7 @@ impl Scaffolder {
             self.renderer.render(tpl::WORKSPACE_CARGO_TOML, &ws_ctx),
         )?;
 
-        let fourcc_map = resolve_fourccs(plugins).map_err(|e| -> BoxErr { e.into() })?;
+        let fourcc_map = resolve_fourccs(plugins)?;
         let truce_ctx = TruceTomlContext::new(vendor, plugins, workspace_name, &fourcc_map, true);
         write(
             &ws_layout.truce_toml(),

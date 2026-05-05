@@ -222,13 +222,10 @@ impl RawBufferScratch {
     /// pointers into slices and returns an `AudioBuffer` that borrows
     /// the scratch storage.
     ///
-    /// **No input-to-output copy is performed.** Earlier revisions
-    /// silently copied each input channel into the matching output
-    /// channel as a "convenience for in-place effects"; that
-    /// clobbered the previous-block tail of any plugin that reads its
-    /// own output (delay/reverb feedback) and turned out to be hidden
-    /// silent corruption. Plugins that genuinely want pass-through
-    /// must do `output.copy_from_slice(input)` themselves; almost
+    /// **No input-to-output copy is performed.** Plugins that want
+    /// pass-through must do `output.copy_from_slice(input)` themselves
+    /// — auto-copying clobbers the previous-block tail that delay /
+    /// reverb feedback paths read back from the output, and almost
     /// every plugin overwrites outputs anyway.
     ///
     /// **Channel indexing is preserved.** A null channel pointer

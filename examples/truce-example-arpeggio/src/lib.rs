@@ -365,11 +365,9 @@ mod tests {
             .run();
     }
 
-    /// Regression guard for the 2026-04-23 LV2 MIDI bug: the
-    /// `truce_derive::plugin_info` proc macro used to fall `"midi"` →
-    /// `Effect` (only `"instrument"` had a match arm), which turned off
-    /// the MIDI decode path in `truce-lv2::run`. Arpeggio must see
-    /// `NoteEffect` here or the plugin silently ignores all host MIDI.
+    /// `category = "midi"` must surface as `PluginCategory::NoteEffect`
+    /// — anything else turns off the MIDI decode path in `truce-lv2::run`
+    /// and the plugin silently ignores host MIDI.
     #[test]
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;

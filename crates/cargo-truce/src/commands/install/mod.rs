@@ -102,9 +102,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     // Shell-mode preflight: bail early if the user's Cargo.toml is
-    // missing `[profile.shell]` (plugins scaffolded before 0.13.x).
-    // Catching this here gives a one-line copy-paste fix instead of
-    // cargo's terser "profile `shell` is not declared" downstream.
+    // missing `[profile.shell]`. Catching this here gives a one-line
+    // copy-paste fix instead of cargo's terser "profile `shell` is not
+    // declared" downstream.
     if shell_mode {
         crate::verify_shell_profile_declared()?;
     }

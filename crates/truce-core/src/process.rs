@@ -1,4 +1,4 @@
-use crate::events::{EventBody, EventList, TransportInfo};
+use crate::events::{EventList, TransportInfo};
 
 pub struct ProcessContext<'a> {
     pub transport: &'a TransportInfo,
@@ -59,22 +59,6 @@ impl<'a> ProcessContext<'a> {
         let id = id.into();
         if let Some(f) = self.meters_fn {
             f(id, value);
-        }
-    }
-
-    /// Apply `ParamChange` events to a `Params` struct, updating the
-    /// smoother *targets* without snapping to them. Smoothed
-    /// parameters will continue to ramp toward the new value over the
-    /// configured smoothing window — the same as if the host pushed
-    /// the values through the format wrapper's normal automation
-    /// path. Use `params.snap_smoothers()` separately at activate /
-    /// reset / sample-rate-change time, when you do want to forget
-    /// in-flight smoothing state.
-    pub fn sync_params<P: truce_params::Params>(&self, events: &EventList, params: &mut P) {
-        for event in events.iter() {
-            if let EventBody::ParamChange { id, value } = &event.body {
-                params.set_normalized(*id, *value);
-            }
         }
     }
 }

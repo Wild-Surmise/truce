@@ -34,6 +34,8 @@ use crate::cli::Options;
 use crate::transport::Transport;
 use crate::vlog;
 
+type BoxErr = Box<dyn std::error::Error>;
+
 /// A queued MIDI event the UI thread hands off to the audio callback.
 pub struct MidiEvent {
     pub body: EventBody,
@@ -266,9 +268,7 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
 /// Returns an error if the requested input/output device can't be
 /// found (or no default exists), the device's default stream config
 /// can't be queried, or any of the cpal stream-build calls fail.
-pub fn start_audio<P: PluginExport>(
-    opts: &Options,
-) -> Result<AudioHandles<P>, Box<dyn std::error::Error>> {
+pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, BoxErr> {
     let audio_host = cpal::default_host();
 
     // Resolve initial output device synchronously so we can pull
@@ -345,8 +345,7 @@ pub fn start_audio<P: PluginExport>(
     #[cfg(feature = "playback")]
     let playback = match &opts.input_file {
         Some(path) if is_effect => {
-            let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, channels)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, channels)?;
             vlog!(
                 "Playback: {} → input bus (one-shot, sums with mic when enabled)",
                 path.display()
@@ -368,8 +367,7 @@ pub fn start_audio<P: PluginExport>(
     #[cfg(feature = "playback")]
     let capture = match &opts.output_file {
         Some(path) => {
-            let sink = crate::playback::CaptureSink::create(path, sample_rate, channels)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let sink = crate::playback::CaptureSink::create(path, sample_rate, channels)?;
             vlog!(
                 "Capture: {} ({} Hz, {} ch, f32) — pre-mute output",
                 path.display(),
@@ -866,7 +864,7 @@ fn build_and_play_input_stream(
     channels: usize,
     sample_rate: f64,
     ring: Arc<Mutex<Vec<f32>>>,
-) -> Result<cpal::Stream, Box<dyn std::error::Error>> {
+) -> Result<cpal::Stream, BoxErr> {
     // Channel count < u16::MAX (typical: 1-8); sample rate goes
     // through `cast::sample_rate_u32` which debug-asserts the
     // (positive, ≤ u32::MAX) preconditions.
@@ -892,12 +890,10 @@ fn build_and_play_input_stream(
             |err| eprintln!("Input error: {err}"),
             None,
         )
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            format!("could not build input stream: {e}").into()
-        })?;
-    stream.play().map_err(|e| -> Box<dyn std::error::Error> {
-        format!("could not start input stream: {e}").into()
-    })?;
+        .map_err(|e| -> BoxErr { format!("could not build input stream: {e}").into() })?;
+    stream
+        .play()
+        .map_err(|e| -> BoxErr { format!("could not start input stream: {e}").into() })?;
     Ok(stream)
 }
 

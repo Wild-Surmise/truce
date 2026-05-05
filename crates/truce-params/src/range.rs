@@ -164,6 +164,15 @@ impl ParamRange {
         };
         std::num::NonZeroU32::new(raw)
     }
+
+    /// `step_count` widened to `usize` with the continuous case
+    /// flattened to `1`. Convenience for UI code that loops over
+    /// discrete values and falls back to a single step for continuous
+    /// ranges.
+    #[must_use]
+    pub fn step_count_usize(&self) -> usize {
+        self.step_count().map_or(1, |n| n.get() as usize)
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +277,28 @@ mod tests {
             let once = range.denormalize(range.normalize(42.0));
             let twice = range.denormalize(range.normalize(once));
             assert_eq!(once, twice, "round-trip not stable for {range:?}");
+        }
+    }
+
+    /// `normalize` must never return NaN — a host that briefly
+    /// overshoots automation below `min` (or hands us a fresh
+    /// uninitialized -1.0) used to flow `(-1.0).ln()` (= NaN) into
+    /// saved state and the editor round-trip.
+    #[test]
+    fn logarithmic_normalize_never_nan() {
+        let range = ParamRange::Logarithmic {
+            min: 20.0,
+            max: 20000.0,
+        };
+        for plain in [-1.0, 0.0, 0.5, 19.99, f64::NEG_INFINITY] {
+            let n = range.normalize(plain);
+            assert!(!n.is_nan(), "NaN from normalize({plain})");
+            assert_eq!(n, 0.0, "normalize({plain}) should clamp to 0.0");
+        }
+        for plain in [20000.0, 20001.0, 1e9, f64::INFINITY] {
+            let n = range.normalize(plain);
+            assert!(!n.is_nan(), "NaN from normalize({plain})");
+            assert_eq!(n, 1.0, "normalize({plain}) should clamp to 1.0");
         }
     }
 }

@@ -7,7 +7,7 @@
 /// they translate into format-specific main/aux bus designations, and
 /// `BusConfig::kind` lets call-sites that need it ask the bus
 /// directly rather than re-deriving the convention.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BusLayout {
     pub inputs: Vec<BusConfig>,
     pub outputs: Vec<BusConfig>,
@@ -51,10 +51,7 @@ impl ChannelConfig {
 impl BusLayout {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-        }
+        Self::default()
     }
 
     #[must_use]
@@ -125,11 +122,5 @@ impl BusLayout {
             .iter()
             .map(|b| b.channels.channel_count())
             .sum()
-    }
-}
-
-impl Default for BusLayout {
-    fn default() -> Self {
-        Self::new()
     }
 }

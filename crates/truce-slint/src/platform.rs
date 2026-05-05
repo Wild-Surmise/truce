@@ -60,10 +60,9 @@ thread_local! {
 /// linking against the same `slint` runtime — return `Err`. We can't
 /// recover from that, so the goal here is to record what actually
 /// happened the first time `ensure_platform` ran on this thread and
-/// stop trying. The retained `Some(Ok)` / `Some(Err)` distinction is
-/// what lets diagnostic code tell "we own the platform" from "we're a
-/// guest on someone else's", instead of the previous bool that flipped
-/// to `true` regardless of outcome.
+/// stop trying. The retained `Some(Ok)` / `Some(Err)` distinction lets
+/// diagnostic code tell "we own the platform" from "we're a guest on
+/// someone else's".
 ///
 /// Must be called on every thread that creates Slint components —
 /// including the baseview render thread, not just the plugin thread.
@@ -139,12 +138,12 @@ pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
 /// `render_to_rgba` with a multiply + shift, which is ~5-10× faster
 /// on x86 (a 32-bit divide is ~20 cycles vs ~3 for a multiply).
 ///
-/// Bit-for-bit-equivalent to the previous `(c * 255) / a` formulation
-/// in normal use: for `c ≤ a` (the premultiplied-alpha invariant),
+/// Bit-for-bit-equivalent to the direct `(c * 255) / a` formulation
+/// for `c ≤ a` (the premultiplied-alpha invariant):
 /// `floor(c * floor(255 << 16 / a) / 65536) == floor(c * 255 / a)`,
 /// since the LUT-side floor's drop is at most `(a-1) * c / (a * 65536)`
 /// < `c / 65536` ≤ `255/65536 ≈ 0.004`, never enough to cross an
-/// integer boundary in the result.
+/// integer boundary.
 const UNPREMUL_LUT: [u32; 256] = build_unpremul_lut();
 
 const fn build_unpremul_lut() -> [u32; 256] {
@@ -182,12 +181,11 @@ pub fn render_to_rgba(
     // The blit shader re-premultiplies in linear space, which is what
     // an `Rgba8UnormSrgb` texture + sRGB surface needs to draw
     // antialiased edges and translucent overlays at the correct
-    // brightness. Writing premultiplied sRGB bytes directly here
-    // (the previous behavior) made every alpha < 1 pixel render too
-    // dark on screen — Slint multiplies in sRGB byte space, so the
-    // linear sample comes out attenuated by sRGB(α) instead of α.
-    // Matches the screenshot path's un-premultiplication so the live
-    // window and reference PNGs agree on color.
+    // brightness. Slint premultiplies in sRGB byte space, so writing
+    // those bytes directly would attenuate every alpha < 1 pixel by
+    // sRGB(α) instead of α and render too dark on screen. Matches the
+    // screenshot path's un-premultiplication so the live window and
+    // reference PNGs agree on color.
     //
     // The translucent branch goes through `UNPREMUL_LUT` to avoid a
     // per-channel integer divide on every non-edge pixel — the divide

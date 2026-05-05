@@ -157,11 +157,11 @@ pub struct Lv2UiInstance<P: PluginExport> {
     transport_slot: Arc<TransportSlot>,
     /// Reusable scratch buffer for the synthetic `AtomSequence` we
     /// build per notify-port atom. LV2 hosts can deliver `time:Position`
-    /// updates 60-180×/sec and the previous code allocated a fresh
-    /// `Vec<u8>` on every event. `RefCell` because `port_event` only
-    /// has `&self` (the LV2 host hands us a `LV2UI_Handle`, which we
-    /// cast to `&Lv2UiInstance<P>`) — fine on the UI thread, which
-    /// hosts are required to use single-threaded.
+    /// updates 60-180×/sec, so this is reused per event rather than
+    /// freshly allocated. `RefCell` because `port_event` only has
+    /// `&self` (the LV2 host hands us a `LV2UI_Handle`, which we cast
+    /// to `&Lv2UiInstance<P>`) — fine on the UI thread, which hosts
+    /// are required to use single-threaded.
     notify_scratch: core::cell::RefCell<Vec<u8>>,
     _phantom: PhantomData<P>,
 }

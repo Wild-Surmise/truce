@@ -5,8 +5,9 @@
 //! and blitting. For GPU-accelerated rendering see the `truce-gpu`
 //! crate which provides `GpuEditor` wrapping this editor.
 
-use std::sync::Arc;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use truce_core::cast::param_f32;
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
@@ -299,10 +300,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             None => Box::new(move |_| 0.0),
         };
         let get_options: Box<dyn Fn(u32) -> Vec<String>> = Box::new(move |id| {
-            let Some(info) = p_opts.param_infos().into_iter().find(|i| i.id == id) else {
+            let Some(info) = p_opts.param_infos().iter().find(|i| i.id == id).copied() else {
                 return Vec::new();
             };
-            let count = info.range.step_count().map_or(1, |n| n.get() as usize) + 1;
+            let count = info.range.step_count_usize() + 1;
             (0..count)
                 .map(|i| {
                     let norm = truce_core::cast::discrete_norm(i, count);
@@ -313,15 +314,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 })
                 .collect()
         });
-        let default_normalized: Box<dyn Fn(u32) -> f32> =
-            Box::new(
-                move |id| match p_default.param_infos().iter().find(|i| i.id == id) {
-                    Some(info) => param_f32(info.range.normalize(info.default_plain)),
-                    None => 0.0,
-                },
-            );
+        let default_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
+            p_default
+                .param_infos()
+                .iter()
+                .find(|i| i.id == id)
+                .map_or(0.0, |info| {
+                    param_f32(info.range.normalize(info.default_plain))
+                })
+        });
         let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-            let Some(info) = p_next.param_infos().into_iter().find(|i| i.id == id) else {
+            let Some(info) = p_next.param_infos().iter().find(|i| i.id == id).copied() else {
                 return 0.0;
             };
             let plain = p_next.get_plain(id).unwrap_or(0.0);
@@ -332,13 +335,13 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
             p_name
                 .param_infos()
-                .into_iter()
+                .iter()
                 .find(|i| i.id == id)
                 .map(|i| i.name.to_string())
                 .unwrap_or_default()
         });
         let widget_type: Box<dyn Fn(u32) -> WidgetType> = Box::new(move |id| {
-            let info = p_wtype.param_infos().into_iter().find(|i| i.id == id);
+            let info = p_wtype.param_infos().iter().find(|i| i.id == id).copied();
             match info.as_ref().map(|i| &i.range) {
                 Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => WidgetType::Toggle,
                 Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Selector,
@@ -641,7 +644,7 @@ impl BlitBackend {
 /// — important on AAX where interleaving Metal teardown with baseview's
 /// close sequence inside Pro Tools' outer autorelease pool has been
 /// seen to leave stale refs in DFW container views.
-type SharedBackend = Arc<std::sync::Mutex<Option<BlitBackend>>>;
+type SharedBackend = Arc<Mutex<Option<BlitBackend>>>;
 
 struct BuiltinWindowHandler<P: Params> {
     /// Raw pointer to the `BuiltinEditor` owned by the host. Valid only
@@ -650,11 +653,10 @@ struct BuiltinWindowHandler<P: Params> {
     /// mutex) before returning, and the host can only drop the editor
     /// after `close()` returns — so any frame that holds the lock and
     /// finds the inner option `Some` is guaranteed the editor is still
-    /// alive. Concretely, this lock acquire is the synchronization
-    /// point that prevents the use-after-free that the audit flagged
-    /// (an in-flight `on_frame` deref'ing a freed pointer if the host
-    /// dropped the editor while baseview's render thread still had a
-    /// callback queued). Only accessed from the GUI thread.
+    /// alive. The lock acquire is the synchronization point that keeps
+    /// an in-flight `on_frame` from dereferencing this pointer after
+    /// the host dropped the editor while baseview's render thread still
+    /// had a callback queued. Only accessed from the GUI thread.
     editor: *mut BuiltinEditor<P>,
     backend: SharedBackend,
     /// Canonical baseview → `InputEvent` translator. Handles cursor
@@ -836,7 +838,11 @@ fn resolve_widget_type<P: Params>(
         Some(crate::layout::WidgetKind::Meter) => widgets::WidgetType::Meter,
         Some(crate::layout::WidgetKind::XYPad) => widgets::WidgetType::XYPad,
         None => {
-            let param_info = params.param_infos().into_iter().find(|i| i.id == param_id);
+            let param_info = params
+                .param_infos()
+                .iter()
+                .find(|i| i.id == param_id)
+                .copied();
             match param_info.as_ref().map(|i| &i.range) {
                 Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => {
                     widgets::WidgetType::Toggle
@@ -896,13 +902,13 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         };
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
-        let editor_addr = std::ptr::from_mut::<BuiltinEditor<P>>(self) as usize;
+        let editor_addr = ptr::from_mut::<BuiltinEditor<P>>(self) as usize;
 
         // Shared backend cell: the editor keeps one Arc and baseview's
         // window handler gets the other. At close time the editor
         // takes the inner Option and drops it *before* asking baseview
         // to tear down the NSView.
-        let shared_backend: SharedBackend = Arc::new(std::sync::Mutex::new(None));
+        let shared_backend: SharedBackend = Arc::new(Mutex::new(None));
         self.blit_backend = Some(shared_backend.clone());
         let shared_for_handler = shared_backend;
 
@@ -991,13 +997,11 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Drop the wgpu surface (CAMetalLayer, MTLDevice, command
         // queue, etc.) before asking baseview to release the NSView.
         // Keeps the Metal teardown order deterministic. The destructure
-        // makes the drop order explicit rather than relying on
-        // `BlitPipeline`'s field-declaration order, since the audit
-        // flagged "happens to work" reliance on Rust's drop semantics
-        // as a fragility hazard. Order: per-pipeline GPU resources
-        // first (textures, bind groups, sampler), then the surface
-        // (releases the swap chain / CAMetalLayer), then queue, then
-        // device last — children before parent.
+        // makes the drop order explicit rather than depending on
+        // `BlitPipeline`'s field-declaration order. Order: per-pipeline
+        // GPU resources first (textures, bind groups, sampler), then
+        // the surface (releases the swap chain / CAMetalLayer), then
+        // queue, then device last — children before parent.
         if let Some(shared) = self.blit_backend.take()
             && let Ok(mut guard) = shared.lock()
             && let Some(backend) = guard.take()
@@ -1115,12 +1119,12 @@ mod tests {
 
         fn get_plain(&self, id: u32) -> Option<f64> {
             let norm = self.get_normalized(id)?;
-            let info = self.param_infos().into_iter().find(|i| i.id == id)?;
+            let info = self.param_infos().iter().find(|i| i.id == id).copied()?;
             Some(info.range.denormalize(norm))
         }
 
         fn set_plain(&self, id: u32, value: f64) {
-            if let Some(info) = self.param_infos().into_iter().find(|i| i.id == id) {
+            if let Some(info) = self.param_infos().iter().find(|i| i.id == id).copied() {
                 self.set_normalized(id, info.range.normalize(value));
             }
         }
@@ -1425,12 +1429,12 @@ mod tests {
 
         fn get_plain(&self, id: u32) -> Option<f64> {
             let norm = self.get_normalized(id)?;
-            let info = self.param_infos().into_iter().find(|i| i.id == id)?;
+            let info = self.param_infos().iter().find(|i| i.id == id).copied()?;
             Some(info.range.denormalize(norm))
         }
 
         fn set_plain(&self, id: u32, value: f64) {
-            if let Some(info) = self.param_infos().into_iter().find(|i| i.id == id) {
+            if let Some(info) = self.param_infos().iter().find(|i| i.id == id).copied() {
                 self.set_normalized(id, info.range.normalize(value));
             }
         }

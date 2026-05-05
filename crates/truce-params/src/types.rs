@@ -1,17 +1,17 @@
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 use crate::info::ParamInfo;
 use crate::smooth::{Smoother, SmoothingStyle};
 
 /// Atomic f64 — wraps `AtomicU64` with f64 load/store.
 pub struct AtomicF64 {
-    bits: std::sync::atomic::AtomicU64,
+    bits: AtomicU64,
 }
 
 impl AtomicF64 {
     pub fn new(value: f64) -> Self {
         Self {
-            bits: std::sync::atomic::AtomicU64::new(value.to_bits()),
+            bits: AtomicU64::new(value.to_bits()),
         }
     }
 

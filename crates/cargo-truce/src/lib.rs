@@ -68,8 +68,8 @@ pub(crate) use util::{
 
 use std::process::ExitCode;
 
-pub(crate) type Res = std::result::Result<(), Box<dyn std::error::Error>>;
-pub(crate) type BoxErr = Box<dyn std::error::Error>;
+pub type Res = std::result::Result<(), Box<dyn std::error::Error>>;
+pub type BoxErr = Box<dyn std::error::Error>;
 
 /// Run a command with the given args (e.g. `["install", "--clap"]`).
 ///

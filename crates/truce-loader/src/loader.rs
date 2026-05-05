@@ -134,9 +134,8 @@ impl NativeLoader {
     ///
     /// `new_hash` comes from the caller to avoid re-reading the dylib
     /// — `load` and `reload` already hashed it to detect "unchanged"
-    /// before deciding to call us. The previous shape re-hashed inside
-    /// here, doubling I/O on every successful reload (a 5-20 MB read
-    /// twice per poll for a 5-20 MB dylib).
+    /// before deciding to call us. Re-hashing inside here would double
+    /// the per-reload I/O on a 5-20 MB dylib.
     fn build_candidate(&mut self, new_hash: u32) -> Option<Candidate> {
         // Copy to versioned temp path to defeat macOS dyld cache.
         let temp = match self.copy_versioned() {

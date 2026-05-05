@@ -354,8 +354,11 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
-        // `plugin.save_state()` still goes through the plugin reference;
-        // see the matching note in `truce-vst3::cb_state_save`.
+        // `plugin.save_state()` reads through the plugin reference: a
+        // user impl that mutates non-atomic state from `process` while
+        // also reading it from `save_state` races here. The contract
+        // is "save_state must be safe to call concurrently with
+        // process"; impls that copy from atomic params are fine.
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 

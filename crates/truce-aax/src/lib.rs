@@ -927,6 +927,13 @@ pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
 ) -> u32 {
+    /// Cap on retries when the audio thread keeps bumping the
+    /// revision mid-walk. A handful of attempts covers the common
+    /// "user wiggling automation while Pro Tools snapshots" case;
+    /// past that we hand back the most recent (possibly torn) blob
+    /// rather than spinning indefinitely.
+    const SNAPSHOT_RETRIES: u32 = 3;
+
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     // Hot-path optimization for Pro Tools undo/snapshot flows,
     // which call the `GetChunkSize` + `GetChunk` pair repeatedly.
@@ -948,12 +955,13 @@ pub unsafe fn _save_state<P: PluginExport>(
     // where the audio thread could re-set the flag between the
     // swap and the read, then have its update overwritten when we
     // wrote the cache; this counter scheme detects that case.
-    let revision_before = inst.state_revision.load(Ordering::Acquire);
-
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.params_arc.collect_values();
-        // `plugin.save_state()` still goes through the plugin reference;
-        // see the matching note in `truce-vst3::cb_state_save`.
+        // `plugin.save_state()` reads through the plugin reference: a
+        // user impl that mutates non-atomic state from `process` while
+        // also reading it from `save_state` races here. The contract
+        // is "save_state must be safe to call concurrently with
+        // process"; impls that copy from atomic params are fine.
         let extra = inst.plugin.save_state();
         state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
     };
@@ -972,20 +980,35 @@ pub unsafe fn _save_state<P: PluginExport>(
             .state_cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        match guard.as_ref() {
-            // `Arc::clone` on a hit — refcount bump, no copy.
-            Some((rev, blob)) if *rev == revision_before => Arc::clone(blob),
-            _ => {
-                let fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
-                let revision_after = inst.state_revision.load(Ordering::Acquire);
-                if revision_after == revision_before {
-                    // No audio update during serialization — safe to cache.
-                    *guard = Some((revision_before, Arc::clone(&fresh)));
+        let revision_before = inst.state_revision.load(Ordering::Acquire);
+        if let Some((rev, blob)) = guard.as_ref()
+            && *rev == revision_before
+        {
+            Arc::clone(blob)
+        } else {
+            // Retry the param walk if the audio thread bumps the
+            // revision mid-serialize. `collect_values` walks parameter
+            // atomics individually with no whole-tree atomic snapshot,
+            // so a `_set_param` that lands between two reads produces
+            // a blob mixing pre- and post-update values for adjacent
+            // params. Re-serialize until we get a consistent revision
+            // (or exhaust the budget — see `SNAPSHOT_RETRIES`).
+            let mut rev_start = revision_before;
+            let mut fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
+            let mut consistent = false;
+            for _ in 0..SNAPSHOT_RETRIES {
+                let rev_end = inst.state_revision.load(Ordering::Acquire);
+                if rev_end == rev_start {
+                    consistent = true;
+                    break;
                 }
-                // else: audio updated mid-read; return the blob but
-                // skip caching so the next call re-serializes.
-                fresh
+                rev_start = rev_end;
+                fresh = Arc::from(serialize_now(inst));
             }
+            if consistent {
+                *guard = Some((rev_start, Arc::clone(&fresh)));
+            }
+            fresh
         }
     };
     unsafe { finalize_blob(&blob, out_data) }
@@ -1215,11 +1238,14 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
 /// flag that drift if VST3's `libc_malloc` shape ever migrates here.
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {
-        // The state buffer is constructed via `Vec::with_capacity(len)`
-        // followed by `set_len(len)` — len == cap by construction, so
-        // reconstructing a Vec with both equal to `len` is the symmetric
-        // free. The `Box`-based replacement clippy suggests doesn't fit
-        // because the source allocation is Vec's, not Box's.
+        // `finalize_blob` produced this pointer via
+        // `Vec.to_vec().into_boxed_slice()` and `mem::forget`. A boxed
+        // slice has `cap == len` by construction, so reconstructing
+        // through `Vec::from_raw_parts(ptr, len, len)` on the same
+        // global allocator is the symmetric free. Reconstructing a
+        // `Box<[u8]>` instead would also work, but the existing
+        // `Vec::from_raw_parts` shape matches what every other
+        // wrapper crate uses.
         #[allow(clippy::same_length_and_capacity)]
         unsafe {
             drop(Vec::from_raw_parts(data, len as usize, len as usize));
@@ -1232,7 +1258,8 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
 // The C++ template's `RenderAudio` reads them after `truce_aax_process`
 // and posts each packet via `AAX_IMIDINode::PostMIDIPacket` on the
 // `LocalOutput` node it registered in its hand-built component
-// descriptor — replacing the old `AAX_CMonolithicParameters::StaticDescribe`
-// path, which only knew how to register `LocalInput` / `Global` /
-// `Transport` nodes. See `cargo-truce/templates/aax/TruceAAX_Describe.cpp`
-// for the descriptor build.
+// descriptor. `AAX_CMonolithicParameters::StaticDescribe` only knows
+// how to register `LocalInput` / `Global` / `Transport` nodes, so the
+// hand-built descriptor is what makes plugin → host MIDI possible.
+// See `cargo-truce/templates/aax/TruceAAX_Describe.cpp` for the
+// descriptor build.

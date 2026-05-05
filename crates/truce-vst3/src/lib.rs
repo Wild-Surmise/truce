@@ -59,9 +59,9 @@ struct Vst3Instance<P: PluginExport> {
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often
     /// while reading automation; rebuilding the full `Vec<ParamInfo>`
-    /// per call (the previous behavior) is a heap allocation on what
-    /// the host treats as a tight read path. Ranges are static for
-    /// the life of the plugin instance, so caching them is safe.
+    /// per call would heap-allocate on a tight host read path. Ranges
+    /// are static for the life of the plugin instance, so caching is
+    /// safe.
     param_ranges: Vec<(u32, truce_params::ParamRange)>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
@@ -458,13 +458,11 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
-        // `plugin.save_state()` still goes through the plugin reference;
-        // user impls that mutate non-atomic state from `process` while
-        // also reading it from `save_state` race here. The contract is
-        // "save_state must be safe to call concurrently with process";
-        // most impls return `None` or copy from atomic params and are
-        // fine. A future audit pass will hand this to the audio thread
-        // via a return-channel SPSC if real plugins start hitting it.
+        // `plugin.save_state()` reads through the plugin reference: a
+        // user impl that mutates non-atomic state from `process` while
+        // also reading it from `save_state` races here. The contract
+        // is "save_state must be safe to call concurrently with
+        // process"; impls that copy from atomic params are fine.
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
         let len = blob.len();
@@ -819,10 +817,7 @@ fn vst3_cid(id: &str) -> [u8; 16] {
     // FNV-1a-128, per http://www.isthe.com/chongo/tech/comp/fnv/.
     // Standard constants — DAWs persist this CID as the plugin's identity in
     // saved sessions, so the algorithm and constants must stay stable across
-    // releases. (The pre-2026-05-03 implementation used mangled offset/prime
-    // bytes that produced a deterministic but non-FNV hash with long zero
-    // runs in the multiplier; sessions saved against a truce-built plugin
-    // before that fix will see a different CID and need to re-bind.)
+    // releases.
     const FNV_OFFSET_BASIS: u128 = 0x6C62_272E_07BB_0142_62B8_2175_6295_C58D;
     const FNV_PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013B;
     let mut hash = FNV_OFFSET_BASIS;

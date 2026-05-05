@@ -16,12 +16,10 @@
 //! vs. an embedded `&str` for templating). Splitting that into a tiny
 //! standalone crate is the workspace-idiomatic way to share it.
 //!
-//! Merging into either consumer was considered (audit 2026-05-02):
-//! collapsing into `truce-au` puts `cargo-truce` back into the
-//! dependency-cycle problem; collapsing into `cargo-truce` makes the
-//! AU build-time C compile step depend on a build tool, which is
-//! the wrong direction. Keeping the small header crate in place is
-//! correct.
+//! Kept separate from both consumers: collapsing into `truce-au`
+//! reintroduces the `cargo-truce` ↔ `truce-au` dependency cycle, and
+//! collapsing into `cargo-truce` would make the AU build-time C compile
+//! step depend on a build tool.
 
 /// The `au_shim_types.h` C header, embedded at compile time.
 pub const AU_SHIM_TYPES_H: &str = include_str!("../include/au_shim_types.h");

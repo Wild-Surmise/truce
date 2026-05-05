@@ -10,9 +10,6 @@ use std::sync::LazyLock;
 
 use truce_core::cast::len_u32;
 
-/// `JetBrains` Mono Regular TrueType bytes — re-exported from
-/// [`truce_font`] for callers that already reach for
-/// `truce_gui::font`.
 pub use truce_font::JETBRAINS_MONO;
 
 /// Cached rasterized glyph.
@@ -44,15 +41,15 @@ thread_local! {
 fn with_cache<R>(f: impl FnOnce(&mut GlyphCache) -> R) -> R {
     CACHE.with(|cell| {
         let mut guard = cell.borrow_mut();
-        if guard.is_none() {
+        let cache = guard.get_or_insert_with(|| {
             let font = fontdue::Font::from_bytes(JETBRAINS_MONO, fontdue::FontSettings::default())
                 .expect("failed to parse embedded font");
-            *guard = Some(GlyphCache {
+            GlyphCache {
                 font,
                 glyphs: HashMap::new(),
-            });
-        }
-        f(guard.as_mut().unwrap())
+            }
+        });
+        f(cache)
     })
 }
 
@@ -70,20 +67,17 @@ fn size_key(size: f32) -> u32 {
 #[allow(clippy::cast_precision_loss)]
 fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
     let key = (ch, size_key(size));
-    if !cache.glyphs.contains_key(&key) {
-        let (metrics, bitmap) = cache.font.rasterize(ch, size);
-        cache.glyphs.insert(
-            key,
-            CachedGlyph {
-                bitmap,
-                width: len_u32(metrics.width),
-                height: len_u32(metrics.height),
-                advance: metrics.advance_width,
-                y_offset: metrics.ymin as f32,
-            },
-        );
-    }
-    cache.glyphs.get(&key).unwrap()
+    let GlyphCache { font, glyphs } = cache;
+    glyphs.entry(key).or_insert_with(|| {
+        let (metrics, bitmap) = font.rasterize(ch, size);
+        CachedGlyph {
+            bitmap,
+            width: len_u32(metrics.width),
+            height: len_u32(metrics.height),
+            advance: metrics.advance_width,
+            y_offset: metrics.ymin as f32,
+        }
+    })
 }
 
 /// sRGB-to-linear lookup for byte-encoded color channels. Used by
@@ -136,10 +130,9 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
 /// and the result is re-encoded to sRGB. Treats the destination as
 /// straight sRGB rather than sRGB-premultiplied — fully correct when
 /// the destination alpha is 1 (the dominant case for text rendering),
-/// approximate when the destination is itself translucent (the audit's
-/// "synthetic test case" — the rest of the CPU backend uses tiny-skia
-/// which is sRGB-naive too, so a fully gamma-correct pipeline would
-/// need matching changes there).
+/// approximate when the destination is itself translucent. The rest
+/// of the CPU backend uses tiny-skia which is sRGB-naive too, so a
+/// fully gamma-correct pipeline would need matching changes there.
 ///
 /// Glyph caching is internal — first call for a given (char, size)
 /// pair rasterizes; subsequent calls blit from the per-thread cache.

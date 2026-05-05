@@ -1,13 +1,12 @@
 //! Regression test for the static-metadata registration path
 //! (`Params::param_infos_static` / `PluginExport::param_infos_static`).
 //!
-//! Format wrappers (`truce-vst2` / `truce-vst3` / `truce-au` / `truce-aax`)
-//! used to construct a temporary plugin instance just to read its
-//! parameter metadata at registration time, paying for any allocation
-//! the constructor did. The derive now emits a `LazyLock`-cached
-//! `Vec<ParamInfo>` so registration reads the same data without an
-//! instance — this test asserts the two paths produce identical
-//! results and that the `LazyLock` returns the same Vec twice.
+//! Format wrappers (`truce-vst2` / `truce-vst3` / `truce-au` /
+//! `truce-aax`) read parameter metadata at registration time without
+//! constructing a plugin instance — the derive emits a `LazyLock`-
+//! cached `Vec<ParamInfo>` for that path. This test asserts the
+//! cached path matches `param_infos()` from a real instance and that
+//! the `LazyLock` returns the same Vec twice.
 
 // `ParamInfo` static-vs-instance equality is the *point* of this test —
 // any drift between the two paths is a real bug, so float fields must

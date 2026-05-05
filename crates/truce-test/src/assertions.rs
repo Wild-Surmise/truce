@@ -48,10 +48,10 @@ fn peak_in_range<P: PluginExport>(result: &DriverResult<P>, start: usize, end: u
         .output
         .iter()
         .flat_map(|ch| {
-            // Bound `start` against the channel too — a channel
-            // shorter than `start` (mismatch between
-            // `result.total_frames` and an individual channel) used to
-            // panic via `ch[start..]` when start was past the end.
+            // Bound `start` against the channel too — a channel shorter
+            // than `start` (mismatch between `result.total_frames` and
+            // an individual channel) would otherwise panic on
+            // `ch[start..]`.
             let s = start.min(ch.len());
             let e = end.min(ch.len()).max(s);
             ch[s..e].iter()
@@ -250,16 +250,16 @@ fn final_meters<P: PluginExport>(result: &DriverResult<P>) -> &[(u32, f32)] {
 /// `.capture_meters(MeterCapture::Final)` on the driver).
 pub fn assert_meter_above<P: PluginExport>(result: &DriverResult<P>, id: u32, threshold: f32) {
     let meters = final_meters(result);
-    match meters.iter().find(|(mid, _)| *mid == id) {
-        Some((_, value)) => assert!(
-            *value > threshold,
-            "Meter {id} read {value} at end-of-run, expected > {threshold}"
-        ),
-        None => panic!(
+    let Some((_, value)) = meters.iter().find(|(mid, _)| *mid == id) else {
+        panic!(
             "Meter id {id} not found in DriverResult. Available ids: {:?}",
             meters.iter().map(|(i, _)| i).collect::<Vec<_>>()
-        ),
-    }
+        );
+    };
+    assert!(
+        *value > threshold,
+        "Meter {id} read {value} at end-of-run, expected > {threshold}"
+    );
 }
 
 /// Assert the meter identified by `id` read below `threshold` at
@@ -272,16 +272,16 @@ pub fn assert_meter_above<P: PluginExport>(result: &DriverResult<P>, id: u32, th
 /// `CaptureSpec::meters` was `MeterCapture::None`.
 pub fn assert_meter_below<P: PluginExport>(result: &DriverResult<P>, id: u32, threshold: f32) {
     let meters = final_meters(result);
-    match meters.iter().find(|(mid, _)| *mid == id) {
-        Some((_, value)) => assert!(
-            *value < threshold,
-            "Meter {id} read {value} at end-of-run, expected < {threshold}"
-        ),
-        None => panic!(
+    let Some((_, value)) = meters.iter().find(|(mid, _)| *mid == id) else {
+        panic!(
             "Meter id {id} not found in DriverResult. Available ids: {:?}",
             meters.iter().map(|(i, _)| i).collect::<Vec<_>>()
-        ),
-    }
+        );
+    };
+    assert!(
+        *value < threshold,
+        "Meter {id} read {value} at end-of-run, expected < {threshold}"
+    );
 }
 
 // ---------------------------------------------------------------------------
