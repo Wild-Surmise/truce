@@ -6,7 +6,11 @@ license = "MIT OR Apache-2.0"
 description = "Build tool for truce audio plugins"
 repository = "https://github.com/truce-audio/truce"
 keywords = ["audio", "plugin", "vst", "clap", "daw"]
-categories = ["multimedia::audio", "development-tools::build-utils"]
+categories = [
+    "multimedia::audio",
+    "development-tools::build-utils",
+    "development-tools::cargo-plugins",
+]
 
 [lib]
 name = "cargo_truce"
