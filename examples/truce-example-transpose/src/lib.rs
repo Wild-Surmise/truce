@@ -63,6 +63,7 @@ impl PluginLogic for Transpose {
         for event in events.iter() {
             match &event.body {
                 EventBody::NoteOn {
+                    group,
                     channel,
                     note,
                     velocity,
@@ -76,6 +77,7 @@ impl PluginLogic for Transpose {
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOn {
+                            group: *group,
                             channel: *channel,
                             note: transposed,
                             velocity: *velocity,
@@ -83,6 +85,7 @@ impl PluginLogic for Transpose {
                     });
                 }
                 EventBody::NoteOff {
+                    group,
                     channel,
                     note,
                     velocity,
@@ -96,6 +99,7 @@ impl PluginLogic for Transpose {
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOff {
+                            group: *group,
                             channel: *channel,
                             note: output_note,
                             velocity: *velocity,
@@ -153,9 +157,10 @@ mod tests {
         events.push(Event {
             sample_offset: 0,
             body: EventBody::NoteOn {
+                group: 0,
                 channel: 0,
                 note: 60,
-                velocity: 0.8,
+                velocity: 102,
             },
         });
 

@@ -1,5 +1,6 @@
 use truce::prelude::*;
 use truce_core::cast::sample_f32;
+use truce_core::midi::norm_7bit;
 use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
@@ -162,7 +163,9 @@ impl PluginLogic for Synth {
                     break;
                 }
                 match &event.body {
-                    EventBody::NoteOn { note, velocity, .. } => self.note_on(*note, *velocity),
+                    EventBody::NoteOn { note, velocity, .. } => {
+                        self.note_on(*note, norm_7bit(*velocity));
+                    }
                     EventBody::NoteOff { note, .. } => self.note_off(*note),
                     _ => {}
                 }

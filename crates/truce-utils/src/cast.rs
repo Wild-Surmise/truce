@@ -1,18 +1,19 @@
 //! Numeric-cast helpers for the audio-plugin → host FFI boundary.
 //!
-//! Audio-plugin code routinely casts at four points where Rust's
+//! Audio-plugin code routinely casts at three points where Rust's
 //! type system can't help:
 //!
-//! - **MIDI 7-bit normalize:** velocity / CC / pressure stored as
-//!   `f32 ∈ [0.0, 1.0]` re-encodes to `u8 ∈ [0, 127]`.
-//! - **Pitch bend (14-bit):** `f32 ∈ [-1.0, 1.0]` re-encodes to
-//!   `u14` packed into the low 7 bits of two MIDI bytes.
 //! - **FFI struct sizes / element counts:** `usize` (Rust) vs `u32`
 //!   (every C ABI we ship to).
+//! - **Host `f64` ↔ DSP `f32`:** parameter values, audio samples,
+//!   sample-position counters, sample rates.
 //! - **Discrete-index ↔ normalized:** GUI selector / dropdown
 //!   widgets bridge an integer "which option" to a normalized
-//!   `f64 ∈ [0.0, 1.0]` parameter value. The full audit lives in
-//!   `internal/float-misuse-audit.md`.
+//!   `f64 ∈ [0.0, 1.0]` parameter value.
+//!
+//! MIDI value-domain helpers (7/14/16/32-bit ↔ `f32`) live in
+//! [`crate::midi`] alongside the spec's MIDI 1.0 ↔ MIDI 2.0
+//! bit-replication bridges.
 //!
 //! Each helper is `#[inline]`, debug-asserts the input range so a
 //! NaN-bearing or overflowing caller fails loud in tests, and is
@@ -21,93 +22,12 @@
 //! `cast_possible_truncation`, `cast_sign_loss`, and
 //! `cast_precision_loss` are allowed at the module level so the
 //! helpers can do their job without per-site annotations.
-//!
-//! Adding new helpers: target shapes that show up at ≥ 5 sites
-//! and have a uniform body. Single-site casts belong with a
-//! per-site `#[allow]` and a sentence of `reason` text, not in
-//! this module.
 
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss
 )]
-
-/// Encode a normalized `f32` (in `[0.0, 1.0]`) to a 7-bit MIDI
-/// byte (in `[0, 127]`).
-///
-/// Used for note velocity, CC value, channel pressure, polyphonic
-/// pressure — everything MIDI 1.0 represents as a single byte
-/// value with the high bit reserved.
-///
-/// The caller's value is clamped before scaling and rounded to
-/// the nearest integer. Negative inputs land on `0`; inputs ≥ 1.0
-/// land on `127`. NaN debug-asserts; in release it lands on `0`
-/// because `clamp(0.0, 1.0)` returns the lower bound when the
-/// input compares-unordered against both bounds.
-#[inline]
-#[must_use]
-pub fn midi_7bit(v: f32) -> u8 {
-    debug_assert!(
-        !v.is_nan(),
-        "midi_7bit: NaN input — caller's normalized value is uninitialized?",
-    );
-    (v.clamp(0.0, 1.0) * 127.0).round() as u8
-}
-
-/// Encode a bipolar `f32` (in `[-1.0, 1.0]`) to a 14-bit MIDI
-/// pitch-bend value packed into the low 14 bits of a `u16`.
-///
-/// Caller is responsible for splitting the result into the LSB /
-/// MSB bytes of the pitch-bend message:
-///
-/// ```ignore
-/// let n = midi_14bit_pb_encode(value);
-/// let lsb = (n & 0x7F) as u8;
-/// let msb = ((n >> 7) & 0x7F) as u8;
-/// ```
-///
-/// `0` encodes the maximum-negative bend, `8192` is center,
-/// `16383` is the maximum-positive bend. The mapping is
-/// asymmetric (8192 negative-side codes, 8191 positive-side codes)
-/// because that is the MIDI 1.0 convention: center is 8192, the
-/// negative endpoint reaches exactly `-1.0` on decode but the
-/// positive endpoint stops at `8191/8192 ≈ 0.99987`. Inputs
-/// outside `[-1, 1]` clamp to the endpoints. NaN debug-asserts.
-///
-/// Round-trips with [`midi_14bit_pb_decode`] for every
-/// `raw ∈ [0, 16383]`.
-#[inline]
-#[must_use]
-pub fn midi_14bit_pb_encode(v: f32) -> u16 {
-    debug_assert!(
-        !v.is_nan(),
-        "midi_14bit_pb_encode: NaN input — caller's normalized value is uninitialized?",
-    );
-    let raw = (v.clamp(-1.0, 1.0) * 8192.0 + 8192.0).round();
-    (raw as u16).min(16383)
-}
-
-/// Decode a 14-bit MIDI pitch-bend value (in `[0, 16383]`) to a
-/// bipolar `f32` (in `[-1.0, 1.0]`).
-///
-/// `0` is maximum-negative bend (`-1.0`), `8192` is center
-/// (`0.0`), `16383` is maximum-positive bend (`8191/8192 ≈
-/// 0.99987` — see [`midi_14bit_pb_encode`] for the asymmetry
-/// rationale).
-///
-/// Inverse of [`midi_14bit_pb_encode`]. Lives here so the four
-/// hosts that demux pitch-bend (CLAP / VST2 / VST3 / AU / AAX)
-/// don't repeat the magic constants and can't drift apart.
-#[inline]
-#[must_use]
-pub fn midi_14bit_pb_decode(raw: u16) -> f32 {
-    debug_assert!(
-        raw <= 16383,
-        "midi_14bit_pb_decode: raw {raw} > 16383 — caller didn't mask LSB|MSB<<7?",
-    );
-    (f32::from(raw) - 8192.0) / 8192.0
-}
 
 /// Cast a `usize` element count (`Vec::len()`, iterator count) to
 /// `u32` for an FFI field.
@@ -337,56 +257,6 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::*;
-
-    #[test]
-    fn midi_7bit_endpoints() {
-        assert_eq!(midi_7bit(0.0), 0);
-        assert_eq!(midi_7bit(1.0), 127);
-        assert_eq!(midi_7bit(0.5), 64); // round-half-to-even via .round()
-    }
-
-    #[test]
-    fn midi_7bit_out_of_range_clamps() {
-        assert_eq!(midi_7bit(-0.5), 0);
-        assert_eq!(midi_7bit(2.0), 127);
-        assert_eq!(midi_7bit(f32::INFINITY), 127);
-        assert_eq!(midi_7bit(f32::NEG_INFINITY), 0);
-    }
-
-    #[test]
-    fn midi_14bit_pb_encode_endpoints() {
-        assert_eq!(midi_14bit_pb_encode(-1.0), 0);
-        assert_eq!(midi_14bit_pb_encode(0.0), 8192);
-        assert_eq!(midi_14bit_pb_encode(1.0), 16383);
-    }
-
-    #[test]
-    fn midi_14bit_pb_encode_clamps() {
-        assert_eq!(midi_14bit_pb_encode(-2.0), 0);
-        assert_eq!(midi_14bit_pb_encode(2.0), 16383);
-    }
-
-    #[test]
-    fn midi_14bit_pb_decode_endpoints() {
-        assert_eq!(midi_14bit_pb_decode(0), -1.0);
-        assert_eq!(midi_14bit_pb_decode(8192), 0.0);
-        // Asymmetric positive endpoint: 8191/8192 ≈ 0.99987.
-        let max_pos = midi_14bit_pb_decode(16383);
-        assert!((max_pos - 8191.0_f32 / 8192.0_f32).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn midi_14bit_pb_round_trip_all_codes() {
-        // Decoded then re-encoded value lands on the same raw code
-        // for every representable input — the contract that
-        // `midi_14bit_pb_encode` and `midi_14bit_pb_decode` together
-        // promise. Catches any silent drift in either direction.
-        for raw in 0u16..=16383 {
-            let v = midi_14bit_pb_decode(raw);
-            let back = midi_14bit_pb_encode(v);
-            assert_eq!(back, raw, "raw={raw}, v={v}");
-        }
-    }
 
     #[test]
     fn len_u32_basic() {

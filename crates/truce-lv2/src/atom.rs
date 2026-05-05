@@ -17,7 +17,8 @@
 
 use std::ffi::c_void;
 
-use truce_core::cast::{len_u32, midi_14bit_pb_decode, sample_pos_i64};
+use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 
 use crate::urid::{Urid, UridMap};
@@ -324,51 +325,56 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
     let channel = status & 0x0F;
     let body = match status & 0xF0 {
         0x80 if bytes.len() >= 3 => EventBody::NoteOff {
+            group: 0,
             channel,
             note: bytes[1] & 0x7F,
-            velocity: f32::from(bytes[2] & 0x7F) / 127.0,
+            velocity: bytes[2] & 0x7F,
         },
         0x90 if bytes.len() >= 3 => {
             let vel = bytes[2] & 0x7F;
             if vel == 0 {
                 EventBody::NoteOff {
+                    group: 0,
                     channel,
                     note: bytes[1] & 0x7F,
-                    velocity: 0.0,
+                    velocity: 0,
                 }
             } else {
                 EventBody::NoteOn {
+                    group: 0,
                     channel,
                     note: bytes[1] & 0x7F,
-                    velocity: f32::from(vel) / 127.0,
+                    velocity: vel,
                 }
             }
         }
         0xA0 if bytes.len() >= 3 => EventBody::Aftertouch {
+            group: 0,
             channel,
             note: bytes[1] & 0x7F,
-            pressure: f32::from(bytes[2] & 0x7F) / 127.0,
+            pressure: bytes[2] & 0x7F,
         },
         0xB0 if bytes.len() >= 3 => EventBody::ControlChange {
+            group: 0,
             channel,
             cc: bytes[1] & 0x7F,
-            value: f32::from(bytes[2] & 0x7F) / 127.0,
+            value: bytes[2] & 0x7F,
         },
         0xC0 if bytes.len() >= 2 => EventBody::ProgramChange {
+            group: 0,
             channel,
             program: bytes[1] & 0x7F,
         },
         0xD0 if bytes.len() >= 2 => EventBody::ChannelPressure {
+            group: 0,
             channel,
-            pressure: f32::from(bytes[1] & 0x7F) / 127.0,
+            pressure: bytes[1] & 0x7F,
         },
-        0xE0 if bytes.len() >= 3 => {
-            let raw = ((u16::from(bytes[2]) & 0x7F) << 7) | (u16::from(bytes[1]) & 0x7F);
-            EventBody::PitchBend {
-                channel,
-                value: midi_14bit_pb_decode(raw),
-            }
-        }
+        0xE0 if bytes.len() >= 3 => EventBody::PitchBend {
+            group: 0,
+            channel,
+            value: pitch_bend_from_bytes(bytes[1], bytes[2]),
+        },
         _ => return None,
     };
     Some(Event {
@@ -410,59 +416,69 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                     channel,
                     note,
                     velocity,
+                    ..
                 } => {
                     buf[0] = 0x90 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = truce_core::cast::midi_7bit(*velocity);
+                    buf[2] = velocity & 0x7F;
                     (3, event.sample_offset)
                 }
                 EventBody::NoteOff {
                     channel,
                     note,
                     velocity,
+                    ..
                 } => {
                     buf[0] = 0x80 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = truce_core::cast::midi_7bit(*velocity);
+                    buf[2] = velocity & 0x7F;
                     (3, event.sample_offset)
                 }
-                EventBody::ControlChange { channel, cc, value } => {
+                EventBody::ControlChange {
+                    channel, cc, value, ..
+                } => {
                     buf[0] = 0xB0 | (channel & 0x0F);
                     buf[1] = cc & 0x7F;
-                    buf[2] = truce_core::cast::midi_7bit(*value);
+                    buf[2] = value & 0x7F;
                     (3, event.sample_offset)
                 }
                 EventBody::Aftertouch {
                     channel,
                     note,
                     pressure,
+                    ..
                 } => {
                     buf[0] = 0xA0 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = truce_core::cast::midi_7bit(*pressure);
+                    buf[2] = pressure & 0x7F;
                     (3, event.sample_offset)
                 }
-                EventBody::ChannelPressure { channel, pressure } => {
+                EventBody::ChannelPressure {
+                    channel, pressure, ..
+                } => {
                     buf[0] = 0xD0 | (channel & 0x0F);
-                    buf[1] = truce_core::cast::midi_7bit(*pressure);
+                    buf[1] = pressure & 0x7F;
                     // 2-byte channel pressure — emit a 2-byte MIDI msg.
                     (2, event.sample_offset)
                 }
-                EventBody::PitchBend { channel, value } => {
-                    let n = truce_core::cast::midi_14bit_pb_encode(*value);
+                EventBody::PitchBend { channel, value, .. } => {
+                    let (lsb, msb) = pitch_bend_to_bytes(*value);
                     buf[0] = 0xE0 | (channel & 0x0F);
-                    buf[1] = (n & 0x7F) as u8;
-                    buf[2] = ((n >> 7) & 0x7F) as u8;
+                    buf[1] = lsb;
+                    buf[2] = msb;
                     (3, event.sample_offset)
                 }
-                EventBody::ProgramChange { channel, program } => {
+                EventBody::ProgramChange {
+                    channel, program, ..
+                } => {
                     buf[0] = 0xC0 | (channel & 0x0F);
                     buf[1] = program & 0x7F;
                     (2, event.sample_offset)
                 }
-                // MIDI 2.0, ParamChange, Transport, per-note events:
-                // not encodable as 1- to 3-byte MIDI 1.0 messages; drop
-                // rather than emit a malformed atom.
+                // MIDI 2.0 channel-voice, ParamChange, Transport,
+                // per-note events: not encodable as 1- to 3-byte
+                // MIDI 1.0 messages; drop rather than emit a
+                // malformed atom.
                 _ => continue,
             };
             let total = core::mem::size_of::<AtomEventHeader>() + n;
@@ -759,25 +775,28 @@ mod tests {
         source.push(Event {
             sample_offset: 0,
             body: EventBody::NoteOn {
+                group: 0,
                 channel: 0,
                 note: 60,
-                velocity: 0.75,
+                velocity: 95,
             },
         });
         source.push(Event {
             sample_offset: 128,
             body: EventBody::NoteOff {
+                group: 0,
                 channel: 0,
                 note: 60,
-                velocity: 0.0,
+                velocity: 0,
             },
         });
         source.push(Event {
             sample_offset: 256,
             body: EventBody::ControlChange {
+                group: 0,
                 channel: 3,
                 cc: 7,
-                value: 0.5,
+                value: 64,
             },
         });
 
@@ -803,11 +822,11 @@ mod tests {
                 channel,
                 note,
                 velocity,
+                ..
             } => {
                 assert_eq!(channel, 0);
                 assert_eq!(note, 60);
-                // MIDI 1.0 velocity quantizes to 7 bits (1/127 steps).
-                assert!((velocity - 0.75).abs() < 1.0 / 127.0);
+                assert_eq!(velocity, 95);
             }
             _ => panic!("expected NoteOn at index 0, got {:?}", decoded[0].body),
         }
@@ -819,10 +838,12 @@ mod tests {
             _ => panic!("expected NoteOff at index 1, got {:?}", decoded[1].body),
         }
         match decoded[2].body {
-            EventBody::ControlChange { channel, cc, value } => {
+            EventBody::ControlChange {
+                channel, cc, value, ..
+            } => {
                 assert_eq!(channel, 3);
                 assert_eq!(cc, 7);
-                assert!((value - 0.5).abs() < 1.0 / 127.0);
+                assert_eq!(value, 64);
             }
             _ => panic!(
                 "expected ControlChange at index 2, got {:?}",

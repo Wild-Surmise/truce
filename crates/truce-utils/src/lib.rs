@@ -2,12 +2,12 @@
 
 //! Dependency-free utilities shared across the truce workspace.
 //!
-//! Three unrelated families of helpers live here so neither has to pull
-//! in a heavier crate's transitive chain:
-//!
 //! - [`cast`] — numeric-cast helpers for the audio-plugin → host FFI
-//!   boundary (MIDI byte encodes, `usize` ↔ `u32` length casts, host
-//!   `f64` ↔ DSP `f32`, discrete-index ↔ normalized).
+//!   boundary (`usize` ↔ `u32` length casts, host `f64` ↔ DSP `f32`,
+//!   discrete-index ↔ normalized).
+//! - [`midi`] — MIDI value-domain normalize / denormalize between
+//!   wire-native integers and `f32` ranges, plus the spec's MIDI 1.0
+//!   ↔ MIDI 2.0 bit-replication bridges.
 //! - [`shell_sidecar`] — sidecar-file path resolution shared by
 //!   `cargo-truce` (writes the sidecar at install-time) and the
 //!   `truce::plugin!` macro (reads it at runtime to locate the logic
@@ -15,13 +15,13 @@
 //! - [`slugify`] — ASCII-safe filesystem / IRI slug used by the LV2
 //!   staging path and runtime bundle-name derivation.
 //!
-//! `truce-core` re-exports the [`cast`] module and [`slugify`] for
-//! backwards compatibility with workspace call sites that already
-//! import `truce_core::cast::*` and `truce_core::slugify`. Crates that
-//! want to avoid `truce-core`'s `truce-params` chain (notably
-//! `cargo-truce`) depend on `truce-utils` directly.
+//! `truce-core` re-exports the modules above so consumers that pull
+//! `truce-core` don't need a second dependency. Crates that want to
+//! avoid `truce-core`'s `truce-params` chain (notably `cargo-truce`)
+//! depend on `truce-utils` directly.
 
 pub mod cast;
+pub mod midi;
 pub mod shell_sidecar;
 
 /// Slug a plugin's display name into a lowercase, hyphenated,

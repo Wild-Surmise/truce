@@ -71,7 +71,8 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
-use truce_core::cast::{midi_14bit_pb_decode, param_f32};
+use truce_core::cast::param_f32;
+use truce_core::midi::{denorm_7bit, pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -507,12 +508,18 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // valid MIDI domain is `0..=15` / `0..=127`.
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let (channel, note) = (note_event.channel as u8, note_event.key as u8);
+                    // CLAP's f64 velocity is a normalized [0, 1]; truce
+                    // exposes it as a wire-native 7-bit value to match
+                    // every other format. Plugins that want CLAP's full
+                    // float precision can handle `NoteOn2` from
+                    // `CLAP_EVENT_MIDI2` (when the host emits that path).
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOn {
+                            group: 0,
                             channel,
                             note,
-                            velocity: param_f32(note_event.velocity),
+                            velocity: denorm_7bit(param_f32(note_event.velocity)),
                         },
                     });
                 }
@@ -523,9 +530,10 @@ unsafe fn convert_input_events<P: PluginExport>(
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOff {
+                            group: 0,
                             channel,
                             note,
-                            velocity: param_f32(note_event.velocity),
+                            velocity: denorm_7bit(param_f32(note_event.velocity)),
                         },
                     });
                 }
@@ -580,51 +588,50 @@ unsafe fn convert_input_events<P: PluginExport>(
                     let d2 = midi.data[2];
                     let body = match status & 0xF0 {
                         0x80 => Some(EventBody::NoteOff {
+                            group: 0,
                             channel,
                             note: d1,
-                            velocity: f32::from(d2) / 127.0,
+                            velocity: d2,
                         }),
-                        0x90 => {
-                            // MIDI 1.0 quirk: NoteOn with velocity 0 = NoteOff.
-                            if d2 == 0 {
-                                Some(EventBody::NoteOff {
-                                    channel,
-                                    note: d1,
-                                    velocity: 0.0,
-                                })
-                            } else {
-                                Some(EventBody::NoteOn {
-                                    channel,
-                                    note: d1,
-                                    velocity: f32::from(d2) / 127.0,
-                                })
-                            }
-                        }
-                        0xA0 => Some(EventBody::Aftertouch {
+                        0x90 if d2 == 0 => Some(EventBody::NoteOff {
+                            group: 0,
                             channel,
                             note: d1,
-                            pressure: f32::from(d2) / 127.0,
+                            velocity: 0,
+                        }),
+                        0x90 => Some(EventBody::NoteOn {
+                            group: 0,
+                            channel,
+                            note: d1,
+                            velocity: d2,
+                        }),
+                        0xA0 => Some(EventBody::Aftertouch {
+                            group: 0,
+                            channel,
+                            note: d1,
+                            pressure: d2,
                         }),
                         0xB0 => Some(EventBody::ControlChange {
+                            group: 0,
                             channel,
                             cc: d1,
-                            value: f32::from(d2) / 127.0,
+                            value: d2,
                         }),
                         0xC0 => Some(EventBody::ProgramChange {
+                            group: 0,
                             channel,
                             program: d1,
                         }),
                         0xD0 => Some(EventBody::ChannelPressure {
+                            group: 0,
                             channel,
-                            pressure: f32::from(d1) / 127.0,
+                            pressure: d1,
                         }),
-                        0xE0 => {
-                            let n = (u16::from(d2) << 7) | u16::from(d1);
-                            Some(EventBody::PitchBend {
-                                channel,
-                                value: midi_14bit_pb_decode(n),
-                            })
-                        }
+                        0xE0 => Some(EventBody::PitchBend {
+                            group: 0,
+                            channel,
+                            value: pitch_bend_from_bytes(d1, d2),
+                        }),
                         _ => None,
                     };
                     if let Some(body) = body {
@@ -864,6 +871,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         channel,
                         note,
                         velocity,
+                        ..
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
@@ -877,7 +885,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             channel: i16::from(*channel),
                             key: i16::from(*note),
-                            velocity: f64::from(*velocity),
+                            velocity: f64::from(*velocity) / 127.0,
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
@@ -885,6 +893,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         channel,
                         note,
                         velocity,
+                        ..
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
@@ -898,7 +907,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             channel: i16::from(*channel),
                             key: i16::from(*note),
-                            velocity: f64::from(*velocity),
+                            velocity: f64::from(*velocity) / 127.0,
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
@@ -907,8 +916,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     // demuxes them on the receiving side; we just
                     // build the standard MIDI status byte and pass
                     // the data bytes through.
-                    EventBody::ControlChange { channel, cc, value } => {
-                        let v = truce_core::cast::midi_7bit(*value);
+                    EventBody::ControlChange {
+                        channel, cc, value, ..
+                    } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_midi>(),
@@ -918,7 +928,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 flags: 0,
                             },
                             port_index: 0,
-                            data: [0xB0 | (channel & 0x0F), *cc, v],
+                            data: [0xB0 | (channel & 0x0F), *cc, *value],
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
@@ -926,8 +936,8 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         channel,
                         note,
                         pressure,
+                        ..
                     } => {
-                        let p = truce_core::cast::midi_7bit(*pressure);
                         let ev = clap_event_midi {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_midi>(),
@@ -937,12 +947,13 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 flags: 0,
                             },
                             port_index: 0,
-                            data: [0xA0 | (channel & 0x0F), *note, p],
+                            data: [0xA0 | (channel & 0x0F), *note, *pressure],
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
-                    EventBody::ChannelPressure { channel, pressure } => {
-                        let p = truce_core::cast::midi_7bit(*pressure);
+                    EventBody::ChannelPressure {
+                        channel, pressure, ..
+                    } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_midi>(),
@@ -952,20 +963,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 flags: 0,
                             },
                             port_index: 0,
-                            data: [0xD0 | (channel & 0x0F), p, 0],
+                            data: [0xD0 | (channel & 0x0F), *pressure, 0],
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
-                    EventBody::PitchBend { channel, value } => {
-                        // 14-bit signed [-1, 1] → unsigned 0..16383 with
-                        // 8192 = center. LSB first per MIDI spec.
-                        let n = truce_core::cast::midi_14bit_pb_encode(*value);
-                        // Bit-extraction: `& 0x7F` already constrains
-                        // each result to the low 7 bits.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let lsb = (n & 0x7F) as u8;
-                        #[allow(clippy::cast_possible_truncation)]
-                        let msb = ((n >> 7) & 0x7F) as u8;
+                    EventBody::PitchBend { channel, value, .. } => {
+                        let (lsb, msb) = pitch_bend_to_bytes(*value);
                         let ev = clap_event_midi {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_midi>(),
@@ -979,7 +982,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
-                    EventBody::ProgramChange { channel, program } => {
+                    EventBody::ProgramChange {
+                        channel, program, ..
+                    } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_midi>(),

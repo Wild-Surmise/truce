@@ -175,39 +175,41 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 let channel = ev.status & 0x0F;
                 let body = match status {
                     0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
+                        group: 0,
                         channel,
                         note: ev.data1,
-                        velocity: f32::from(ev.data2) / 127.0,
+                        velocity: ev.data2,
                     }),
                     0x90 => Some(EventBody::NoteOff {
+                        group: 0,
                         channel,
                         note: ev.data1,
-                        velocity: 0.0,
+                        velocity: 0,
                     }),
                     0x80 => Some(EventBody::NoteOff {
+                        group: 0,
                         channel,
                         note: ev.data1,
-                        velocity: f32::from(ev.data2) / 127.0,
+                        velocity: ev.data2,
                     }),
                     0xB0 => Some(EventBody::ControlChange {
+                        group: 0,
                         channel,
                         cc: ev.data1,
-                        value: f32::from(ev.data2) / 127.0,
+                        value: ev.data2,
                     }),
                     0xA0 => Some(EventBody::Aftertouch {
+                        group: 0,
                         channel,
                         note: ev.data1,
-                        pressure: f32::from(ev.data2) / 127.0,
+                        pressure: ev.data2,
                     }),
                     0xF0 => {
                         // Note expression: data1=typeId, data2=value*127, note_id=noteId.
                         // Spec says data2 ∈ 0..=127, but the C++ shim isn't required
                         // to clamp — values 128..=255 are ABI-legal. Clamp first
                         // and scale through u64 so the multiplication can't wrap
-                        // (the previous `data2 * (u32::MAX / 127)` overflowed u32
-                        // for any data2 ≥ 128, and undershot full range — `u32::MAX
-                        // / 127` truncates, so even data2 == 127 stopped 15 short
-                        // of u32::MAX). Now data2 == 127 maps to exactly u32::MAX.
+                        // and data2 == 127 maps to exactly u32::MAX.
                         let type_id = ev.data1;
                         let data2_clamped = u64::from(ev.data2.min(127));
                         // `data2_clamped <= 127`, so the product fits
@@ -215,42 +217,26 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         #[allow(clippy::cast_possible_truncation)]
                         let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
                         let note = ev.note_id;
+                        let make_pn_cc = |cc| EventBody::PerNoteCC {
+                            group: 0,
+                            channel: 0,
+                            note,
+                            cc,
+                            value,
+                            registered: true,
+                        };
                         match type_id {
-                            0 => Some(EventBody::PerNoteCC {
-                                channel: 0,
-                                note,
-                                cc: 7,
-                                value,
-                            }), // volume
-                            1 => Some(EventBody::PerNoteCC {
-                                channel: 0,
-                                note,
-                                cc: 10,
-                                value,
-                            }), // pan
+                            0 => Some(make_pn_cc(7)),  // volume
+                            1 => Some(make_pn_cc(10)), // pan
                             2 => Some(EventBody::PerNotePitchBend {
+                                group: 0,
                                 channel: 0,
                                 note,
                                 value,
                             }), // tuning
-                            3 => Some(EventBody::PerNoteCC {
-                                channel: 0,
-                                note,
-                                cc: 1,
-                                value,
-                            }), // vibrato
-                            4 => Some(EventBody::PerNoteCC {
-                                channel: 0,
-                                note,
-                                cc: 11,
-                                value,
-                            }), // expression
-                            5 => Some(EventBody::PerNoteCC {
-                                channel: 0,
-                                note,
-                                cc: 74,
-                                value,
-                            }), // brightness
+                            3 => Some(make_pn_cc(1)),  // vibrato
+                            4 => Some(make_pn_cc(11)), // expression
+                            5 => Some(make_pn_cc(74)), // brightness
                             _ => None,
                         }
                     }
@@ -535,54 +521,39 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 /// rather than emitted as a zeroed packet (which earlier hosts
 /// interpreted as a `note 0` Note-Off).
 fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
+    use truce_core::midi::pitch_bend_to_bytes;
     let (status, data1, data2) = match &event.body {
         EventBody::NoteOn {
             channel,
             note,
             velocity,
-        } => (
-            0x90 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*velocity),
-        ),
+            ..
+        } => (0x90 | (channel & 0x0F), *note, *velocity),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => (
-            0x80 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*velocity),
-        ),
-        EventBody::ControlChange { channel, cc, value } => (
-            0xB0 | (channel & 0x0F),
-            *cc,
-            truce_core::cast::midi_7bit(*value),
-        ),
+            ..
+        } => (0x80 | (channel & 0x0F), *note, *velocity),
+        EventBody::ControlChange {
+            channel, cc, value, ..
+        } => (0xB0 | (channel & 0x0F), *cc, *value),
         EventBody::Aftertouch {
             channel,
             note,
             pressure,
-        } => (
-            0xA0 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*pressure),
-        ),
-        EventBody::ChannelPressure { channel, pressure } => (
-            0xD0 | (channel & 0x0F),
-            truce_core::cast::midi_7bit(*pressure),
-            0,
-        ),
-        EventBody::PitchBend { channel, value } => {
-            // 14-bit signed [-1, 1] → unsigned 0..16383, 8192 = center.
-            let n = truce_core::cast::midi_14bit_pb_encode(*value);
-            (
-                0xE0 | (channel & 0x0F),
-                (n & 0x7F) as u8,
-                ((n >> 7) & 0x7F) as u8,
-            )
+            ..
+        } => (0xA0 | (channel & 0x0F), *note, *pressure),
+        EventBody::ChannelPressure {
+            channel, pressure, ..
+        } => (0xD0 | (channel & 0x0F), *pressure, 0),
+        EventBody::PitchBend { channel, value, .. } => {
+            let (lsb, msb) = pitch_bend_to_bytes(*value);
+            (0xE0 | (channel & 0x0F), lsb, msb)
         }
-        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        EventBody::ProgramChange {
+            channel, program, ..
+        } => (0xC0 | (channel & 0x0F), *program, 0),
         _ => return None,
     };
     Some(Vst3MidiEvent {

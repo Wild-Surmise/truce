@@ -168,23 +168,23 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
                context: &mut ProcessContext) -> ProcessStatus {
         for event in events.iter() {
             match &event.body {
-                EventBody::NoteOn { channel, note, velocity } => {
+                EventBody::NoteOn { group, channel, note, velocity } => {
                     let shifted = (*note as i16 + self.params.semitones.value() as i16)
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOn {
-                            channel: *channel, note: shifted, velocity: *velocity,
+                            group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },
                     });
                 }
-                EventBody::NoteOff { channel, note, velocity } => {
+                EventBody::NoteOff { group, channel, note, velocity } => {
                     let shifted = (*note as i16 + self.params.semitones.value() as i16)
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOff {
-                            channel: *channel, note: shifted, velocity: *velocity,
+                            group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },
                     });
                 }

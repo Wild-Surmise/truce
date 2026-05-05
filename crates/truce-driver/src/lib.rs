@@ -166,39 +166,44 @@ pub struct Script {
 impl Script {
     pub fn note_on(&mut self, note: u8, velocity: f32) {
         self.push(EventBody::NoteOn {
+            group: 0,
             channel: 0,
             note,
-            velocity,
+            velocity: truce_core::midi::denorm_7bit(velocity),
         });
     }
 
     pub fn note_off(&mut self, note: u8) {
         self.push(EventBody::NoteOff {
+            group: 0,
             channel: 0,
             note,
-            velocity: 0.0,
+            velocity: 0,
         });
     }
 
     pub fn cc(&mut self, cc: u8, value: f32) {
         self.push(EventBody::ControlChange {
+            group: 0,
             channel: 0,
             cc,
-            value,
+            value: truce_core::midi::denorm_7bit(value),
         });
     }
 
     pub fn pitch_bend(&mut self, normalized: f32) {
         self.push(EventBody::PitchBend {
+            group: 0,
             channel: 0,
-            value: normalized,
+            value: truce_core::midi::denorm_pitch_bend(normalized),
         });
     }
 
     pub fn channel_pressure(&mut self, value: f32) {
         self.push(EventBody::ChannelPressure {
+            group: 0,
             channel: 0,
-            pressure: value,
+            pressure: truce_core::midi::denorm_7bit(value),
         });
     }
 

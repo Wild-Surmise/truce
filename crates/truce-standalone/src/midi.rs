@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use midir::{MidiInput, MidiInputConnection};
 
-use truce_core::cast::midi_14bit_pb_decode;
 use truce_core::events::EventBody;
+use truce_core::midi::pitch_bend_from_bytes;
 
 use crate::audio::MidiEvent;
 use crate::cli::Options;
@@ -169,41 +169,45 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
 
     match kind {
         0x90 if bytes.len() >= 3 && bytes[2] > 0 => Some(EventBody::NoteOn {
+            group: 0,
             channel,
             note: bytes[1],
-            velocity: f32::from(bytes[2]) / 127.0,
+            velocity: bytes[2],
         }),
         // NoteOn with velocity 0 is NoteOff per MIDI spec.
         0x90 if bytes.len() >= 3 => Some(EventBody::NoteOff {
+            group: 0,
             channel,
             note: bytes[1],
-            velocity: 0.0,
+            velocity: 0,
         }),
         0x80 if bytes.len() >= 3 => Some(EventBody::NoteOff {
+            group: 0,
             channel,
             note: bytes[1],
-            velocity: f32::from(bytes[2]) / 127.0,
+            velocity: bytes[2],
         }),
         0xA0 if bytes.len() >= 3 => Some(EventBody::Aftertouch {
+            group: 0,
             channel,
             note: bytes[1],
-            pressure: f32::from(bytes[2]) / 127.0,
+            pressure: bytes[2],
         }),
         0xB0 if bytes.len() >= 3 => Some(EventBody::ControlChange {
+            group: 0,
             channel,
             cc: bytes[1],
-            value: f32::from(bytes[2]) / 127.0,
+            value: bytes[2],
         }),
-        0xE0 if bytes.len() >= 3 => {
-            let raw = u16::from(bytes[1]) | (u16::from(bytes[2]) << 7);
-            Some(EventBody::PitchBend {
-                channel,
-                value: midi_14bit_pb_decode(raw),
-            })
-        }
-        0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {
+        0xE0 if bytes.len() >= 3 => Some(EventBody::PitchBend {
+            group: 0,
             channel,
-            pressure: f32::from(bytes[1]) / 127.0,
+            value: pitch_bend_from_bytes(bytes[1], bytes[2]),
+        }),
+        0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {
+            group: 0,
+            channel,
+            pressure: bytes[1],
         }),
         _ => None,
     }

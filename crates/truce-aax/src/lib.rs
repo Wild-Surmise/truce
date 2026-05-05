@@ -18,7 +18,8 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use truce_core::cast::{len_u32, midi_14bit_pb_decode, sample_pos_i64};
+use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::bus::BusLayout;
@@ -682,37 +683,40 @@ pub unsafe fn _process<P: PluginExport>(
             let channel = ev.status & 0x0F;
             let body = match status {
                 0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
+                    group: 0,
                     channel,
                     note: ev.data1,
-                    velocity: f32::from(ev.data2) / 127.0,
+                    velocity: ev.data2,
                 }),
                 0x90 => Some(EventBody::NoteOff {
+                    group: 0,
                     channel,
                     note: ev.data1,
-                    velocity: 0.0,
+                    velocity: 0,
                 }),
                 0x80 => Some(EventBody::NoteOff {
+                    group: 0,
                     channel,
                     note: ev.data1,
-                    velocity: f32::from(ev.data2) / 127.0,
+                    velocity: ev.data2,
                 }),
                 0xA0 => Some(EventBody::Aftertouch {
+                    group: 0,
                     channel,
                     note: ev.data1,
-                    pressure: f32::from(ev.data2) / 127.0,
+                    pressure: ev.data2,
                 }),
                 0xB0 => Some(EventBody::ControlChange {
+                    group: 0,
                     channel,
                     cc: ev.data1,
-                    value: f32::from(ev.data2) / 127.0,
+                    value: ev.data2,
                 }),
-                0xE0 => {
-                    let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
-                    Some(EventBody::PitchBend {
-                        channel,
-                        value: midi_14bit_pb_decode(raw),
-                    })
-                }
+                0xE0 => Some(EventBody::PitchBend {
+                    group: 0,
+                    channel,
+                    value: pitch_bend_from_bytes(ev.data1, ev.data2),
+                }),
                 _ => None,
             };
             if let Some(body) = body {
@@ -785,48 +789,33 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
             channel,
             note,
             velocity,
-        } => (
-            0x90 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*velocity),
-        ),
+            ..
+        } => (0x90 | (channel & 0x0F), *note, *velocity),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => (
-            0x80 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*velocity),
-        ),
+            ..
+        } => (0x80 | (channel & 0x0F), *note, *velocity),
         EventBody::Aftertouch {
             channel,
             note,
             pressure,
-        } => (
-            0xA0 | (channel & 0x0F),
-            *note,
-            truce_core::cast::midi_7bit(*pressure),
-        ),
-        EventBody::ControlChange { channel, cc, value } => (
-            0xB0 | (channel & 0x0F),
-            *cc,
-            truce_core::cast::midi_7bit(*value),
-        ),
-        EventBody::ChannelPressure { channel, pressure } => (
-            0xD0 | (channel & 0x0F),
-            truce_core::cast::midi_7bit(*pressure),
-            0,
-        ),
-        EventBody::PitchBend { channel, value } => {
-            let n = truce_core::cast::midi_14bit_pb_encode(*value);
-            (
-                0xE0 | (channel & 0x0F),
-                (n & 0x7F) as u8,
-                ((n >> 7) & 0x7F) as u8,
-            )
+            ..
+        } => (0xA0 | (channel & 0x0F), *note, *pressure),
+        EventBody::ControlChange {
+            channel, cc, value, ..
+        } => (0xB0 | (channel & 0x0F), *cc, *value),
+        EventBody::ChannelPressure {
+            channel, pressure, ..
+        } => (0xD0 | (channel & 0x0F), *pressure, 0),
+        EventBody::PitchBend { channel, value, .. } => {
+            let (lsb, msb) = pitch_bend_to_bytes(*value);
+            (0xE0 | (channel & 0x0F), lsb, msb)
         }
-        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        EventBody::ProgramChange {
+            channel, program, ..
+        } => (0xC0 | (channel & 0x0F), *program, 0),
         _ => return None,
     };
     Some(TruceAaxMidiEvent {

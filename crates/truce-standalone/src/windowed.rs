@@ -346,15 +346,19 @@ where
 
         if let Some(note) = keyboard::code_to_midi_note(kb.code, self.octave_offset) {
             let body = match kb.state {
+                // Software keyboard fires NoteOn at 80% velocity
+                // (102/127); a held key has no real velocity.
                 KeyState::Down => EventBody::NoteOn {
+                    group: 0,
                     channel: 0,
                     note,
-                    velocity: 0.8,
+                    velocity: 102,
                 },
                 KeyState::Up => EventBody::NoteOff {
+                    group: 0,
                     channel: 0,
                     note,
-                    velocity: 0.0,
+                    velocity: 0,
                 },
             };
             if let Ok(mut events) = self.pending.lock() {

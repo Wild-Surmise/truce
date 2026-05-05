@@ -190,9 +190,10 @@ impl PluginLogic for Arpeggio {
                             context.output_events.push(Event {
                                 sample_offset: event.sample_offset,
                                 body: EventBody::NoteOff {
+                                    group: 0,
                                     channel: 0,
                                     note: cn,
-                                    velocity: 0.0,
+                                    velocity: 0,
                                 },
                             });
                         }
@@ -259,9 +260,10 @@ impl PluginLogic for Arpeggio {
                     context.output_events.push(Event {
                         sample_offset: len_u32(i),
                         body: EventBody::NoteOff {
+                            group: 0,
                             channel: 0,
                             note: cn,
-                            velocity: 0.0,
+                            velocity: 0,
                         },
                     });
                 }
@@ -280,9 +282,10 @@ impl PluginLogic for Arpeggio {
                 context.output_events.push(Event {
                     sample_offset: len_u32(i),
                     body: EventBody::NoteOn {
+                        group: 0,
                         channel: 0,
                         note,
-                        velocity: 0.8,
+                        velocity: 102,
                     },
                 });
                 self.active_note = Some(note);
@@ -297,9 +300,10 @@ impl PluginLogic for Arpeggio {
                     context.output_events.push(Event {
                         sample_offset: len_u32(i),
                         body: EventBody::NoteOff {
+                            group: 0,
                             channel: 0,
                             note: cn,
-                            velocity: 0.0,
+                            velocity: 0,
                         },
                     });
                 }
