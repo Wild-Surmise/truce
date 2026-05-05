@@ -7,6 +7,7 @@
 #include "truce_aax_bridge.h"
 
 // Function pointer types matching the Rust exports
+typedef uint32_t (*fn_abi_version)(void);
 typedef void  (*fn_get_descriptor)(TruceAaxDescriptor*);
 typedef void  (*fn_get_param_info)(uint32_t, TruceAaxParamInfo*);
 typedef void* (*fn_create)(void);
@@ -32,6 +33,7 @@ typedef void     (*fn_editor_idle)(void*);
 typedef int      (*fn_editor_get_size)(void*, uint32_t*, uint32_t*);
 
 struct TruceBridge {
+    fn_abi_version         abi_version;
     fn_get_descriptor      get_descriptor;
     fn_get_param_info      get_param_info;
     fn_create              create;

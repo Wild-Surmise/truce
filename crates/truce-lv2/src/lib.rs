@@ -155,8 +155,9 @@ pub struct Lv2Instance<P: PluginExport> {
     /// to overlapping memory is UB regardless of the access order, so
     /// in the aliased case we copy the input into this scratch first
     /// and hand the scratch slice to the plugin instead.
-    /// One `Vec<f32>` per audio-in channel, sized to `max_block_size`
-    /// in `activate()` and resized only when `run()` exceeds it.
+    /// One `Vec<f32>` per audio-in channel, sized to
+    /// [`LV2_MAX_PREALLOC_BLOCK`] in `activate()` and resized only on
+    /// the audio thread if `run()` exceeds that ceiling.
     input_scratch: Vec<Vec<f32>>,
 
     /// Shared transport slot — audio thread writes each block. LV2 UIs
@@ -310,19 +311,24 @@ pub unsafe fn connect_port<P: PluginExport>(
     }
 }
 
+/// LV2 has no `instantiate`-time max-block-length contract: the
+/// `bufsz:maxBlockLength` option is delivered through `lv2:options`,
+/// which few hosts implement. We pre-allocate scratch large enough to
+/// cover practical session sizes (Pro Tools tops out at 8192 H/W
+/// frames; jack/Carla and ardour have been observed up to ~16k).
+/// Anything beyond that falls into the realloc edge case in `run()`.
+const LV2_MAX_PREALLOC_BLOCK: usize = 16384;
+
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
 pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
     unsafe {
         let inst = &mut *handle;
-        // LV2 doesn't tell us max block size up front; use a generous default.
-        // run() passes n_samples each call, so we can resize if it ever exceeds.
-        let max_block = 8192usize;
-        inst.max_block_size = max_block;
+        inst.max_block_size = LV2_MAX_PREALLOC_BLOCK;
         for buf in &mut inst.input_scratch {
-            buf.resize(max_block, 0.0);
+            buf.resize(LV2_MAX_PREALLOC_BLOCK, 0.0);
         }
-        inst.plugin.reset(inst.sample_rate, max_block);
+        inst.plugin.reset(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK);
         inst.plugin.params().set_sample_rate(inst.sample_rate);
         inst.plugin.params().snap_smoothers();
     }
@@ -341,20 +347,18 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             return;
         }
         if n > inst.max_block_size {
-            // LV2 hosts can give us a larger block than `activate()`
-            // pre-allocated for. Earlier revisions called
-            // `plugin.reset(sr, n)` here, which wiped filter delay
-            // lines / oscillator phase / etc. mid-stream — audible
-            // click on every block-size jump. Plugins are entitled to
-            // assume `reset()` is called at quiescent points only.
-            //
-            // Instead, just grow the input scratch (the only thing
-            // *this* file pre-sized) and proceed. A plugin that
-            // genuinely allocates work buffers from `max_block_size`
-            // and indexes them past their end is technically a host-
-            // contract violation we'd want to catch in debug — but
-            // LV2 doesn't promise a max up front, so we don't have
-            // anything to assert against.
+            // Host exceeded our pre-allocated ceiling. Calling
+            // `plugin.reset(sr, n)` would wipe filter delay lines /
+            // oscillator phase mid-stream — plugins assume `reset()`
+            // happens at quiescent points only. So we grow the input
+            // scratch in place (a one-time realloc per increase) and
+            // continue. The audio thread paying for `realloc` here is
+            // a known cost of LV2's missing block-size contract.
+            debug_assert!(
+                false,
+                "LV2 host delivered block of {n} samples, exceeding pre-allocated \
+                 {LV2_MAX_PREALLOC_BLOCK} — input scratch will realloc on the audio thread",
+            );
             for buf in &mut inst.input_scratch {
                 if buf.len() < n {
                     buf.resize(n, 0.0);

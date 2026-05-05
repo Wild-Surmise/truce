@@ -28,6 +28,15 @@ use truce_params::{ParamFlags, Params};
 // C ABI types (must match truce_aax_bridge.h)
 // ---------------------------------------------------------------------------
 
+/// Bumped any time the C ABI shape (descriptor / param info / event
+/// structs / callback signatures) changes. The C++ template resolves
+/// `truce_aax_abi_version` first and refuses to load if the value
+/// disagrees with its compile-time `TRUCE_AAX_ABI_VERSION` — keeps a
+/// manual cdylib swap against an out-of-sync template from being
+/// silently misread (e.g. category bits read from the offset of a
+/// since-removed field).
+pub const TRUCE_AAX_ABI_VERSION: u32 = 1;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TruceAaxDescriptor {
@@ -357,6 +366,10 @@ macro_rules! export_aax {
                 init
             };
 
+            #[unsafe(no_mangle)]
+            pub extern "C" fn truce_aax_abi_version() -> u32 {
+                ::truce_aax::TRUCE_AAX_ABI_VERSION
+            }
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_descriptor(
                 out: *mut ::truce_aax::TruceAaxDescriptor,
@@ -895,8 +908,8 @@ pub unsafe fn _save_state<P: PluginExport>(
         // main thread (the only `_save_state` caller in Pro Tools)
         // would otherwise silently disable the seqlock-style cache
         // — the next save would re-serialize, the next after that
-        // would too, and the audit-noted hot-path optimization would
-        // be effectively gone. The cache content is just an
+        // would too, and the hot-path optimization would be
+        // effectively gone. The cache content is just an
         // `Option<(u64, Arc<Vec<u8>>)>`, with no invariants a panic
         // could break, so `into_inner()` is sound.
         let mut guard = inst

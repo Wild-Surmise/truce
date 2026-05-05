@@ -245,33 +245,6 @@ unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void)
     }
 }
 
-unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
-    ctx: *mut std::ffi::c_void,
-    index: u32,
-    out: *mut AuParamDescriptor,
-) {
-    unsafe {
-        let inst = &*ctx.cast::<AuInstance<P>>();
-        let infos = inst.plugin.params().param_infos();
-        if let Some(info) = infos.get(index as usize) {
-            // Store strings in leaked CStrings (they live for the process lifetime)
-            let name = CString::new(info.name).unwrap_or_default();
-            let unit = CString::new(info.unit.as_str()).unwrap_or_default();
-            let group = CString::new(info.group).unwrap_or_default();
-
-            let desc = &mut *out;
-            desc.id = info.id;
-            desc.name = name.into_raw();
-            desc.min = info.range.min();
-            desc.max = info.range.max();
-            desc.default_value = info.default_plain;
-            desc.step_count = info.range.step_count().map_or(0, std::num::NonZero::get);
-            desc.unit = unit.into_raw();
-            desc.group = group.into_raw();
-        }
-    }
-}
-
 unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
@@ -710,7 +683,6 @@ pub fn register_au<P: PluginExport>() {
         reset: cb_reset::<P>,
         process: cb_process::<P>,
         param_count: cb_param_count::<P>,
-        param_get_descriptor: cb_param_get_descriptor::<P>,
         param_get_value: cb_param_get_value::<P>,
         param_set_value: cb_param_set_value::<P>,
         param_format_value: cb_param_format_value::<P>,

@@ -237,10 +237,10 @@ typedef struct {
                      uint32_t num_frames,
                      const Vst2MidiEventCompact* events, uint32_t num_events);
     uint32_t (*param_count)(void* ctx);
-    void     (*param_get_descriptor)(void* ctx, uint32_t index, Vst2ParamDescriptor* out);
     /* VST2 hosts work in normalized [0, 1] space. The Rust side
      * routes through `ParamRange::denormalize` so non-linear tapers
-     * round-trip correctly. */
+     * round-trip correctly. The shim reads per-param descriptors
+     * directly from `g_vst2_params` rather than via callback. */
     double   (*param_get_normalized)(void* ctx, uint32_t id);
     void     (*param_set_normalized)(void* ctx, uint32_t id, double value);
     /* Format the param's *current* plain value for display. */

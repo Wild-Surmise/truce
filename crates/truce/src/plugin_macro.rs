@@ -257,10 +257,7 @@ macro_rules! __plugin_hot_reload {
 
                 // Sidecar written by `cargo truce install --shell` at
                 // install time: a single line containing the absolute
-                // path to the logic dylib. Replaces an older
-                // build-script bake of `TRUCE_TARGET_DIR` /
-                // `TRUCE_LOGIC_PROFILE` env vars, so plugin crates no
-                // longer need a `build.rs`.
+                // path to the logic dylib.
                 let crate_name = env!("CARGO_PKG_NAME");
                 if let Some(sidecar) =
                     $crate::__reexport::shell_sidecar_path(crate_name)
@@ -268,7 +265,25 @@ macro_rules! __plugin_hot_reload {
                     if let Ok(contents) = std::fs::read_to_string(&sidecar) {
                         let trimmed = contents.trim();
                         if !trimmed.is_empty() {
-                            return std::path::PathBuf::from(trimmed);
+                            let p = std::path::PathBuf::from(trimmed);
+                            // Skip the sidecar if the dylib it points
+                            // at no longer exists (stale path from a
+                            // prior `--target` build, or a manual
+                            // `cargo clean`). Letting `Library::new`
+                            // fail surfaces as a generic "plugin
+                            // failed to load" in the DAW; falling
+                            // through to the manifest-relative
+                            // fallback below at least gives the
+                            // in-tree dev workflow a chance.
+                            if p.is_file() {
+                                return p;
+                            }
+                            eprintln!(
+                                "[truce] sidecar {} points at missing dylib {}; \
+                                 falling back to manifest-relative search",
+                                sidecar.display(),
+                                p.display(),
+                            );
                         }
                     }
                 }

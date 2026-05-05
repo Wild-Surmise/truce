@@ -62,8 +62,6 @@ pub struct Vst2Callbacks {
         num_events: u32,
     ),
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
-    pub param_get_descriptor:
-        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst2ParamDescriptor),
     /// VST2 hosts work in normalized `[0, 1]` space. The Rust side
     /// is responsible for routing through `ParamRange::denormalize`
     /// so non-linear tapers (e.g. `Logarithmic` for a 20 Hz – 20 kHz

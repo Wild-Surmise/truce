@@ -85,6 +85,22 @@ bool TruceBridge_Load(TruceBridge* bridge, const char* bundle_path) {
         return false; \
     }
 
+    RESOLVE(abi_version);
+
+    // ABI guard: refuse to read the descriptor if the cdylib was
+    // built against a different bridge revision than this template.
+    // Without this, a manual cdylib swap silently misreads fields at
+    // the wrong offsets (categories, midi flag, etc.).
+    uint32_t cdylib_abi = bridge->abi_version();
+    if (cdylib_abi != TRUCE_AAX_ABI_VERSION) {
+        fprintf(stderr,
+                "[truce-aax] ABI version mismatch: template expects %u, "
+                "cdylib reports %u — refusing to load\n",
+                TRUCE_AAX_ABI_VERSION, cdylib_abi);
+        close_lib(lib);
+        return false;
+    }
+
     RESOLVE(get_descriptor);
     RESOLVE(get_param_info);
     RESOLVE(create);

@@ -78,7 +78,8 @@ typedef struct {
                     const AuMidiEvent *events, uint32_t num_events,
                     const AuTransportSnapshot *transport);
     uint32_t (*param_count)(void *ctx);
-    void (*param_get_descriptor)(void *ctx, uint32_t index, AuParamDescriptor *out);
+    /* Per-param descriptors are read from `g_param_descriptors`
+     * rather than via callback (set once at registration). */
     double (*param_get_value)(void *ctx, uint32_t id);
     void (*param_set_value)(void *ctx, uint32_t id, double value);
     uint32_t (*param_format_value)(void *ctx, uint32_t id, double value,

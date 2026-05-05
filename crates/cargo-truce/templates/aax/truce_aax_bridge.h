@@ -14,6 +14,13 @@
 extern "C" {
 #endif
 
+/* Bumped any time the bridge ABI shape changes. The bridge loader
+ * compares this against the cdylib's `truce_aax_abi_version()` and
+ * refuses to load a mismatched pair — protects against a manual
+ * cdylib swap against a stale C++ template (which would otherwise
+ * read fields at the wrong offset). */
+#define TRUCE_AAX_ABI_VERSION 1u
+
 /* Plugin descriptor — read once at load time. */
 typedef struct {
     const char* name;           /* Display name */
@@ -93,6 +100,9 @@ typedef struct {
 } TruceAaxGuiCallbacks;
 
 /* --- Functions exported by the Rust cdylib --- */
+
+/* Bridge ABI version. Must equal `TRUCE_AAX_ABI_VERSION` above. */
+uint32_t truce_aax_abi_version(void);
 
 /* Plugin descriptor. Returned pointer is valid for the library lifetime. */
 void truce_aax_get_descriptor(TruceAaxDescriptor* out);

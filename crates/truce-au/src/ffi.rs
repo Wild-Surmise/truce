@@ -86,10 +86,6 @@ pub struct AuCallbacks {
     /// Get parameter count.
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
 
-    /// Get parameter descriptor by index.
-    pub param_get_descriptor:
-        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuParamDescriptor),
-
     /// Get a parameter's current plain value.
     pub param_get_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,
 
