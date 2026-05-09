@@ -14,6 +14,14 @@
 
 set -eu
 
+# Resolve to the script's own directory so source paths like
+# `clap/Truce Gain.clap` work whether the user invokes `./install.sh`,
+# `bash path/to/install.sh`, or runs it from anywhere else. Without
+# this, the per-plugin `install_bundle` calls would skip every bundle
+# with "not in archive" the moment the user wasn't already cd'd in.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
 PLUGINS_AVAILABLE="{{PLUGIN_NAMES}}"
 
 print_help() {
