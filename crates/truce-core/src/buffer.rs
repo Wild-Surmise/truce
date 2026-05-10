@@ -212,6 +212,13 @@ impl<'a> AudioBuffer<'a> {
 pub struct RawBufferScratch {
     pub input_slices: Vec<&'static [f32]>,
     pub output_slices: Vec<&'static mut [f32]>,
+    /// Per-channel copies of input data when the host passes the same
+    /// buffer for input and output (in-place processing — VST3 spec
+    /// allows this and several real DAWs use it for effects). We can't
+    /// hand a `&[f32]` and `&mut [f32]` to overlapping memory without
+    /// UB, so we copy the input through here so the slices the plugin
+    /// sees are disjoint. Sized lazily; reused across blocks.
+    input_copies: Vec<Vec<f32>>,
 }
 
 impl RawBufferScratch {
@@ -243,7 +250,10 @@ impl RawBufferScratch {
     ///   writable samples; null is allowed and yields an empty slice).
     /// - The pointed-to memory must remain valid for the lifetime of
     ///   the returned `AudioBuffer`.
-    /// - No input pointer may alias any output pointer.
+    ///
+    /// In-place I/O (an input pointer that aliases any output pointer)
+    /// is supported: the input is copied into per-channel scratch so
+    /// the input and output slices are disjoint.
     pub unsafe fn build<'a>(
         &'a mut self,
         inputs: *const *const f32,
@@ -255,12 +265,48 @@ impl RawBufferScratch {
         unsafe {
             let nf = num_frames as usize;
 
+            // Snapshot output pointers up front so the input pass can
+            // detect aliasing without holding `&mut` to output_slices.
+            let num_out = num_out as usize;
+            let num_in = num_in as usize;
+            let out_ptrs: [Option<*mut f32>; 32] = std::array::from_fn(|ch| {
+                if ch < num_out {
+                    let p = *outputs.add(ch);
+                    if p.is_null() { None } else { Some(p) }
+                } else {
+                    None
+                }
+            });
+            let aliases_any_output = |in_ptr: *const f32| -> bool {
+                let in_start = in_ptr as usize;
+                let in_end = in_start + nf * std::mem::size_of::<f32>();
+                out_ptrs.iter().take(num_out).any(|o| {
+                    o.is_some_and(|op| {
+                        let o_start = op as usize;
+                        let o_end = o_start + nf * std::mem::size_of::<f32>();
+                        !(in_end <= o_start || o_end <= in_start)
+                    })
+                })
+            };
+
             self.input_slices.clear();
-            self.input_slices.reserve(num_in as usize);
-            for ch in 0..num_in as usize {
+            self.input_slices.reserve(num_in);
+            // Grow the per-channel copy slots if the bus widened.
+            while self.input_copies.len() < num_in {
+                self.input_copies.push(Vec::new());
+            }
+            for ch in 0..num_in {
                 let ptr = *inputs.add(ch);
                 let slice: &[f32] = if ptr.is_null() {
                     &[]
+                } else if aliases_any_output(ptr) {
+                    // In-place I/O — snapshot the input before the
+                    // plugin starts overwriting the shared buffer
+                    // through the output slice.
+                    let copy = &mut self.input_copies[ch];
+                    copy.clear();
+                    copy.extend_from_slice(std::slice::from_raw_parts(ptr, nf));
+                    std::slice::from_raw_parts(copy.as_ptr(), nf)
                 } else {
                     std::slice::from_raw_parts(ptr, nf)
                 };
@@ -268,8 +314,8 @@ impl RawBufferScratch {
             }
 
             self.output_slices.clear();
-            self.output_slices.reserve(num_out as usize);
-            for ch in 0..num_out as usize {
+            self.output_slices.reserve(num_out);
+            for ch in 0..num_out {
                 let ptr = *outputs.add(ch);
                 let slice: &mut [f32] = if ptr.is_null() {
                     &mut []
@@ -299,6 +345,7 @@ impl Default for RawBufferScratch {
         Self {
             input_slices: Vec::with_capacity(2),
             output_slices: Vec::with_capacity(2),
+            input_copies: Vec::with_capacity(2),
         }
     }
 }

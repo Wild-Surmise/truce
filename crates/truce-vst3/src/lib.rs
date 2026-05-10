@@ -50,8 +50,18 @@ struct Vst3Instance<P: PluginExport> {
     sample_rate: f64,
     /// Max block size declared by the host in `setupProcessing`.
     /// Used to debug-assert that `cb_process` never receives more
-    /// frames than the plugin was sized for.
+    /// frames than the plugin was sized for. Defaults to a generous
+    /// fallback so the contract check stays meaningful even for hosts
+    /// that skip `setupProcessing` (e.g. some validator robustness
+    /// tests).
     max_block_size: usize,
+    /// `true` once `cb_reset` has run (i.e. the host called
+    /// `setActive(true)`). Until then, `cb_process` early-returns and
+    /// zeros outputs — running DSP before the plugin's smoothers and
+    /// per-rate state are primed produces NaN / garbage that the host
+    /// then has to clean up. Pluginval's "process before activate"
+    /// robustness paths exercise exactly this case.
+    prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`.
     /// Lives on the instance so the audio thread doesn't allocate.
     scratch: truce_core::buffer::RawBufferScratch,
@@ -125,7 +135,11 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::hash_plugin_id(info.vst3_id),
         sample_rate: 44100.0,
-        max_block_size: 0,
+        // 8192 covers the largest block sizes mainstream DAWs / validators
+        // use (Reaper / pluginval ≤ 4096); a non-zero default keeps the
+        // process-before-activate path from tripping the contract assert.
+        max_block_size: 8192,
+        prepared: false,
         scratch: truce_core::buffer::RawBufferScratch::default(),
         param_ranges,
         editor: None,
@@ -153,14 +167,20 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        // Clamp host-supplied max_frames up to a sane minimum: hosts that
+        // don't honor their own setupProcessing contract can pass 0 here,
+        // which would size plugin-internal delay lines to zero and blow up
+        // on the first non-zero process() call.
+        let max_frames = (max_frames as usize).max(1024);
         inst.sample_rate = sample_rate;
-        inst.max_block_size = max_frames as usize;
-        inst.plugin.reset(sample_rate, max_frames as usize);
+        inst.max_block_size = max_frames;
+        inst.plugin.reset(sample_rate, max_frames);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
         inst.latency_cache
             .store(inst.plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+        inst.prepared = true;
     }
 }
 
@@ -181,6 +201,20 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         let num_frames = num_frames as usize;
+
+        // Host called process() before setActive(true) — the plugin
+        // hasn't been told its sample rate / max block size yet, so
+        // running DSP would feed garbage out of un-snapped smoothers.
+        // Zero outputs and bail.
+        if !inst.prepared {
+            for ch in 0..num_output_channels as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, num_frames);
+                }
+            }
+            return;
+        }
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
