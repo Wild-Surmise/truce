@@ -563,6 +563,11 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         let restored = if !data.is_null() && len > 0 {
             let blob = slice::from_raw_parts(data, len as usize);
             if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+                // Apply params synchronously so host-thread reads of
+                // `effGetParameter` after `effSetChunk` see the
+                // restored values without waiting for `cb_process`
+                // to pop the queue.
+                state::apply_params(&*inst.params_arc, &deserialized);
                 let _ = inst.pending_state.force_push(deserialized);
                 true
             } else {
@@ -706,6 +711,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let params_for_state = params.clone();
             let pending_state_for_set = inst.pending_state.clone();
             let plugin_id_hash_for_set = inst.plugin_id_hash;
             let transport_slot = inst.transport_slot.clone();
@@ -752,6 +758,10 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         if let Some(deserialized) =
                             state::deserialize_state(&bytes, plugin_id_hash_for_set)
                         {
+                            // Apply params synchronously so the
+                            // editor's get_param immediately reflects
+                            // the restore. Mirrors `cb_state_load`.
+                            state::apply_params(&*params_for_state, &deserialized);
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
                     }),

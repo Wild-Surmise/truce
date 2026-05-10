@@ -564,7 +564,11 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             }
             if (bundleID) CFRelease(bundleID);
 
-            // View factory class name (set via -DTRUCE_AU_VIEW_FACTORY_NAME in build.rs)
+            // The Cocoa view factory class is registered with the
+            // ObjC runtime at plugin load time by `cocoa_view::register`
+            // in the Rust side. `truce_au_view_factory_class_name` is
+            // a Rust extern that returns the registered class name as
+            // a NUL-terminated C string.
             extern const char *truce_au_view_factory_class_name(void);
             viewInfo->mCocoaAUViewClass[0] = CFStringCreateWithCString(
                 NULL, truce_au_view_factory_class_name(), kCFStringEncodingUTF8);
@@ -1152,15 +1156,10 @@ static AudioComponentMethod au_v2_lookup(SInt16 selector) {
 
 // ---------------------------------------------------------------------------
 // Factory function — exported symbol, referenced by Info.plist factoryFunction.
-// Returns an AudioComponentPlugInInterface* (AU v2 interface).
+// Returns an AudioComponentPlugInInterface* (AU v2 interface). The
+// real definition is in the consumer cdylib via the Rust `export_au!`
+// macro — it forwards to `truce_au_v2_factory_bridge` defined below.
 // ---------------------------------------------------------------------------
-
-#ifndef TRUCE_AU_FACTORY_NAME
-#define TRUCE_AU_FACTORY_NAME TruceAUFactory
-#endif
-
-__attribute__((visibility("default")))
-void *TRUCE_AU_FACTORY_NAME(const AudioComponentDescription *desc);
 
 static void *truce_au_v2_factory(const AudioComponentDescription *desc) {
     (void)desc;

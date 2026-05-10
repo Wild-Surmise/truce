@@ -70,6 +70,26 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
     }
 }
 
+/// Apply just the parameter values from a deserialized state — the
+/// host-thread-safe subset of [`apply_state`]. Format wrappers call
+/// this from their state-load callback (host main thread) before
+/// pushing the full state onto the audio-thread handoff queue, so
+/// host-thread reads of `getParameter`/equivalents see the restored
+/// values immediately. Validators (auval, pluginval, the VST2 binary
+/// smoke) read parameters synchronously after `setChunk`/equivalents
+/// without first running a render block, and would otherwise see the
+/// pre-restore values until the audio thread caught up.
+///
+/// The extra blob still has to round-trip through the audio thread
+/// because [`crate::plugin::Plugin::load_state`] takes `&mut P`, which
+/// would alias `process()`'s `&mut P` if called from the host thread.
+/// `restore_values` and `snap_smoothers` go through atomic interior
+/// mutability and are safe to call concurrently with `process()`.
+pub fn apply_params<P: truce_params::Params>(params: &P, state: &DeserializedState) {
+    params.restore_values(&state.params);
+    params.snap_smoothers();
+}
+
 /// Deserialize plugin state.
 #[must_use]
 pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<DeserializedState> {

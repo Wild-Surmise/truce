@@ -1315,6 +1315,13 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             return false;
         };
 
+        // Apply params synchronously on the host thread (atomic-safe)
+        // so host queries that read parameter values right after
+        // `clap_plugin_state.load` see the restored values without
+        // first running a process block — clap-validator reads back
+        // immediately after a load round-trip.
+        state::apply_params(&*data.params_arc, &deserialized);
+
         // Hand the deserialized state to the audio thread for
         // application. `force_push` overwrites any older pending blob
         // — see the `pending_state` field comment for why "newest
@@ -1697,6 +1704,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
+        let params_for_state = params.clone();
         let pending_state_for_set = data.pending_state.clone();
         let plugin_id_hash_for_set = data.plugin_id_hash;
         let transport_slot = data.transport_slot.clone();
@@ -1756,6 +1764,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     if let Some(deserialized) =
                         state::deserialize_state(&bytes, plugin_id_hash_for_set)
                     {
+                        // Apply params synchronously so the editor
+                        // sees the restore on its own thread.
+                        // Mirrors `state_load`.
+                        state::apply_params(&*params_for_state, &deserialized);
                         let _ = pending_state_for_set.force_push(deserialized);
                     }
                 }),

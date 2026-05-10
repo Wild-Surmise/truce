@@ -1049,6 +1049,11 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
     }
     let blob = unsafe { slice::from_raw_parts(data, len as usize) };
     if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+        // Apply params synchronously on the host thread (atomic-safe)
+        // so host queries that read parameter values right after the
+        // state load see the restored values without first running a
+        // process block.
+        state::apply_params(&*inst.params_arc, &deserialized);
         // Hand the deserialized state to the audio thread for
         // application. `force_push` overwrites any older pending blob
         // — see the `pending_state` field comment for why
@@ -1133,6 +1138,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
+        let params_for_state = params.clone();
         let pending_state_for_set = inst.pending_state.clone();
         let plugin_id_hash_for_set = inst.plugin_id_hash;
         let transport_slot = inst.transport_slot.clone();
@@ -1172,6 +1178,10 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     if let Some(deserialized) =
                         state::deserialize_state(&bytes, plugin_id_hash_for_set)
                     {
+                        // Apply params synchronously so the editor
+                        // sees the restore on its own thread.
+                        // Mirrors `_load_state`.
+                        state::apply_params(&*params_for_state, &deserialized);
                         let _ = pending_state_for_set.force_push(deserialized);
                     }
                 }),

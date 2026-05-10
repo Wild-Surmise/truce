@@ -24,6 +24,15 @@ truce-params = { workspace = true }
 # `&mut Plugin`.
 crossbeam-queue = "0.3"
 
+# ObjC runtime for runtime class registration. The cocoa view
+# factory class (AUCocoaUIBase) needs a unique name per plugin to
+# avoid collisions when a host loads multiple truce plugins, so we
+# allocate it at register-time rather than baking the name into a C
+# `#define` (which forced a per-plugin shim recompile of truce-au).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
+
 [build-dependencies]
 cc = "1"
 truce-shim-types = { workspace = true }

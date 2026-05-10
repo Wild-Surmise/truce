@@ -5,36 +5,15 @@ fn main() {
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
-    println!("cargo:rerun-if-env-changed=TRUCE_AU_PLUGIN_ID");
     println!("cargo:rerun-if-env-changed=TRUCE_AU_VERSION");
     println!("cargo:rerun-if-changed=shim/au_shim.m");
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
-    println!("cargo:rerun-if-changed=shim/au_v2_view.m");
     println!("cargo:rerun-if-changed=shim/au_shim_common.c");
     let shim_include = truce_shim_types::include_dir();
     println!(
         "cargo:rerun-if-changed={}",
         shim_include.join("au_shim_types.h").display()
     );
-
-    // Unique ObjC class name per plugin to avoid collisions between plugins.
-    let plugin_id = std::env::var("TRUCE_AU_PLUGIN_ID").unwrap_or_default();
-    let sanitized: String = if plugin_id.is_empty() {
-        "default".to_string()
-    } else {
-        plugin_id
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    };
-    let class_name = format!("TruceAU_{sanitized}");
-    let factory_name = format!("TruceAUFactory_{sanitized}");
 
     // TRUCE_AU_VERSION=2 builds only the v2 C shim (for .component)
     // TRUCE_AU_VERSION=3 builds both v3 ObjC shim AND v2 C shim (for .appex).
@@ -44,37 +23,71 @@ fn main() {
     // Default (unset): builds both.
     let au_version = std::env::var("TRUCE_AU_VERSION").unwrap_or_default();
 
+    // The v3 ObjC subclass + factory class still live in au_shim.m.
+    // They use C `#define`d names so they're unique per plugin (ObjC
+    // class names are process-global and would collide between
+    // plugins loaded into the same host). The v2 cocoa view factory
+    // moved to runtime ObjC class registration in `cocoa_view.rs`,
+    // so we no longer set its `-DTRUCE_AU_VIEW_FACTORY_NAME` here and
+    // no longer compile `au_v2_view.m`.
+    let compiles_v3_shim = au_version != "2" && au_version != "3";
+
     let mut build = cc::Build::new();
 
-    // Common globals + registration — always compiled
+    // Common globals + registration — always compiled.
     build.file("shim/au_shim_common.c");
 
-    // Always include v2 shim + view factory
+    // V2 shim — always compiled. Pure C now (no per-plugin defines
+    // since the cocoa view factory class name comes from the Rust
+    // function `truce_au_view_factory_class_name`).
     build.file("shim/au_v2_shim.c");
-    build.file("shim/au_v2_view.m");
 
-    if au_version != "2" && au_version != "3" {
-        // For v3 appex, the ObjC classes are compiled directly into the
-        // appex binary (by install-au-appex.sh), not into the framework.
-        // This is required because AudioComponentCopyConfigurationInfo
-        // needs the classes in the appex binary itself.
+    if compiles_v3_shim {
+        // Only the v3 ObjC subclass file consumes the per-plugin
+        // class-name defines, so the env-var read and the defines
+        // are scoped to the v3 build path. v2-only builds (the
+        // common case for `.component` plugins) are now plugin-id
+        // agnostic and `truce-au` compiles once per arch across all
+        // plugins.
+        println!("cargo:rerun-if-env-changed=TRUCE_AU_PLUGIN_ID");
+
+        let plugin_id = std::env::var("TRUCE_AU_PLUGIN_ID").unwrap_or_default();
+        let sanitized: String = if plugin_id.is_empty() {
+            "default".to_string()
+        } else {
+            plugin_id
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect()
+        };
+        let class_name = format!("TruceAU_{sanitized}");
+        let factory_class_name = format!("TruceAUFactory_{sanitized}");
+
         build.file("shim/au_shim.m");
-    }
+        build
+            .define("TRUCE_AU_CLASS_NAME", class_name.as_str())
+            .define("TRUCE_AU_FACTORY_CLASS_NAME", factory_class_name.as_str());
 
-    let factory_class_name = format!("TruceAUFactory_{sanitized}");
-    let view_factory_name = format!("TruceAUView_{sanitized}");
+        // Reference the ObjC class symbols directly so the consumer's
+        // dead-stripping pass keeps them. v3 appex builds skip this
+        // path because the ObjC classes live in the appex binary, not
+        // the framework dylib.
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{class_name}");
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{factory_class_name}");
+    }
 
     build
         .include(&shim_include)
         .flag("-fobjc-arc")
         .flag("-fmodules")
         .flag("-fvisibility=default")
-        .flag("-mmacosx-version-min=11.0")
-        .define("TRUCE_AU_CLASS_NAME", class_name.as_str())
-        .define("TRUCE_AU_FACTORY_NAME", factory_name.as_str())
-        .define("TRUCE_AU_PLUGIN_SUFFIX", sanitized.as_str())
-        .define("TRUCE_AU_FACTORY_CLASS_NAME", factory_class_name.as_str())
-        .define("TRUCE_AU_VIEW_FACTORY_NAME", view_factory_name.as_str());
+        .flag("-mmacosx-version-min=11.0");
 
     build.compile("au_shim");
 
@@ -93,16 +106,6 @@ fn main() {
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_param_descriptors");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_params");
 
-    // Keep ObjC classes alive in v3 builds.
-    // -all_load forces all archive members to be loaded (redundant with force_load,
-    // but combined with the explicit symbol references prevents dead stripping).
-    if au_version != "2" && au_version != "3" {
-        // Reference ObjC class symbols to prevent dead stripping.
-        // Not needed for v3 — ObjC classes are in the appex binary, not the framework.
-        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{class_name}");
-        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{factory_class_name}");
-    }
-
     // Tell Rust code which AU version we're building
     if au_version == "3" {
         println!("cargo:rustc-cfg=truce_au_v3_only");
@@ -111,9 +114,15 @@ fn main() {
     // Always export the v2 factory symbol — hosts use v2 API to instantiate.
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_TruceAUFactory");
 
+    // Cocoa view factory class name lookup is provided by the Rust
+    // side (`cocoa_view::truce_au_view_factory_class_name`). Force its
+    // symbol to be exported so `au_v2_shim.c`'s call to it links.
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_truce_au_view_factory_class_name");
+
     println!("cargo:rustc-link-lib=framework=AudioToolbox");
     println!("cargo:rustc-link-lib=framework=AVFAudio");
     println!("cargo:rustc-link-lib=framework=CoreAudio");
     println!("cargo:rustc-link-lib=framework=CoreMIDI");
     println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=AppKit");
 }

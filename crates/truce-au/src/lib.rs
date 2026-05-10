@@ -6,6 +6,9 @@
 
 pub mod ffi;
 
+#[cfg(target_os = "macos")]
+mod cocoa_view;
+
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
@@ -392,6 +395,11 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         }
         let blob = slice::from_raw_parts(data, len as usize);
         if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+            // Apply params synchronously on the host thread (atomic-safe)
+            // so host queries that read parameter values right after
+            // `setFullState:` see the restored values without first
+            // running a render block.
+            state::apply_params(&*inst.params_arc, &deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending
             // blob — see the `pending_state` field comment for why
@@ -557,6 +565,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let params_for_state = params.clone();
             let pending_state_for_set = inst.pending_state.clone();
             let plugin_id_hash_for_set = inst.plugin_id_hash;
             let transport_slot = inst.transport_slot.clone();
@@ -609,6 +618,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         if let Some(deserialized) =
                             state::deserialize_state(&bytes, plugin_id_hash_for_set)
                         {
+                            // Apply params synchronously so the editor
+                            // sees the restore on its own thread.
+                            // Mirrors `cb_state_load`.
+                            state::apply_params(&*params_for_state, &deserialized);
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
                     }),
@@ -767,6 +780,16 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             len_u32(param_descs.len()),
         );
     }
+
+    // Register the Cocoa UI view factory class with the ObjC runtime
+    // under a unique per-plugin name. Replaces the C/ObjC build-time
+    // `-DTRUCE_AU_VIEW_FACTORY_NAME=...` define so this crate's shim
+    // compilation is plugin-agnostic.
+    #[cfg(target_os = "macos")]
+    cocoa_view::register(
+        std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
+        std::ptr::from_ref::<AuCallbacks>(callbacks),
+    );
 }
 
 // ---------------------------------------------------------------------------
