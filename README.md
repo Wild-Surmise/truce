@@ -7,8 +7,8 @@
 <p align="center">
   Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
   AAX, and standalone from a single Rust codebase. Dead simple
-  developer experience—install and load your plugin in a DAW
-  in 5 minutes.
+  developer experience: in 5 minutes, you can load your own 
+  plugin in a DAW and test your custom DSP, MIDI, and GUI. 
 </p>
 
 <p align="center">
@@ -203,7 +203,7 @@ LV2, AU, AAX), and current status.
 truce drew inspiration from [**nih-plug**](https://github.com/robbert-vdh/nih-plug)
 by Robbert van der Helm — the trailblazing Rust audio plugin framework
 whose API design, thread-safe parameter model, and overall shape
-informed countless decisions here.
+informed countless decisions here. 
 
 ## License
 
