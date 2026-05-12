@@ -8,7 +8,7 @@ use std::ptr;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginLogic;
+use truce_gui::PluginLogicCore;
 use truce_gui::interaction::WidgetRegion;
 use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
@@ -63,7 +63,7 @@ impl AbiCanary {
         #[allow(clippy::cast_possible_truncation)]
         let sample_precision = (size_of::<S>() * 8) as u8;
         Self {
-            trait_object_size: size_of::<*const dyn PluginLogic<S>>() * 2,
+            trait_object_size: size_of::<*const dyn PluginLogicCore<S>>() * 2,
             audio_buffer_size: size_of::<AudioBuffer<S>>(),
             process_context_size: size_of::<ProcessContext>(),
             process_status_size: size_of::<ProcessStatus>(),
@@ -169,7 +169,21 @@ pub struct ProbePlugin {
     last_load_state: RefCell<Vec<u8>>,
 }
 
-impl<S: Sample> PluginLogic<S> for ProbePlugin {
+impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
+    fn supports_in_place() -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    fn bus_layouts() -> Vec<truce_core::bus::BusLayout>
+    where
+        Self: Sized,
+    {
+        vec![truce_core::bus::BusLayout::stereo()]
+    }
+
     fn reset(&mut self, _sr: f64, _bs: usize) {}
 
     fn process(
@@ -196,6 +210,7 @@ impl<S: Sample> PluginLogic<S> for ProbePlugin {
         *self.last_load_state.borrow_mut() = data.to_vec();
         Ok(())
     }
+    fn state_changed(&mut self) {}
     fn latency(&self) -> u32 {
         0xAAAA
     }
@@ -246,7 +261,7 @@ impl<S: Sample> PluginLogic<S> for ProbePlugin {
 /// failed to round-trip — distinct messages for `latency`, `tail`,
 /// `layout`, `hit_test`, `save_state` (default and echo paths),
 /// `uses_custom_render`, `custom_editor`, and `load_state`.
-pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogic<S>) -> Result<(), String> {
+pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
             "latency: expected 0xAAAA, got 0x{:X}",

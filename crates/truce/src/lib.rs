@@ -54,7 +54,10 @@ mod prelude_impl {
         TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
-    pub use truce_gui::PluginLogic;
+    // `PluginLogic` itself is *not* re-exported here — each prelude
+    // chooses its own leaf trait (`PluginLogic` for f32, aliased
+    // `PluginLogic64 as PluginLogic` for f64) so plugin authors write
+    // `impl PluginLogic for X { ... }` without naming a precision.
     pub use truce_gui::interaction::WidgetRegion;
     pub use truce_gui::render::RenderBackend;
     pub use truce_gui::theme::{Color, Theme};
@@ -83,6 +86,7 @@ mod prelude_impl {
 pub mod prelude32 {
     pub use super::prelude_impl::*;
     pub use truce_core::editor::PluginContextReadF32 as _;
+    pub use truce_gui::PluginLogic;
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;
@@ -117,6 +121,10 @@ pub mod prelude32 {
 pub mod prelude64 {
     pub use super::prelude_impl::*;
     pub use truce_core::editor::PluginContextReadF64 as _;
+    /// User-facing leaf trait. Aliased from `PluginLogic64` so plugin
+    /// authors write the same `impl PluginLogic for Synth { ... }`
+    /// header regardless of which prelude they imported.
+    pub use truce_gui::PluginLogic64 as PluginLogic;
     pub use truce_params::FloatParamReadF64 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f64;
@@ -160,6 +168,10 @@ pub mod prelude64m {
     // `PluginContext` from a build-helper expects the same precision
     // its `param.read()` calls return.
     pub use truce_core::editor::PluginContextReadF64 as _;
+    // Audio buffer stays `f32`, so the f32-pinned leaf trait is the
+    // right choice — `param.read()` precision is independent of which
+    // leaf the user impls.
+    pub use truce_gui::PluginLogic;
     pub use truce_params::FloatParamReadF64 as _;
     /// Audio sample type for this prelude — `f32` (host wire),
     /// despite param reads being `f64`.
@@ -175,6 +187,7 @@ pub mod prelude64m {
 pub mod prelude {
     pub use super::prelude_impl::*;
     pub use truce_core::editor::PluginContextReadF32 as _;
+    pub use truce_gui::PluginLogic;
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;

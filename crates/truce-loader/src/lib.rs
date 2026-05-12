@@ -46,7 +46,7 @@ pub mod static_shell;
 
 pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 pub use safe_types::*;
-pub use truce_gui::PluginLogic;
+pub use truce_gui::{PluginLogic, PluginLogic64, PluginLogicCore};
 
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
@@ -66,11 +66,16 @@ macro_rules! export_plugin {
         // would simply error at dylib-load time if someone tried to
         // hot-reload it, rather than failing to compile in static mode.
         #[unsafe(no_mangle)]
-        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic<Sample>> {
+        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogicCore<Sample>> {
             let params: Arc<$params> = unsafe {
                 Arc::increment_strong_count(params_ptr as *const $params);
                 Arc::from_raw(params_ptr as *const $params)
             };
+            // The plugin impls one of the leaf traits
+            // (`PluginLogic` for f32 or `PluginLogic64` for f64); the
+            // blanket impl inside `truce-gui` gives it
+            // `PluginLogicCore<Sample>` automatically, so the cast
+            // here just picks the right vtable.
             Box::new(<$logic>::new(params))
         }
 
@@ -83,7 +88,7 @@ macro_rules! export_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic<Sample>> {
+        pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogicCore<Sample>> {
             Box::new($crate::ProbePlugin::default())
         }
     };
@@ -91,9 +96,9 @@ macro_rules! export_plugin {
 
 /// Convenience prelude for logic dylib authors.
 pub mod prelude {
-    pub use crate::PluginLogic;
     pub use crate::canary::{AbiCanary, ProbePlugin};
     pub use crate::safe_types::*;
+    pub use crate::{PluginLogic, PluginLogic64, PluginLogicCore};
 
     // Re-export param types so the developer can own params in their struct.
     pub use truce_params::{BoolParam, EnumParam, FloatParam, IntParam, ParamEnum, Params};

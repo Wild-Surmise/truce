@@ -145,7 +145,7 @@ impl Synth {
     }
 }
 
-impl PluginLogic<Sample> for Synth {
+impl PluginLogic for Synth {
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }

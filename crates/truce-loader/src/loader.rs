@@ -26,17 +26,17 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
-use crate::PluginLogic;
+use crate::PluginLogicCore;
 use crate::canary::{AbiCanary, verify_probe};
 use truce_params::sample::Sample;
 
-type ProbeFn<S> = fn() -> Box<dyn PluginLogic<S>>;
-type CreateFn<S> = fn(*const ()) -> Box<dyn PluginLogic<S>>;
+type ProbeFn<S> = fn() -> Box<dyn PluginLogicCore<S>>;
+type CreateFn<S> = fn(*const ()) -> Box<dyn PluginLogicCore<S>>;
 
 /// Verified candidate dylib + instance, ready to swap in.
 struct Candidate<S: Sample> {
     library: Library,
-    plugin: Box<dyn PluginLogic<S>>,
+    plugin: Box<dyn PluginLogicCore<S>>,
     hash: u32,
     mtime: SystemTime,
     /// Path of the versioned copy in the system temp dir. Tracked so
@@ -55,7 +55,7 @@ struct Candidate<S: Sample> {
 pub struct NativeLoader<S: Sample = f32> {
     dylib_path: PathBuf,
     library: Option<Library>,
-    plugin: Option<Box<dyn PluginLogic<S>>>,
+    plugin: Option<Box<dyn PluginLogicCore<S>>>,
     /// Raw pointer to the shell's `Arc<Params>` (type-erased).
     /// Passed to `truce_create()` so the plugin shares the same params.
     params_ptr: *const (),
@@ -332,11 +332,11 @@ impl<S: Sample> NativeLoader<S> {
     }
 
     #[must_use]
-    pub fn plugin(&self) -> Option<&dyn PluginLogic<S>> {
+    pub fn plugin(&self) -> Option<&dyn PluginLogicCore<S>> {
         self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
 
-    pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogic<S>> {
+    pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogicCore<S>> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 

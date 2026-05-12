@@ -26,7 +26,15 @@ pub mod widgets;
 
 pub use editor::BuiltinEditor;
 pub use platform::{EditorScale, to_physical_px};
-pub use plugin_logic::{PluginLogic, default_hit_test};
+pub use plugin_logic::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_test};
+
+// Re-exported at the crate root so the `plugin_logic_leaf_trait!`
+// macro's `$crate::__plugin_logic_deps::*` paths resolve when the
+// macro is invoked outside `truce_gui` (the macro is `#[macro_export]`
+// and could in principle be called from a downstream crate that
+// wants to declare its own sample-pinned leaf trait).
+#[doc(hidden)]
+pub use plugin_logic::__plugin_logic_deps;
 pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;

@@ -235,7 +235,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         let loader = self.loader.lock();
         loader
             .plugin()
-            .map(truce_gui::PluginLogic::save_state)
+            .map(truce_gui::PluginLogicCore::save_state)
             .unwrap_or_default()
     }
 

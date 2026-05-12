@@ -13,7 +13,7 @@ use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginLogic;
+use truce_gui::PluginLogicCore;
 use truce_params::Params;
 use truce_params::sample::Sample;
 
@@ -26,7 +26,7 @@ use truce_params::sample::Sample;
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
-pub struct StaticShell<P: Params, L: PluginLogic<S>, S: Sample = f32> {
+pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
     pub params: Arc<P>,
     logic: L,
     meters: Arc<[AtomicU32; 256]>,
@@ -34,9 +34,11 @@ pub struct StaticShell<P: Params, L: PluginLogic<S>, S: Sample = f32> {
     _sample: std::marker::PhantomData<fn() -> S>,
 }
 
-unsafe impl<P: Params, L: PluginLogic<S>, S: Sample> Send for StaticShell<P, L, S> {}
+unsafe impl<P: Params, L: PluginLogicCore<S>, S: Sample> Send for StaticShell<P, L, S> {}
 
-impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> StaticShell<P, L, S> {
+impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
+    StaticShell<P, L, S>
+{
     /// Create from pre-constructed parts. The plugin logic should
     /// hold an `Arc::clone` of the same params.
     pub fn from_parts(params: Arc<P>, logic: L) -> Self {
@@ -78,7 +80,7 @@ impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> Stat
     }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> Plugin
+impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> Plugin
     for StaticShell<P, L, S>
 {
     type Sample = S;
@@ -156,7 +158,7 @@ impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> Plug
         // borrow window so the next `process()` block sees the
         // refreshed caches — fire it whether or not load_state
         // succeeded so partial state still triggers a refresh.
-        PluginLogic::state_changed(&mut self.logic);
+        PluginLogicCore::state_changed(&mut self.logic);
         result
     }
 
@@ -235,8 +237,14 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::supports_in_place(
-                )
+                // `PluginLogicCore<Sample>` is the wrapper-facing
+                // trait; the user impl'd one of the leaf traits
+                // (`PluginLogic` / `PluginLogic64`), and the blanket
+                // bridge in `truce-gui` made them also satisfy
+                // `PluginLogicCore<Sample>` automatically. Sample
+                // resolves through the prelude alias in scope at the
+                // macro call site.
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogicCore<Sample>>::supports_in_place()
             }
 
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo
@@ -250,7 +258,7 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::bus_layouts()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogicCore<Sample>>::bus_layouts()
             }
 
             fn init(&mut self) {

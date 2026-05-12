@@ -141,7 +141,7 @@ impl Eq {
     }
 }
 
-impl PluginLogic<Sample> for Eq {
+impl PluginLogic for Eq {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
