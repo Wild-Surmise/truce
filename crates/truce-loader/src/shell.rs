@@ -1,8 +1,18 @@
-//! Shell-side integration: `HotShell<P>` and `HotEditor`.
+//! Shell-side integration: `HotShell<P, S>` and `HotEditor<P, S>`.
 //!
-//! `HotShell` implements truce-core's `Plugin` + `PluginExport` traits,
-//! delegating all logic to the `PluginLogic` trait object in the
-//! hot-reloadable dylib.
+//! `HotShell<P, S = f32>` implements truce-core's `Plugin` +
+//! `PluginExport` traits, delegating all logic to a
+//! sample-type-specific `Box<dyn PluginLogicCore<S>>` trait object
+//! loaded from the hot-reloadable dylib. The user's plugin impls
+//! one of the leaf traits (`PluginLogic` for `f32` or
+//! `PluginLogic64` for `f64`); the blanket bridges in `truce-plugin`
+//! lift that into the `PluginLogicCore<S>` the shell stores.
+//!
+//! `HotShell` is parameterised over `S` so a `prelude64` plugin
+//! and its `S = f64` logic dylib can hot-reload too. The chosen
+//! precision is stamped into `AbiCanary::sample_precision` at
+//! build time, so loading a mismatched dylib fails the canary
+//! check before the vtable is touched.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -487,26 +497,21 @@ impl<P: Params + 'static, S: Sample> HotEditor<P, S> {
                             Arc::clone(&params_for_thread),
                             layout,
                         );
-                        match inner_for_thread.lock() {
-                            Ok(mut g) => {
-                                let had_ctx = g.take_context();
-                                hot_debug!(
-                                    "[truce-gui-reload] old editor had context: {}",
-                                    had_ctx.is_some()
-                                );
-                                *g = new_builtin;
-                                if let Some(ctx) = had_ctx {
-                                    g.set_context(ctx);
-                                    hot_debug!("[truce-gui-reload] context restored on new editor");
-                                } else {
-                                    hot_debug!(
-                                        "[truce-gui-reload] WARNING: no context to restore!"
-                                    );
-                                }
+                        if let Ok(mut g) = inner_for_thread.lock() {
+                            let had_ctx = g.take_context();
+                            hot_debug!(
+                                "[truce-gui-reload] old editor had context: {}",
+                                had_ctx.is_some()
+                            );
+                            *g = new_builtin;
+                            if let Some(ctx) = had_ctx {
+                                g.set_context(ctx);
+                                hot_debug!("[truce-gui-reload] context restored on new editor");
+                            } else {
+                                hot_debug!("[truce-gui-reload] WARNING: no context to restore!");
                             }
-                            Err(_) => {
-                                hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
-                            }
+                        } else {
+                            hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
                         }
                     }
                 }

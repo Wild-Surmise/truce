@@ -2,9 +2,9 @@
 ///
 /// # Example
 /// ```ignore
-/// use truce_gui::layout;
+/// use truce_gui_types::layout;
 ///
-/// fn gui_layout() -> truce_gui::layout::PluginLayout {
+/// fn gui_layout() -> truce_gui_types::layout::PluginLayout {
 ///     layout!("MY PLUGIN", "V1.0", 50.0, {
 ///         row {
 ///             knob(ID_GAIN, "Gain")
@@ -124,10 +124,10 @@ macro_rules! __layout_widgets {
 ///
 /// # Example
 /// ```ignore
-/// use truce_gui::grid;
+/// use truce_gui_types::grid;
 ///
 /// // Minimal — auto-cols, default cell size, no header.
-/// fn gui_layout() -> truce_gui::layout::GridLayout {
+/// fn gui_layout() -> truce_gui_types::layout::GridLayout {
 ///     grid!({
 ///         knob(ID_GAIN, "Gain")
 ///         slider(ID_PAN, "Pan")

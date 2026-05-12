@@ -311,6 +311,16 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let channels = config.channels as usize;
     let is_effect = P::info().category == PluginCategory::Effect;
 
+    // `std::sync::Mutex` rather than `parking_lot::Mutex`: the
+    // standalone host runs on the developer's machine during
+    // iteration, not inside a third-party DAW. If something panics
+    // on either side of the mutex we want the poisoning behaviour
+    // so the next try_lock fails loudly rather than silently handing
+    // out half-mutated state. Format-wrapper paths
+    // (`truce-clap`, `truce-loader`, etc.) lean on `parking_lot`
+    // because the audio thread is held to a no-panic contract and
+    // poisoning would only ever indicate a framework bug — different
+    // trade.
     let pending: Arc<Mutex<Vec<MidiEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();

@@ -784,21 +784,25 @@ fn draw_rows(
             let widget_h = knob_size;
 
             draw_widget_entry(
-                backend,
-                theme,
-                snapshot,
-                state,
-                region_idx,
-                x,
-                y,
-                widget_w,
-                widget_h,
-                kd.param_id,
-                kd.param_id_y,
-                kd.meter_ids.as_deref(),
-                kd.label,
-                kd.widget,
-                false, // rows: never center the knob in its cell
+                &mut WidgetDrawCtx {
+                    backend,
+                    theme,
+                    snapshot,
+                    state,
+                },
+                &WidgetDraw {
+                    region_idx,
+                    x,
+                    y,
+                    w: widget_w,
+                    h: widget_h,
+                    param_id: kd.param_id,
+                    param_id_y: kd.param_id_y,
+                    meter_ids: kd.meter_ids.as_deref(),
+                    label: kd.label,
+                    explicit_kind: kd.widget,
+                    center_knob_in_cell: false, // rows: never center the knob in its cell
+                },
             );
 
             region_idx += 1;
@@ -855,100 +859,125 @@ fn draw_grid(
         let widget_h = gw.row_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
 
         draw_widget_entry(
-            backend,
-            theme,
-            snapshot,
-            state,
-            idx,
-            x,
-            y,
-            widget_w,
-            widget_h,
-            gw.param_id,
-            gw.param_id_y,
-            gw.meter_ids.as_deref(),
-            gw.label,
-            gw.widget,
-            true, // grid: center knobs within their cell
+            &mut WidgetDrawCtx {
+                backend,
+                theme,
+                snapshot,
+                state,
+            },
+            &WidgetDraw {
+                region_idx: idx,
+                x,
+                y,
+                w: widget_w,
+                h: widget_h,
+                param_id: gw.param_id,
+                param_id_y: gw.param_id_y,
+                meter_ids: gw.meter_ids.as_deref(),
+                label: gw.label,
+                explicit_kind: gw.widget,
+                center_knob_in_cell: true, // grid: center knobs within their cell
+            },
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_widget_entry(
-    backend: &mut dyn RenderBackend,
-    theme: &Theme,
-    snapshot: &ParamSnapshot<'_>,
-    state: &mut InteractionState,
+/// Per-call arguments to [`draw_widget_entry`] — what's being
+/// drawn, where, and which `InteractionState` region it owns.
+/// Splits cleanly from [`WidgetDrawCtx`] (the rendering
+/// infrastructure) so the function signature reads as
+/// `(ctx, widget)` rather than 14 positional parameters.
+struct WidgetDraw<'a> {
     region_idx: usize,
+    /// Top-left of the widget's rect, in logical points.
     x: f32,
     y: f32,
-    widget_w: f32,
-    widget_h: f32,
+    w: f32,
+    h: f32,
     param_id: u32,
+    /// Only `WidgetType::XYPad` reads this — the second axis's
+    /// param. `None` falls back to `param_id` for one-axis widgets
+    /// that accidentally route through the XY path.
     param_id_y: Option<u32>,
-    meter_ids: Option<&[u32]>,
+    /// Only `WidgetType::Meter` reads this — the meter IDs to
+    /// sample. `None` falls back to `[param_id]`.
+    meter_ids: Option<&'a [u32]>,
     label: &'static str,
     explicit_kind: Option<WidgetKind>,
+    /// When `true`, knobs are centered inside their cell (grid
+    /// layout). When `false`, knobs left-align (row layout).
     center_knob_in_cell: bool,
-) {
-    let normalized = (snapshot.get_param)(param_id);
-    let value_text = (snapshot.format_param)(param_id);
-    let is_hovered = state.hover_idx == Some(region_idx);
-    let wtype = resolve_wkind_to_type(explicit_kind, param_id, snapshot);
+}
+
+/// Rendering infrastructure shared across every widget in a frame:
+/// the rendering backend, theme, snapshot of parameter values, and
+/// the running interaction state.
+struct WidgetDrawCtx<'a> {
+    backend: &'a mut dyn RenderBackend,
+    theme: &'a Theme,
+    snapshot: &'a ParamSnapshot<'a>,
+    state: &'a mut InteractionState,
+}
+
+fn draw_widget_entry(ctx: &mut WidgetDrawCtx<'_>, w: &WidgetDraw<'_>) {
+    let normalized = (ctx.snapshot.get_param)(w.param_id);
+    let value_text = (ctx.snapshot.format_param)(w.param_id);
+    let is_hovered = ctx.state.hover_idx == Some(w.region_idx);
+    let wtype = resolve_wkind_to_type(w.explicit_kind, w.param_id, ctx.snapshot);
 
     match wtype {
         WidgetType::Toggle => draw_toggle(
-            backend,
-            x,
-            y,
-            widget_w,
-            widget_h,
+            ctx.backend,
+            w.x,
+            w.y,
+            w.w,
+            w.h,
             normalized,
-            label,
+            w.label,
             &value_text,
-            theme,
+            ctx.theme,
             is_hovered,
         ),
         WidgetType::Slider => draw_slider(
-            backend,
-            x,
-            y,
-            widget_w,
-            widget_h,
+            ctx.backend,
+            w.x,
+            w.y,
+            w.w,
+            w.h,
             normalized,
-            label,
+            w.label,
             &value_text,
-            theme,
+            ctx.theme,
             is_hovered,
         ),
         WidgetType::Selector => draw_selector(
-            backend,
-            x,
-            y,
-            widget_w,
-            widget_h,
+            ctx.backend,
+            w.x,
+            w.y,
+            w.w,
+            w.h,
             normalized,
-            label,
+            w.label,
             &value_text,
-            theme,
+            ctx.theme,
             is_hovered,
         ),
         WidgetType::Dropdown => {
-            let is_open = state
+            let is_open = ctx
+                .state
                 .dropdown
                 .as_ref()
-                .is_some_and(|dd| dd.region_idx == region_idx);
+                .is_some_and(|dd| dd.region_idx == w.region_idx);
             draw_dropdown(
-                backend,
-                x,
-                y,
-                widget_w,
-                widget_h,
+                ctx.backend,
+                w.x,
+                w.y,
+                w.w,
+                w.h,
                 normalized,
-                label,
+                w.label,
                 &value_text,
-                theme,
+                ctx.theme,
                 is_hovered,
                 is_open,
             );
@@ -956,59 +985,69 @@ fn draw_widget_entry(
             // `DROPDOWN_BOX_HEIGHT` tall, centered on `cy = y + h/2 - 8`.
             // We store the *bottom* of that box so `open_dropdown` can
             // anchor the popup directly underneath.
-            let anchor_cy = y + widget_h / 2.0 - 8.0;
-            if let Some(region) = state.knob_regions.get_mut(region_idx) {
+            let anchor_cy = w.y + w.h / 2.0 - 8.0;
+            if let Some(region) = ctx.state.knob_regions.get_mut(w.region_idx) {
                 region.dropdown_anchor_y = anchor_cy + DROPDOWN_BOX_HEIGHT / 2.0;
             }
         }
         WidgetType::Meter => {
-            let fallback = [param_id];
-            let ids = meter_ids.unwrap_or(&fallback);
-            let levels: Vec<f32> = ids.iter().map(|&id| (snapshot.get_meter)(id)).collect();
-            draw_meter(backend, x, y, widget_w, widget_h, &levels, label, theme);
+            let fallback = [w.param_id];
+            let ids = w.meter_ids.unwrap_or(&fallback);
+            let levels: Vec<f32> = ids.iter().map(|&id| (ctx.snapshot.get_meter)(id)).collect();
+            draw_meter(ctx.backend, w.x, w.y, w.w, w.h, &levels, w.label, ctx.theme);
         }
         WidgetType::XYPad => {
-            let val_y_id = param_id_y.unwrap_or(param_id);
-            let vx = (snapshot.get_param)(param_id);
-            let vy = (snapshot.get_param)(val_y_id);
-            let x_name_str = (snapshot.param_name)(param_id);
-            let y_name_str = (snapshot.param_name)(val_y_id);
+            let val_y_id = w.param_id_y.unwrap_or(w.param_id);
+            let vx = (ctx.snapshot.get_param)(w.param_id);
+            let vy = (ctx.snapshot.get_param)(val_y_id);
+            let x_name_str = (ctx.snapshot.param_name)(w.param_id);
+            let y_name_str = (ctx.snapshot.param_name)(val_y_id);
             let x_name: &str = if x_name_str.is_empty() {
-                label
+                w.label
             } else {
                 &x_name_str
             };
             let y_name: &str = &y_name_str;
             draw_xy_pad(
-                backend, x, y, widget_w, widget_h, vx, vy, x_name, y_name, theme, is_hovered,
+                ctx.backend,
+                w.x,
+                w.y,
+                w.w,
+                w.h,
+                vx,
+                vy,
+                x_name,
+                y_name,
+                ctx.theme,
+                is_hovered,
             );
         }
         WidgetType::Knob => {
-            if center_knob_in_cell {
-                let knob_size = widget_w.min(widget_h);
-                let kx = x + (widget_w - knob_size) / 2.0;
-                let ky = y + (widget_h - knob_size) / 2.0;
+            if w.center_knob_in_cell {
+                let knob_size = w.w.min(w.h);
+                let kx = w.x + (w.w - knob_size) / 2.0;
+                let ky = w.y + (w.h - knob_size) / 2.0;
                 draw_knob(
-                    backend,
+                    ctx.backend,
                     kx,
                     ky,
                     knob_size,
                     normalized,
-                    label,
+                    w.label,
                     &value_text,
-                    theme,
+                    ctx.theme,
                     is_hovered,
                 );
             } else {
                 draw_knob(
-                    backend,
-                    x,
-                    y,
-                    widget_h,
+                    ctx.backend,
+                    w.x,
+                    w.y,
+                    w.h,
                     normalized,
-                    label,
+                    w.label,
                     &value_text,
-                    theme,
+                    ctx.theme,
                     is_hovered,
                 );
             }

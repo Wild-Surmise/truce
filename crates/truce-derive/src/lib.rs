@@ -1131,9 +1131,17 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         let ident = &f.ident;
         match f.kind {
             ParamKind::Float => quote! { x if x == self.#ident.id() => Some(self.#ident.raw_target()), },
-            ParamKind::Int => quote! { x if x == self.#ident.id() => Some(self.#ident.value() as f64), },
+            // `i64 as f64` is precision-lossy by spec (mantissa 53 < 63);
+            // no `From<i64> for f64` exists, so the cast is the idiom.
+            ParamKind::Int => quote! { x if x == self.#ident.id() => {
+                #[allow(clippy::cast_precision_loss)]
+                let v = self.#ident.value() as f64;
+                Some(v)
+            }, },
             ParamKind::Bool => quote! { x if x == self.#ident.id() => Some(if self.#ident.value() { 1.0 } else { 0.0 }), },
-            ParamKind::Enum => quote! { x if x == self.#ident.id() => Some(self.#ident.index() as f64), },
+            // `u32 → f64` is lossless (u32::MAX < 2^53); use `From` for
+            // consistency with the rest of the derive output.
+            ParamKind::Enum => quote! { x if x == self.#ident.id() => Some(f64::from(self.#ident.index())), },
         }
     }).collect();
 
@@ -1161,9 +1169,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             let ident = &f.ident;
             let plain_expr = match f.kind {
                 ParamKind::Float => quote! { self.#ident.raw_target() },
-                ParamKind::Int => quote! { self.#ident.value() as f64 },
+                // i64 → f64 has no `From`; `as` with an explicit
+                // allow is the idiom.
+                ParamKind::Int => quote! {{
+                    #[allow(clippy::cast_precision_loss)]
+                    let v = self.#ident.value() as f64;
+                    v
+                }},
                 ParamKind::Bool => quote! { if self.#ident.value() { 1.0 } else { 0.0 } },
-                ParamKind::Enum => quote! { self.#ident.index() as f64 },
+                // u32 → f64 is lossless: use `From`.
+                ParamKind::Enum => quote! { f64::from(self.#ident.index()) },
             };
             quote! {
                 x if x == self.#ident.id() => Some(self.#ident.info.range.normalize(#plain_expr)),

@@ -266,47 +266,111 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
 ///
 /// # Errors
 ///
-/// Returns `Err(String)` describing the first canary value that
-/// failed to round-trip — distinct messages for `latency`, `tail`,
-/// `layout`, `hit_test`, `save_state` (default and echo paths),
-/// `uses_custom_render`, `custom_editor`, and `load_state`.
-pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(), String> {
+/// Returns `Err(ProbeError)` on the first canary value that failed
+/// to round-trip. Each variant pins which trait method drifted so
+/// callers can pattern-match (today only the in-crate loader logs
+/// the `Display`, but a future ABI-divergence dashboard could
+/// group failures by variant).
+#[cfg(feature = "shell")]
+pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(), ProbeError> {
     if probe.latency() != 0xAAAA {
-        return Err(format!(
-            "latency: expected 0xAAAA, got 0x{:X}",
-            probe.latency()
-        ));
+        return Err(ProbeError::Latency {
+            expected: 0xAAAA,
+            actual: probe.latency(),
+        });
     }
     if probe.tail() != 0xBBBB {
-        return Err(format!("tail: expected 0xBBBB, got 0x{:X}", probe.tail()));
+        return Err(ProbeError::Tail {
+            expected: 0xBBBB,
+            actual: probe.tail(),
+        });
     }
     let layout = probe.layout();
     if layout.width != 0xDEAD || layout.height != 0xBEEF {
-        return Err(format!(
-            "layout: expected 0xDEAD×0xBEEF, got 0x{:X}×0x{:X}",
-            layout.width, layout.height
-        ));
+        return Err(ProbeError::Layout {
+            width: layout.width,
+            height: layout.height,
+        });
     }
     if probe.hit_test(&[], 0.0, 0.0) != Some(42) {
-        return Err("hit_test: expected Some(42)".into());
+        return Err(ProbeError::HitTest);
     }
     if probe.save_state() != vec![0xCA, 0xFE] {
-        return Err("save_state (default): expected [0xCA, 0xFE]".into());
+        return Err(ProbeError::SaveStateDefault);
     }
     if !probe.uses_custom_render() {
-        return Err("uses_custom_render: expected true".into());
+        return Err(ProbeError::UsesCustomRender);
     }
     if probe.custom_editor().is_some() {
-        return Err("custom_editor: expected None".into());
+        return Err(ProbeError::CustomEditor);
     }
     // Round-trip a sentinel through load_state → save_state to confirm
     // the load slot isn't swapped with another `&mut self` slot.
     let sentinel = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
     probe
         .load_state(&sentinel)
-        .map_err(|e| format!("load_state probe: {e}"))?;
+        .map_err(ProbeError::LoadStateFailed)?;
     if probe.save_state() != sentinel {
-        return Err("load_state/save_state round-trip mismatch".into());
+        return Err(ProbeError::LoadSaveRoundTrip);
     }
     Ok(())
 }
+
+/// Why a vtable probe rejected a candidate dylib. Each variant
+/// names the trait method whose canary value drifted; the loader
+/// logs the `Display` form and refuses the load.
+#[cfg(feature = "shell")]
+#[derive(Debug)]
+pub enum ProbeError {
+    /// `PluginLogicCore::latency` didn't return the canary value.
+    Latency { expected: u32, actual: u32 },
+    /// `PluginLogicCore::tail` didn't return the canary value.
+    Tail { expected: u32, actual: u32 },
+    /// `PluginLogicCore::layout` returned a `GridLayout` whose
+    /// width/height didn't match the canary's `0xDEAD × 0xBEEF`.
+    Layout { width: u32, height: u32 },
+    /// `PluginLogicCore::hit_test` didn't return `Some(42)`.
+    HitTest,
+    /// `PluginLogicCore::save_state` default path didn't return
+    /// the canary `[0xCA, 0xFE]`.
+    SaveStateDefault,
+    /// `PluginLogicCore::uses_custom_render` returned `false` where
+    /// the canary expects `true`.
+    UsesCustomRender,
+    /// `PluginLogicCore::custom_editor` returned `Some` where the
+    /// canary expects `None`.
+    CustomEditor,
+    /// `PluginLogicCore::load_state` itself failed (returned `Err`)
+    /// for the canary sentinel.
+    LoadStateFailed(truce_core::state::StateLoadError),
+    /// `load_state` + `save_state` together didn't echo the
+    /// sentinel back — the two `&mut self` slots are crossed.
+    LoadSaveRoundTrip,
+}
+
+#[cfg(feature = "shell")]
+impl std::fmt::Display for ProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Latency { expected, actual } => {
+                write!(f, "latency: expected 0x{expected:X}, got 0x{actual:X}")
+            }
+            Self::Tail { expected, actual } => {
+                write!(f, "tail: expected 0x{expected:X}, got 0x{actual:X}")
+            }
+            Self::Layout { width, height } => write!(
+                f,
+                "layout: expected 0xDEAD×0xBEEF, got 0x{width:X}×0x{height:X}"
+            ),
+            Self::HitTest => f.write_str("hit_test: expected Some(42)"),
+            Self::SaveStateDefault => f.write_str("save_state (default): expected [0xCA, 0xFE]"),
+            Self::UsesCustomRender => f.write_str("uses_custom_render: expected true"),
+            Self::CustomEditor => f.write_str("custom_editor: expected None"),
+            Self::LoadStateFailed(e) => write!(f, "load_state probe: {e}"),
+            Self::LoadSaveRoundTrip => f.write_str("load_state/save_state round-trip mismatch"),
+        }
+    }
+}
+
+#[cfg(feature = "shell")]
+impl std::error::Error for ProbeError {}

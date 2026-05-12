@@ -67,132 +67,107 @@ mod prelude_impl {
     };
 }
 
-/// `f32`-flavoured prelude. Re-exports every symbol from [`prelude`]
-/// plus the [`FloatParamReadF32`](truce_params::FloatParamReadF32)
-/// extension trait (via `as _`), which makes `param.read()` resolve
-/// to `f32` without per-call annotation.
-///
-/// Plugin DSP under this prelude writes:
-///
-/// ```ignore
-/// use truce::prelude32::*;
-/// let gain = self.params.gain.read();   // f32 — unambiguous
-/// out[i] = inp[i] * gain;
-/// ```
-///
-/// `truce::prelude` and `truce::prelude32` are interchangeable —
-/// pick whichever reads better at the use site. Mirrors fundsp's
-/// `prelude` / `prelude32`.
-pub mod prelude32 {
-    pub use super::prelude_impl::*;
-    pub use truce_core::editor::PluginContextReadF32 as _;
-    pub use truce_gui::PluginLogic;
-    pub use truce_params::FloatParamReadF32 as _;
-    /// Audio sample type for this prelude.
-    pub type Sample = f32;
-    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`.
+// Stamps a prelude module from one template — all four preludes
+// (default / 32 / 64 / 64m) only differ in:
+//   - `$sample` — the buffer type (`f32` / `f64`)
+//   - `$leaf`   — which `PluginLogic` leaf trait to alias as
+//                  `PluginLogic` in the user's scope
+//   - `$float_read` / `$ctx_read` — which precision-routed read
+//                  traits to bring in via `as _`
+//
+// Keeping the bodies in one place means a future addition (new
+// extension trait, additional re-export) lands once instead of
+// four times.
+macro_rules! define_prelude {
+    (
+        $(#[$attr:meta])*
+        $name:ident, sample = $sample:ty, leaf = $leaf:ident,
+        float_read = $float_read:ident, ctx_read = $ctx_read:ident
+    ) => {
+        $(#[$attr])*
+        pub mod $name {
+            pub use super::prelude_impl::*;
+            pub use truce_core::editor::$ctx_read as _;
+            /// User-facing leaf trait. The prelude renames the
+            /// precision-pinned leaf to `PluginLogic` so plugin
+            /// authors write the same `impl PluginLogic for X { ... }`
+            /// header regardless of which prelude they imported.
+            pub use truce_gui::$leaf as PluginLogic;
+            pub use truce_params::$float_read as _;
+            /// Audio sample type for this prelude.
+            pub type Sample = $sample;
+            /// `AudioBuffer` with `S` defaulted to this prelude's
+            /// `Sample`. The defaulted type parameter (stable since
+            /// Rust 1.27) lets plugin code use the precision-pinned
+            /// shorthand `&mut AudioBuffer` *and* still override it
+            /// explicitly when some piece of code needs a different
+            /// precision in the same file (e.g., a helper that
+            /// processes both `AudioBuffer<f32>` and
+            /// `AudioBuffer<f64>`). `S` only defaults when the
+            /// type-arg list is empty.
+            pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
+        }
+    };
+}
+
+define_prelude! {
+    /// Default prelude. Same shape as [`prelude32`] — `f32` audio
+    /// path. Use whichever name reads better at the import site.
+    prelude, sample = f32, leaf = PluginLogic,
+    float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
+}
+
+define_prelude! {
+    /// `f32`-flavoured prelude. `param.read()` resolves to `f32`
+    /// via [`FloatParamReadF32`](truce_params::FloatParamReadF32);
+    /// the audio buffer is `f32` (the host wire format for nearly
+    /// every plugin format). Mirrors fundsp's `prelude32`.
+    prelude32, sample = f32, leaf = PluginLogic,
+    float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
+}
+
+define_prelude! {
+    /// `f64`-flavoured prelude. The audio buffer is `f64` end-to-end
+    /// (high-order biquads, oscillator phase accumulators,
+    /// long-running cumulative state where 24-bit f32 precision
+    /// shows up audibly). The format wrapper widens the host's
+    /// audio buffer to `f64` at the block boundary and narrows on
+    /// the way out.
     ///
-    /// The defaulted type parameter (stable since Rust 1.27) lets
-    /// plugin code use the precision-pinned shorthand
-    /// `&mut AudioBuffer` *and* still override it explicitly when
-    /// some piece of code needs a different precision in the same
-    /// file (e.g., a helper that processes both `AudioBuffer<f32>`
-    /// and `AudioBuffer<f64>`). `S` only defaults when the type-arg
-    /// list is empty.
-    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
+    /// **Don't import both `prelude` and `prelude64` in the same
+    /// file** — the two `read` / `value` / `current` traits will
+    /// collide on method dispatch. That collision is the right
+    /// error if the file hasn't committed to a precision.
+    prelude64, sample = f64, leaf = PluginLogic64,
+    float_read = FloatParamReadF64, ctx_read = PluginContextReadF64
 }
 
-/// `f64`-flavoured prelude. Re-exports every symbol from [`prelude`]
-/// plus the [`FloatParamReadF64`](truce_params::FloatParamReadF64)
-/// extension trait. Use this when the audio path is `f64` end-to-end
-/// (high-order biquads, oscillator phase accumulators, long-running
-/// cumulative state where 24-bit f32 precision shows up audibly).
-///
-/// The format wrapper widens the host's audio buffer to `f64` at
-/// the block boundary and narrows on the way out. Pure-`f32`
-/// plugins under `prelude32` keep the zero-copy fast path. Mixed
-/// precision (per-value `to_f32` / `to_f64`) is fully supported
-/// under either prelude.
-///
-/// **Don't import both `prelude` and `prelude64` in the same file**
-/// — the two `read` / `value` / `current` traits will collide on
-/// method dispatch. That collision is the right error if the file
-/// hasn't committed to a precision.
-pub mod prelude64 {
-    pub use super::prelude_impl::*;
-    pub use truce_core::editor::PluginContextReadF64 as _;
-    /// User-facing leaf trait. Aliased from `PluginLogic64` so plugin
-    /// authors write the same `impl PluginLogic for Synth { ... }`
-    /// header regardless of which prelude they imported.
-    pub use truce_gui::PluginLogic64 as PluginLogic;
-    pub use truce_params::FloatParamReadF64 as _;
-    /// Audio sample type for this prelude.
-    pub type Sample = f64;
-    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`
-    /// (`f64`). Plugin code writes `&mut AudioBuffer` for the
-    /// common case and can still spell out `AudioBuffer<f32>` (or
-    /// any other precision) when interop demands it.
-    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
-}
-
-/// Mixed-precision prelude (`m` for "mixed"). The audio buffer
-/// stays at host wire precision (`f32` — no wrapper-boundary widening
-/// cost) but `param.read()` returns `f64` so intermediary math
-/// (filter coefficients, phase accumulators, long-tail feedback)
-/// runs at `f64` precision.
-///
-/// Plugin DSP under this prelude writes the narrowing cast at the
-/// buffer-write site:
-///
-/// ```ignore
-/// use truce::prelude64m::*;
-/// use truce_core::Float; // brings `.to_f32()` into scope
-///
-/// let cutoff = self.params.cutoff.read(); // f64
-/// let gain   = self.params.gain.read();   // f64
-/// // ... f64 math ...
-/// out[i] = (sample * gain).to_f32();      // narrow once at the edge
-/// ```
-///
-/// Trade vs [`prelude64`]: you skip the wrapper's per-block widen +
-/// narrow memcpy at the cost of writing `.to_f32()` on the way out.
-/// Pick this when the wrapper boundary cost actually shows up in
-/// the profiler (very high channel counts, very small blocks);
-/// otherwise [`prelude64`] is the cleaner choice.
-pub mod prelude64m {
-    pub use super::prelude_impl::*;
-    // `prelude64m` keeps audio buffers at `f32` (host wire) but reads
-    // params at `f64` for stable internal DSP math. The editor-side
-    // `get_param` follows the param-read precision — the GUI is the
-    // editor caller, but plugin code that reaches into a
-    // `PluginContext` from a build-helper expects the same precision
-    // its `param.read()` calls return.
-    pub use truce_core::editor::PluginContextReadF64 as _;
-    // Audio buffer stays `f32`, so the f32-pinned leaf trait is the
-    // right choice — `param.read()` precision is independent of which
-    // leaf the user impls.
-    pub use truce_gui::PluginLogic;
-    pub use truce_params::FloatParamReadF64 as _;
-    /// Audio sample type for this prelude — `f32` (host wire),
-    /// despite param reads being `f64`.
-    pub type Sample = f32;
-    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`
-    /// (`f32`, matching the host wire). Override per-call when a
-    /// helper needs another precision.
-    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
-}
-
-/// Default prelude. Alias for [`prelude32`] — `f32` audio path. Use
-/// whichever name reads better at the import site.
-pub mod prelude {
-    pub use super::prelude_impl::*;
-    pub use truce_core::editor::PluginContextReadF32 as _;
-    pub use truce_gui::PluginLogic;
-    pub use truce_params::FloatParamReadF32 as _;
-    /// Audio sample type for this prelude.
-    pub type Sample = f32;
-    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`.
-    /// Plugin code writes `&mut AudioBuffer` for the common case;
-    /// `AudioBuffer<f64>` (or any other) still works when needed.
-    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
+define_prelude! {
+    /// Mixed-precision prelude (`m` for "mixed"). The audio buffer
+    /// stays at host wire precision (`f32` — no wrapper-boundary
+    /// widening cost) but `param.read()` returns `f64` so
+    /// intermediary math (filter coefficients, phase accumulators,
+    /// long-tail feedback) runs at `f64` precision.
+    ///
+    /// Plugin DSP under this prelude writes the narrowing cast at
+    /// the buffer-write site:
+    ///
+    /// ```ignore
+    /// use truce::prelude64m::*;
+    /// use truce_core::Float; // brings `.to_f32()` into scope
+    ///
+    /// let cutoff = self.params.cutoff.read(); // f64
+    /// let gain   = self.params.gain.read();   // f64
+    /// // ... f64 math ...
+    /// out[i] = (sample * gain).to_f32();      // narrow once at the edge
+    /// ```
+    ///
+    /// Trade vs [`prelude64`]: you skip the wrapper's per-block
+    /// widen + narrow memcpy at the cost of writing `.to_f32()` on
+    /// the way out. Pick this when the wrapper boundary cost
+    /// actually shows up in the profiler (very high channel counts,
+    /// very small blocks); otherwise [`prelude64`] is the cleaner
+    /// choice.
+    prelude64m, sample = f32, leaf = PluginLogic,
+    float_read = FloatParamReadF64, ctx_read = PluginContextReadF64
 }

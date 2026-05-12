@@ -110,11 +110,8 @@ impl Float for f32 {
         v
     }
 
-    // The historical `truce_utils::cast::sample_f32` / `param_f32`
-    // helpers folded their NaN debug-assert into the cast site; that
-    // guard now lives here. Plugins narrowing `f64 → f32` (param
-    // values, filter coefficients, host-side display) get the same
-    // check via this trait method.
+    // Plugins narrowing `f64 → f32` (param values, filter
+    // coefficients, host-side display) get the NaN guard here.
     #[inline]
     #[allow(clippy::cast_possible_truncation)]
     fn from_f64(v: f64) -> Self {

@@ -3,7 +3,7 @@
 //! This crate is the plugin author's entry point. The single
 //! `impl PluginLogic for MyPlugin { ... }` block covers both
 //! audio-thread DSP and main-thread GUI, with sample precision
-//! routed through the prelude (see [`truce::prelude`] /
+//! routed through the prelude (see `truce::prelude` /
 //! `truce::prelude64`).
 //!
 //! `truce-plugin` depends on `truce-gui-types` (light: layout,
@@ -20,8 +20,8 @@
 //! - [`PluginLogicCore`] — generic-over-`S` trait the format wrappers consume.
 //!
 //! The two leaf traits are stamped from one
-//! [`plugin_logic_leaf_trait`](crate::plugin_logic_leaf_trait) macro
-//! definition so their method surfaces stay in lock-step. Each leaf
+//! `plugin_logic_leaf_trait!` `macro_rules!` definition (further
+//! down this file) so their method surfaces stay in lock-step. Each leaf
 //! gets a blanket impl that forwards every method to
 //! `PluginLogicCore<S>` with the matching `S`. Wrappers
 //! (`StaticShell`, `HotShell`, the format crates) bind on

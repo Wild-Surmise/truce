@@ -69,15 +69,6 @@ pub const fn size_of_u32<T>() -> u32 {
     n as u32
 }
 
-// `param_f32` / `sample_f32` historically lived here as separate
-// helpers that both narrowed `f64 → f32` with a NaN debug-assert.
-// The NaN guard now lives on `truce_core::Float::from_f64` (and
-// `Float::to_f32`), so callers narrow via `f32::from_f64(v)` (param
-// values, filter coefficients) or `s.to_f32()` (audio samples held
-// in a `Sample`-typed value). The named functions added no value
-// over the trait method beyond domain hinting in the call site,
-// which the surrounding code already provides via context.
-
 /// Convert a host-supplied sample-position `f64` to the `i64` truce's
 /// `TransportInfo::position_samples` carries.
 ///
@@ -287,10 +278,6 @@ mod tests {
         assert_eq!(discrete_index(-0.5, 4), 0);
         assert_eq!(discrete_index(2.0, 4), 3);
     }
-
-    // The historical `param_f32` / `sample_f32` round-trip tests now
-    // live alongside the trait method that replaces them, in
-    // `truce_core::sample::tests`.
 
     #[test]
     fn sample_pos_i64_basic() {

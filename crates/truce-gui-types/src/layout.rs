@@ -668,7 +668,7 @@ impl GridLayout {
     /// full grid width.
     ///
     /// ```ignore
-    /// use truce_gui::layout::{GridLayout, HeaderTitles};
+    /// use truce_gui_types::layout::{GridLayout, HeaderTitles};
     /// GridLayout::build(sections).with_titles(HeaderTitles::pair("EQ", "v0.1"))
     /// ```
     #[must_use]
