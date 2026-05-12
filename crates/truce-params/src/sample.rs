@@ -9,7 +9,7 @@
 //! between precisions per value:
 //!
 //! ```
-//! use truce_core::sample::Sample;
+//! use truce_params::sample::Float;
 //! let v_f32: f32 = 0.5;
 //! let v_f64: f64 = v_f32.to_f64();   // widen
 //! let back:  f32 = f32::from_f64(v_f64); // narrow
