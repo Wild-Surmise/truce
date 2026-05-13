@@ -102,8 +102,22 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // The standalone exe is parentless — without an embedded
         // application manifest declaring per-monitor v2 DPI awareness,
         // the editor renders blurry on non-100% Windows displays.
+        // Per-plugin `windows_icon` (if set) gets baked into the
+        // staged .exe so Explorer / Start-Menu shows the plugin's icon
+        // for the dev-run host too — keeps `cargo truce run` visually
+        // consistent with the eventual installed artefact.
         #[cfg(target_os = "windows")]
-        crate::windows_manifest::embed_dpi_manifest(&staged)?;
+        {
+            crate::windows_manifest::embed_dpi_manifest(&staged)?;
+            let icon = plugin
+                .windows_icon
+                .as_ref()
+                .map(|s| project_root().join(s))
+                .filter(|p| p.exists());
+            if let Some(icon) = &icon {
+                crate::windows_manifest::embed_icon(&staged, icon)?;
+            }
+        }
     }
 
     if !staged.exists() {

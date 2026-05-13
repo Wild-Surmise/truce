@@ -24,6 +24,9 @@ au_manufacturer = "Trce"
 [macos.packaging]
 notarize = true
 
+[windows.packaging]
+installer_icon = "static/truce-minimal.ico"
+
 # Each [[plugin]] entry defines a plugin to build and install.
 # The crate must support --features au (or whichever formats you declare).
 # `cargo truce new <name>` scaffolds a new plugin under plugins/<name>/;
@@ -54,6 +57,7 @@ au3_subtype = "TGn3"
 au_tag = "Effects"
 aax_category = "Dynamics"
 au3_name = "Truce Gain (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Synth"
@@ -64,6 +68,7 @@ fourcc = "TSyn"
 au3_subtype = "TSn3"
 au_tag = "Synthesizer"
 au3_name = "Truce Synth (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce EQ"
@@ -75,6 +80,7 @@ au3_subtype = "TEq4"
 au_tag = "EQ"
 aax_category = "EQ"
 au3_name = "Truce EQ (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Transpose"
@@ -88,6 +94,7 @@ au_tag = "MIDI"
 # AAX_ePlugInCategory_MIDIEffect by truce-aax so they show up in Pro
 # Tools' MIDI plug-ins menu regardless of this field.
 au3_name = "Truce Transpose (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Gain Egui"
@@ -99,6 +106,7 @@ au3_subtype = "TGe3"
 au_tag = "Effects"
 aax_category = "Dynamics"
 au3_name = "Truce Gain Egui (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Arpeggio"
@@ -110,6 +118,7 @@ au3_subtype = "TAr3"
 au_tag = "MIDI"
 # See note on transpose above re: AAX MIDI category override.
 au3_name = "Truce Arpeggio (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Gain Iced"
@@ -121,6 +130,7 @@ au3_subtype = "TGi3"
 au_tag = "Effects"
 aax_category = "Dynamics"
 au3_name = "Truce Gain Iced (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Gain Slint"
@@ -132,6 +142,7 @@ au3_subtype = "TGs3"
 au_tag = "Effects"
 aax_category = "Dynamics"
 au3_name = "Truce Gain Slint (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce Tremolo"
@@ -143,6 +154,7 @@ au3_subtype = "TTM3"
 au_tag = "Effects"
 aax_category = "Modulation"
 au3_name = "Truce Tremolo (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 [[plugin]]
 name = "Truce State"
@@ -154,6 +166,7 @@ au3_subtype = "TSt3"
 au_tag = "Effects"
 aax_category = "Other"
 au3_name = "Truce State (AUv3)"
+windows_icon = "static/truce-minimal.ico"
 
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.

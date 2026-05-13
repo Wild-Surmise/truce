@@ -144,6 +144,17 @@ pub(crate) struct PluginDef {
     #[serde(default = "default_au_tag")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_tag: String,
+    /// Per-plugin Windows app icon (`.ico`, path relative to workspace
+    /// root). Embedded as `RT_GROUP_ICON` in the standalone `.exe`.
+    /// macOS (`.icns`) and Linux icon support land as separate fields
+    /// when those branches arrive — file formats don't survive a
+    /// single cross-OS slot. Distinct from `[windows.packaging]
+    /// installer_icon` (Inno-wizard chrome): a vendor with one
+    /// installer-window logo can still ship different per-product app
+    /// icons.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) windows_icon: Option<String>,
 }
 
 impl std::ops::Deref for PluginDef {

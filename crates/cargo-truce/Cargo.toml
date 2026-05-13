@@ -39,6 +39,13 @@ truce-utils = { workspace = true }
 [dependencies.libloading]
 version = "0.9"
 
+# Post-link icon embed for the standalone host .exe lives in
+# `windows_manifest::embed_icon` and calls `BeginUpdateResource` /
+# `UpdateResource` / `EndUpdateResource` directly — same shell-out-free
+# pattern as the mt.exe-driven manifest embed sitting next to it.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_LibraryLoader"] }
+
 [dev-dependencies]
 hound = "3"
 

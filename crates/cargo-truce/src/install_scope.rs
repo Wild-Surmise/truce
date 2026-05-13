@@ -22,7 +22,7 @@ pub(crate) enum InstallScope {
 impl InstallScope {
     /// Default install scope for the current OS when no CLI flag is
     /// set. User on every platform: avoids the password prompt in
-    /// the dev loop and matches indie-installer convention.
+    /// the dev loop.
     pub(crate) fn os_default() -> Self {
         Self::User
     }
@@ -76,7 +76,6 @@ impl std::str::FromStr for PkgScope {
 impl PkgScope {
     /// `cargo truce package` default when no flag and no
     /// `[packaging] preferred_scope` is set: ask the end user.
-    /// Matches indie-installer convention (u-he, Valhalla, `FabFilter`).
     pub(crate) fn os_default() -> Self {
         Self::Ask
     }

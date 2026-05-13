@@ -693,6 +693,7 @@ dependencies = [
  "truce-build",
  "truce-shim-types",
  "truce-utils",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -301,6 +301,7 @@ fn archs_label(archs: &[TargetArch]) -> String {
     archs.iter().map(|a| a.tag()).collect::<Vec<_>>().join("+")
 }
 
+
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -741,9 +742,11 @@ fn stage_clap(
 
 /// Stage the standalone host `.exe` for one architecture. Build step
 /// upstream produced `target/{triple}/release/{bin_stem}.exe`; we copy
-/// it to `<staging>/standalone/<arch>/{bin_stem}.exe` and embed the
-/// per-monitor v2 DPI manifest so the editor renders crisp on
-/// non-100% Windows displays. Returned path is fed to signtool.
+/// it to `<staging>/standalone/<arch>/{bin_stem}.exe`, embed the
+/// per-monitor v2 DPI manifest (crisp editor on non-100% displays),
+/// and — if the plugin sets `windows_icon` and the path resolves on
+/// disk — embed it as the standalone's `RT_GROUP_ICON`. Returned path
+/// is fed to signtool.
 fn stage_standalone(
     root: &Path,
     p: &PluginDef,
@@ -772,7 +775,20 @@ fn stage_standalone(
     let dst = dst_dir.join(&exe_name);
     fs::copy(&built, &dst)?;
     crate::windows_manifest::embed_dpi_manifest(&dst)?;
+    if let Some(icon) = plugin_windows_icon(p, root) {
+        crate::windows_manifest::embed_icon(&dst, &icon)?;
+    }
     Ok(dst)
+}
+
+/// Resolve `[[plugin]].windows_icon` to an absolute on-disk path.
+/// Missing file → `None` (non-fatal: a developer mid-rebrand
+/// shouldn't get a packaging error from a stale path).
+fn plugin_windows_icon(p: &PluginDef, root: &Path) -> Option<PathBuf> {
+    p.windows_icon
+        .as_ref()
+        .map(|s| root.join(s))
+        .filter(|p| p.exists())
 }
 
 fn stage_vst3(
@@ -1252,14 +1268,12 @@ fn render_iss(
         let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
     }
     // `{autopf}` resolves to `{commonpf}` in admin install mode and
-    // `{userpf}` (`%LOCALAPPDATA%\Programs`) in non-admin mode, so the
-    // AppId-tracked install dir lands somewhere the installer can write
-    // without elevation when the end user picks "for me only". `--system`
-    // hard-locks to admin so `{commonpf}` is fine.
-    let pf_const = match scope {
-        PkgScope::System => "{commonpf}",
-        PkgScope::User | PkgScope::Ask => "{autopf}",
-    };
+    // `{userpf}` (`%LOCALAPPDATA%\Programs`) in non-admin mode — right
+    // for `--ask`. `--user` pins to `{userpf}` directly: AAX/VST2 in
+    // the same package force `PrivilegesRequired=admin`, which would
+    // otherwise re-resolve `{autopf}` to `{commonpf}` and land the
+    // standalone .exe system-wide despite `--user`.
+    let pf_const = scoped_pf(scope);
     let _ = write!(
         setup,
         "DefaultDirName={}\\{}\\{}\r\n",
@@ -1348,7 +1362,7 @@ fn render_iss(
     if formats.contains(&PkgFormat::Standalone) {
         let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
             .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
-        write_icons_section(&mut setup, &iss_escape(&p.name), &bin_stem, "standalone");
+        write_icons_section(&mut setup, &iss_escape(&p.name), &bin_stem, "standalone", scope);
     }
 
     // [UninstallDelete] — per-format (bundle dirs get wholesale cleanup).
@@ -1373,15 +1387,20 @@ fn render_iss(
 ///              whole installer escalates once for them while
 ///              CLAP / VST3 still target user paths.
 ///   --system → `admin`. UAC on launch, lands under system paths.
-///   --ask    → `admin` + `PrivilegesRequiredOverridesAllowed=...`
-///              shows the "Choose installation mode" page and
-///              relaunches elevated only if the user picks all-users.
+///   --ask    → `lowest` + `PrivilegesRequiredOverridesAllowed=...`
+///              shows the "Select Setup Install Mode" page with
+///              "Install just for me" pre-selected. UAC fires only if
+///              the end user explicitly picks all-users. Using
+///              `lowest` instead of `admin` here also dodges
+///              Windows' installer-elevation heuristics that have
+///              been observed to suppress the dialog on larger
+///              installers despite an `asInvoker` manifest.
 ///
 /// Mixing admin elevation with `{usercf}` (per-user CLAP/VST3 dest)
 /// is intentional under `--user` with system-only payloads — the
 /// elevation hosts the AAX/VST2 install; CLAP/VST3 still go to
 /// user paths. Suppress ISCC's `UsedUserAreasWarning` when that mix
-/// or the `--ask` admin-default + user-area combination occurs.
+/// or the `--ask` lowest-default + user-area combination occurs.
 fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[PkgFormat]) {
     let has_system_only_format = formats
         .iter()
@@ -1394,7 +1413,7 @@ fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[Pkg
         PkgScope::User => setup.push_str("PrivilegesRequired=lowest\r\n"),
         PkgScope::System => setup.push_str("PrivilegesRequired=admin\r\n"),
         PkgScope::Ask => {
-            setup.push_str("PrivilegesRequired=admin\r\n");
+            setup.push_str("PrivilegesRequired=lowest\r\n");
             setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
             setup.push_str("UsedUserAreasWarning=no\r\n");
         }
@@ -1406,11 +1425,18 @@ fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[Pkg
 /// component name (`"standalone"` per-plugin, `"<plugin>\standalone"`
 /// inside a suite installer) so the shortcut is gated to the same
 /// custom-install slot as the `.exe`.
-fn write_icons_section(setup: &mut String, plugin_name: &str, bin_stem: &str, component: &str) {
+fn write_icons_section(
+    setup: &mut String,
+    plugin_name: &str,
+    bin_stem: &str,
+    component: &str,
+    scope: PkgScope,
+) {
+    let programs = scoped_programs(scope);
     setup.push_str("[Icons]\r\n");
     let _ = write!(
         setup,
-        "Name: \"{{autoprograms}}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
+        "Name: \"{programs}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
          Components: {component}\r\n\r\n"
     );
 }
@@ -1582,11 +1608,12 @@ fn render_suite_iss(
                 )
             })
             .collect();
+        let programs = scoped_programs(scope);
         setup.push_str("[Icons]\r\n");
         for (plugin_name, bin_stem, component) in &prefixed_components {
             let _ = write!(
                 setup,
-                "Name: \"{{autoprograms}}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
+                "Name: \"{programs}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
                  Components: {component}\r\n"
             );
         }
@@ -1669,10 +1696,11 @@ fn write_suite_setup_section(
     if !publisher_url.is_empty() {
         let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
     }
-    let pf_const = match scope {
-        PkgScope::System => "{commonpf}",
-        PkgScope::User | PkgScope::Ask => "{autopf}",
-    };
+    // Same `{userpf}`/`{autopf}` matrix as per-plugin — see
+    // `render_iss` for the rationale: `--user` mixed with AAX/VST2
+    // forces admin elevation, and `{autopf}` would silently relocate
+    // the suite's standalone .exes to `{commonpf}` in that mode.
+    let pf_const = scoped_pf(scope);
     let _ = write!(
         setup,
         "DefaultDirName={}\\{}\\{}\r\n",
@@ -2135,6 +2163,31 @@ fn scoped_cf(scope: PkgScope) -> &'static str {
         PkgScope::System => "{commoncf}",
         PkgScope::User => "{usercf}",
         PkgScope::Ask => "{autocf}",
+    }
+}
+
+/// Inno Setup "program files" constant for the requested scope. Used
+/// for `DefaultDirName` (the standalone .exe lives there). Same logic
+/// as `scoped_cf`: pin `--user` and `--system` to fixed constants so
+/// AAX/VST2-driven admin escalation doesn't silently relocate the
+/// install dir to `{commonpf}`.
+fn scoped_pf(scope: PkgScope) -> &'static str {
+    match scope {
+        PkgScope::System => "{commonpf}",
+        PkgScope::User => "{userpf}",
+        PkgScope::Ask => "{autopf}",
+    }
+}
+
+/// Inno Setup Start-Menu Programs constant for the requested scope.
+/// Mirrors `scoped_pf` — under `--user` the shortcut belongs in the
+/// installing user's Start Menu, even when the installer is elevated
+/// to drop AAX/VST2 into system paths.
+fn scoped_programs(scope: PkgScope) -> &'static str {
+    match scope {
+        PkgScope::System => "{commonprograms}",
+        PkgScope::User => "{userprograms}",
+        PkgScope::Ask => "{autoprograms}",
     }
 }
 
