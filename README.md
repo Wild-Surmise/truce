@@ -12,8 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://truce.audio/"><img src="https://img.shields.io/badge/status-preview-orange" alt="Status"></a>
-  <a href="https://github.com/truce-audio/truce/releases/latest"><img src="https://img.shields.io/github/v/tag/truce-audio/truce?label=latest&logo=git&logoColor=white&sort=semver" alt="Latest"></a>
+  <a href="https://truce.audio/"><img src="https://img.shields.io/badge/status-stable-green" alt="Status"></a>
   <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
 </p>
 
