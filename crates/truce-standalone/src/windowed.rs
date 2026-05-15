@@ -92,7 +92,7 @@ where
     let (lw, lh) = editor.size();
 
     let window_opts = WindowOpenOptions {
-        title: format!("{} — standalone", P::info().name),
+        title: P::info().name.to_string(),
         size: baseview::Size::new(f64::from(lw), f64::from(lh)),
         scale: WindowScalePolicy::SystemScaleFactor,
     };
