@@ -778,24 +778,14 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
 fn install_ios(plugin_filter: Option<&str>, target: au_ios::IosTarget) -> Res {
     let root = crate::project_root();
     let config = crate::load_config()?;
-    // Mirror the rest of cargo-truce's default-plugin behaviour:
-    // single-plugin workspace → that plugin; multi-plugin → require
-    // an explicit `-p`.
-    let crate_name = if let Some(s) = plugin_filter {
-        s.to_string()
-    } else if config.plugin.len() == 1 {
-        config.plugin[0].crate_name.clone()
-    } else {
-        return Err(
-            "iOS install needs `-p <crate>` when the workspace has multiple plugins.".into(),
-        );
-    };
-    let p = config
-        .plugin
-        .iter()
-        .find(|p| p.crate_name == crate_name || p.bundle_id == crate_name)
-        .ok_or_else(|| -> crate::BoxErr {
-            format!("No plugin with crate name or bundle id '{crate_name}'.").into()
-        })?;
-    au_ios::install_one(&root, p, target)
+    // Match the per-plugin loop the other formats use: `-p <crate>`
+    // narrows to one entry; absence installs every `[[plugin]]` in
+    // `truce.toml`. Each iOS install builds a fresh container `.app`
+    // + embedded `.appex` so iterating is linear in plugin count,
+    // but that's the same trade the other formats make.
+    let plugins = super::pick_plugins(&config, plugin_filter)?;
+    for p in plugins {
+        au_ios::install_one(&root, p, target)?;
+    }
+    Ok(())
 }
