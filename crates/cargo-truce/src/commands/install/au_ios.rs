@@ -73,6 +73,32 @@ impl IosTarget {
 /// `devicectl`) on `$PATH`, plus `TRUCE_IOS_TEAM_ID` and
 /// `TRUCE_IOS_PROVISIONING_PROFILE` in `.cargo/config.toml [env]`.
 pub(crate) fn install_one(root: &Path, p: &PluginDef, target: IosTarget) -> Res {
+    install_one_inner(root, p, target, None)
+}
+
+/// Same as `install_one`, but lets the caller override
+/// `UISupportedInterfaceOrientations` for the container. The
+/// screenshot pipeline passes a single-element slice so iOS forces
+/// the simulator to rotate to a canonical orientation when the
+/// container launches — without that, the sim inherits whatever
+/// rotation the previous test left it as, and portrait-supporting
+/// plug-ins can render in landscape (and vice versa), producing
+/// non-deterministic baseline dimensions.
+pub(crate) fn install_one_screenshot(
+    root: &Path,
+    p: &PluginDef,
+    target: IosTarget,
+    orientations_override: &[String],
+) -> Res {
+    install_one_inner(root, p, target, Some(orientations_override))
+}
+
+fn install_one_inner(
+    root: &Path,
+    p: &PluginDef,
+    target: IosTarget,
+    orientations_override: Option<&[String]>,
+) -> Res {
     let cfg = crate::load_config()?;
     // Validate device-install prerequisites before kicking off a
     // multi-minute build pipeline. Discovering at codesign time
@@ -99,7 +125,7 @@ pub(crate) fn install_one(root: &Path, p: &PluginDef, target: IosTarget) -> Res 
                 .into());
         }
     }
-    let bundle = build_bundle(root, p, &cfg, target)?;
+    let bundle = build_bundle(root, p, &cfg, target, orientations_override)?;
     // Full reverse-DNS identifier — the value installd records and
     // `simctl launch` / `devicectl process launch` accept. Must match
     // the CFBundleIdentifier written into the .app's Info.plist
@@ -128,6 +154,7 @@ pub(crate) fn build_bundle(
     p: &PluginDef,
     cfg: &crate::Config,
     target: IosTarget,
+    orientations_override: Option<&[String]>,
 ) -> Result<PathBuf, crate::BoxErr> {
     let out = truce_build::target_dir(root)
         .join("ios")
@@ -400,12 +427,15 @@ pub(crate) fn build_bundle(
     if !app_status.success() {
         return Err(format!("swiftc app exited {app_status}").into());
     }
-    let orientation_tokens: Vec<String> = p.ios_orientations.clone().unwrap_or_else(|| {
-        DEFAULT_IOS_ORIENTATIONS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect()
-    });
+    let orientation_tokens: Vec<String> = orientations_override
+        .map(<[String]>::to_vec)
+        .or_else(|| p.ios_orientations.clone())
+        .unwrap_or_else(|| {
+            DEFAULT_IOS_ORIENTATIONS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        });
     let orientations_xml = render_orientation_array(&orientation_tokens)?;
     fs_ctx::write(
         app_dir.join("Info.plist"),
@@ -703,7 +733,7 @@ pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, c
 /// distribution step, not a build step.
 pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
     let cfg = crate::load_config()?;
-    let app_dir = build_bundle(root, p, &cfg, IosTarget::Device)?;
+    let app_dir = build_bundle(root, p, &cfg, IosTarget::Device, None)?;
     let out_dir = truce_build::target_dir(root).join("ios/ipa");
     let _ = std::fs::remove_dir_all(&out_dir);
     fs_ctx::create_dir_all(&out_dir)?;

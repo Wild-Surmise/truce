@@ -46,11 +46,17 @@ env:
   # the `cargo truce screenshot --ios [--crop-mode container]` pipeline.
   # The iOS bake skips `truce-example-gain-iced`: iced's iOS backend
   # is broken upstream and its container app never wires the editor.
+  # `cargo truce screenshot --ios` locks
+  # `UISupportedInterfaceOrientations` in the temporary container's
+  # Info.plist to a single canonical orientation (the plugin's first
+  # listed, defaulting to portrait), which forces iOS to rotate the
+  # sim when the container launches. Loop order doesn't affect the
+  # captured dimensions — kept transpose at the end as a secondary
+  # safeguard. The desktop bake jobs don't care about order.
   EXAMPLE_CRATES: >-
     truce-example-gain
     truce-example-synth
     truce-example-eq
-    truce-example-transpose
     truce-example-gain-egui
     truce-example-arpeggio
     truce-example-gain-iced
@@ -59,6 +65,7 @@ env:
     truce-example-state
     truce-example-fundsp-reverb-worker
     truce-example-fundsp-reverb-simple
+    truce-example-transpose
 
 jobs:
   linux:

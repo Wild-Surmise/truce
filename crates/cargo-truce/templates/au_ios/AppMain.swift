@@ -124,6 +124,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// can re-parent chrome views across rotations without having
     /// to walk the sidebar's subview list.
     var chromeStack: UIStackView?
+    /// Flexible spacer that sits between the Play button and the
+    /// status label in the landscape sidebar so the button stays
+    /// pinned near the top (out of reach of the dynamic island
+    /// which overlays the sidebar on the trailing side in
+    /// landscape-left) and the status floats to the bottom. Held
+    /// across rotations so each landscape entry re-uses the same
+    /// spacer view instead of accumulating stray ones in the
+    /// stack on each placeChromeInSidebar call.
+    var sidebarChromeSpacer: UIView?
     /// Flips true once the editor-block write at the bottom of
     /// `application(_:didFinishLaunchingWithOptions:)` runs. The
     /// plug-in-independent fallback (which writes only the safe-
@@ -1585,17 +1594,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// their common-ancestor with the chrome view). Idempotent —
     /// safe to call on every landscape entry, including after
     /// `placeChromeInRoot` moved the views back.
+    ///
+    /// Stack order top-to-bottom: title bar, Play button, spacer
+    /// (expands to fill), status label. The button sits high so
+    /// the trailing-side dynamic island that overlays the sidebar
+    /// in landscape-left orientation can't clip it; the status
+    /// label drops to the bottom near the home indicator, where
+    /// it's least visually noisy.
     func placeChromeInSidebar() {
         guard let stack = self.chromeStack else { return }
         if let topBar = self.topBar {
             topBar.removeFromSuperview()
             topBar.isHidden = false
             stack.addArrangedSubview(topBar)
-        }
-        if let status = self.auStatusLabel {
-            status.removeFromSuperview()
-            status.isHidden = false
-            stack.addArrangedSubview(status)
         }
         if let btn = self.auTestButton {
             btn.removeFromSuperview()
@@ -1606,6 +1617,30 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             // it survives `removeFromSuperview` and re-parenting.
             // Adding another one per rotation would pile redundant
             // constraints onto the same anchor.
+        }
+        // Flexible spacer: built lazily on first landscape entry,
+        // re-used on every subsequent entry (stored on the
+        // delegate so the stack doesn't accumulate stray spacers
+        // across portrait → landscape cycles). Low content-hugging
+        // priority lets UIStackView's distribution=.fill stretch
+        // it to absorb whatever vertical room the chrome doesn't
+        // need, parking the status label at the bottom.
+        let spacer: UIView
+        if let existing = self.sidebarChromeSpacer {
+            spacer = existing
+            spacer.removeFromSuperview()
+        } else {
+            let s = UIView()
+            s.translatesAutoresizingMaskIntoConstraints = false
+            s.setContentHuggingPriority(.defaultLow - 1, for: .vertical)
+            self.sidebarChromeSpacer = s
+            spacer = s
+        }
+        stack.addArrangedSubview(spacer)
+        if let status = self.auStatusLabel {
+            status.removeFromSuperview()
+            status.isHidden = false
+            stack.addArrangedSubview(status)
         }
     }
 

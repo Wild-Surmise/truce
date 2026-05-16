@@ -134,24 +134,33 @@ jobs:
       # full set of `_default_ios` + `_container_ios` PNGs as the
       # `baked-screenshots-ios` artifact.
       - name: iOS screenshot smoke (gain default)
+        id: ios_smoke
         run: |
           ./target/debug/cargo-truce screenshot --ios --check \
             --out examples/truce-example-gain/screenshots/gain_default_ios.png \
             -p truce-example-gain
 
-      # Soft diff: run `--check` against every committed container-
-      # mode baseline and let the build keep going on regression.
-      # Failing entries log the per-example pixel-diff count, which
-      # is enough for a reviewer to decide whether the runner image
-      # needs re-baking (download the artifact from
-      # `bake-screenshots.yml` for the same PR, drop into
-      # `examples/`, commit) or whether the new render is a
-      # legitimate regression that warrants attention.
+      # Run `--check` against every committed container-mode
+      # baseline and accumulate failures across the whole loop
+      # before exiting non-zero. Reviewers see the full per-example
+      # diff list rather than the first failure short-circuiting
+      # the run; the final `exit $fail` is what gates CI. Re-bake
+      # via the `bake-screenshots.yml` workflow's `ios` job
+      # (`baked-screenshots-ios` artifact on every PR + manual
+      # dispatch).
       #
       # `truce-example-gain-iced` is skipped: iced's iOS backend is
       # broken upstream and its container app never wires the editor.
+      # `cargo truce screenshot --ios` writes a single-orientation
+      # `UISupportedInterfaceOrientations` into the temporary
+      # container's Info.plist (the plugin's first listed
+      # orientation, defaulting to portrait), which forces iOS to
+      # rotate the sim to that orientation when the container
+      # launches. The loop order therefore doesn't influence the
+      # captured dimensions — kept transpose last anyway as a
+      # secondary safeguard in case the lock ever regresses.
       - name: iOS container screenshots (diff vs baselines)
-        continue-on-error: true
+        id: ios_diff
         run: |
           set +e
           fail=0
@@ -159,14 +168,14 @@ jobs:
               truce-example-gain \
               truce-example-synth \
               truce-example-eq \
-              truce-example-transpose \
               truce-example-gain-egui \
               truce-example-arpeggio \
               truce-example-gain-slint \
               truce-example-tremolo \
               truce-example-state \
               truce-example-fundsp-reverb-worker \
-              truce-example-fundsp-reverb-simple; do
+              truce-example-fundsp-reverb-simple \
+              truce-example-transpose; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
             echo "=== $crate ==="
@@ -177,6 +186,22 @@ jobs:
               -p "$crate" || fail=$((fail + 1))
           done
           echo "container-mode regressions: $fail / 11"
+          exit $fail
+
+      # `--check` writes each freshly-rendered PNG to
+      # `target/screenshots/` regardless of whether the diff passed.
+      # On failure, surface them as an artifact so reviewers can grab
+      # the actual capture, eyeball the diff, and `cp` it over the
+      # baseline if the change was intentional. `if: failure()` keeps
+      # successful runs from uploading 11 redundant PNGs.
+      - name: Upload rendered screenshots (on failure)
+        if: failure() && (steps.ios_diff.outcome == 'failure' || steps.ios_smoke.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-failed-screenshots
+          path: target/screenshots/*_ios.png
+          if-no-files-found: ignore
+          retention-days: 14
 
       # The Swift templates that `cargo truce install --ios` feeds to
       # swiftc live alongside the Rust code. A drift between the

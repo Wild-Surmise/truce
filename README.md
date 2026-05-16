@@ -5,10 +5,11 @@
 </p>
 
 <p align="center">
-  Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
-  AAX, and standalone from a single Rust codebase. Dead simple
-  developer experience: in 5 minutes, you can load your own 
-  plugin in a DAW and test your custom DSP, MIDI, and GUI. 
+  Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3
+  (macOS + iOS), AAX, and standalone from a single Rust codebase.
+  Dead simple developer experience: in 5 minutes, you can load
+  your own plugin in a DAW — desktop or iPad — and test your
+  custom DSP, MIDI, and GUI.
 </p>
 
 <p align="center">
@@ -51,6 +52,8 @@ cargo truce install --vst3       # VST3
 cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
 cargo truce install --lv2        # LV2
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
+cargo truce install --ios        # AU v3 on the booted iOS Simulator
+cargo truce install --ios-device # AU v3 on a tethered iPhone / iPad
 cargo truce install --aax        # AAX (requires AAX SDK)
 
 cargo truce validate             # auval + pluginval + clap-validator on installed plugins
@@ -153,27 +156,31 @@ to your `[features].default` to ship more formats from the same code.
 
 By platform:
 
-| Format | macOS | Windows | Linux |
-|--------|-------|---------|-------|
-| CLAP   | Yes   | Yes     | Yes   |
-| VST3   | Yes   | Yes     | Yes   |
-| VST2   | Yes   | Yes     | Yes   |
-| LV2    | Yes   | Yes     | Yes   |
-| AU v2  | Yes   | —       | —     |
-| AU v3  | Yes   | —       | —     |
-| AAX    | Yes   | Yes     | —     |
+| Format | macOS | Windows | Linux | iOS |
+|--------|-------|---------|-------|-----|
+| CLAP   | Yes   | Yes     | Yes   | —   |
+| VST3   | Yes   | Yes     | Yes   | —   |
+| VST2   | Yes   | Yes     | Yes   | —   |
+| LV2    | Yes   | Yes     | Yes   | —   |
+| AU v2  | Yes   | —       | —     | —   |
+| AU v3  | Yes   | —       | —     | Yes |
+| AAX    | Yes   | Yes     | —     | —   |
 
-AU is macOS-only by design. LV2 is the native Linux format and also
+AU is Apple-only by design — v2 is the legacy macOS-only component,
+v3 ships on both macOS (`.appex` extension) and iOS (`.appex` inside
+a container `.app` for AUM, GarageBand, Logic Pro for iPad, Cubasis,
+BeatMaker 3, Loopy Pro). LV2 is the native Linux format and also
 builds on macOS and Windows — supports audio, MIDI, state, and UI
 (X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). AAX
-requires the Avid AAX SDK and PACE/iLok signing
-for retail Pro Tools releases. VST2 is opt-in on all platforms — see
-note below. See [truce.audio](https://truce.audio/) for host coverage.
+requires the Avid AAX SDK and PACE/iLok signing for retail Pro Tools
+releases. VST2 is opt-in on all platforms — see note below. iOS only
+hosts AU v3 by platform contract; every other format is unviable
+there. See [truce.audio](https://truce.audio/) for host coverage.
 
 ## Features
 
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
-- **Cross-platform** — macOS, Windows, and Linux
+- **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, or raw window handle
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
@@ -194,12 +201,15 @@ testing / shipping / hot-reload reference, per-format gotchas
 ## Requirements
 
 - Rust 1.90+ (`rustup update`).
-- **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
+- **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3 + iOS.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
   development with C++" workload). Rust `x86_64-pc-windows-msvc`
   toolchain is required.
 - **Linux**: X11 + Vulkan development headers and JACK (via the PipeWire
   shim on modern distros). 
+- **iOS**: full Xcode, a booted iOS Simulator (`xcrun simctl boot ...`)
+  for `--ios`, or a paired & trusted device + Apple Developer team ID
+  + `.mobileprovision` for `--ios-device`.
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
 
 ## Acknowledgements

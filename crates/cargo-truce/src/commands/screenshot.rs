@@ -413,10 +413,25 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
         .next()
         .ok_or("no plugin to screenshot")?;
     let root = project_root();
-    crate::commands::install::au_ios::install_one(
+    // Restrict `UISupportedInterfaceOrientations` to one canonical
+    // orientation (the plugin's first listed, or "portrait" by
+    // default). Without this, the sim inherits whatever rotation a
+    // previous launch left it in: a landscape-only plug-in earlier
+    // in a CI loop will leave the sim in landscape, and any
+    // portrait-supporting plug-in launched afterwards will render
+    // in landscape too — making baseline dimensions order-dependent.
+    // Locking the Info.plist forces iOS to rotate the sim to the
+    // canonical orientation on container launch.
+    let canonical_orientation = p
+        .ios_orientations
+        .as_ref()
+        .and_then(|o| o.first().cloned())
+        .unwrap_or_else(|| "portrait".to_string());
+    crate::commands::install::au_ios::install_one_screenshot(
         &root,
         p,
         crate::commands::install::au_ios::IosTarget::Simulator,
+        &[canonical_orientation],
     )?;
     // Full reverse-DNS bundle ID: `{vendor.id}.{bundle_id-suffix}`.
     // simctl looks up the installed app by its CFBundleIdentifier,
