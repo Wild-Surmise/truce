@@ -235,13 +235,18 @@ pub(crate) struct PluginDef {
     pub(crate) ios_orientations: Option<Vec<String>>,
     /// Scale the embedded editor uniformly to fit the
     /// container's hero region while preserving aspect ratio.
-    /// Never up-scales above 1.0. Useful for plug-ins shipping a
-    /// single desktop-sized editor that would otherwise overflow
-    /// the iPhone screen. Default `false` (verbatim natural-pixel
-    /// layout).
-    #[serde(default)]
+    /// Never up-scales above 1.0. Default `true` — desktop-sized
+    /// editors are the common case and overflow the iPhone screen
+    /// without it. Opt out (`false`) for plug-ins whose editor is
+    /// already iPhone-sized or that ship multiple per-orientation
+    /// layouts and want verbatim natural-pixel rendering.
+    #[serde(default = "default_true")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_scale_editor_to_fit: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl std::ops::Deref for PluginDef {
@@ -613,7 +618,7 @@ mod suite_tests {
             ios_minimum_os_version: None,
             ios_url: None,
             ios_orientations: None,
-            ios_scale_editor_to_fit: false,
+            ios_scale_editor_to_fit: true,
         }
     }
 

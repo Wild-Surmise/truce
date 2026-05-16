@@ -118,6 +118,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var sidebarTrailingConstraint: NSLayoutConstraint?
     var sidebarTapCatcher: UIView?
     var sidebarVisible: Bool = false
+    /// Vertical stack inside the sidebar that hosts the chrome
+    /// (title bar, status label, Play button) while landscape is
+    /// active. Held so `placeChromeInSidebar` / `placeChromeInRoot`
+    /// can re-parent chrome views across rotations without having
+    /// to walk the sidebar's subview list.
+    var chromeStack: UIStackView?
     /// Flips true once the editor-block write at the bottom of
     /// `application(_:didFinishLaunchingWithOptions:)` runs. The
     /// plug-in-independent fallback (which writes only the safe-
@@ -129,9 +135,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var editorFrameWritten: Bool = false
     /// Cached `previewHost` constraint set per layout mode, so
     /// switching orientation deactivates the prior mode's anchors
-    /// before activating the new ones.
+    /// before activating the new ones. The portrait set references
+    /// `auBtn.topAnchor`; `placeChromeInRoot` rebuilds it after
+    /// moving auBtn back from the sidebar so the cached entries
+    /// don't outlive the view's brief no-superview state during
+    /// re-parenting.
     var previewHostPortraitConstraints: [NSLayoutConstraint] = []
     var previewHostLandscapeConstraints: [NSLayoutConstraint] = []
+    /// Constraints `placeChromeInRoot` activates when moving the
+    /// chrome (topBar / status / auBtn) from the sidebar back into
+    /// root. Tracked so the next re-entry can deactivate the prior
+    /// set before installing fresh ones — Auto Layout otherwise
+    /// accumulates dead references across rotations.
+    var chromeRootConstraints: [NSLayoutConstraint] = []
+    /// `separator.top → topBar.bottom`. Held so `placeChromeInRoot`
+    /// can rebuild it after topBar's re-parent (the original cross-
+    /// view constraint is auto-removed by UIKit the moment topBar
+    /// briefly leaves root's subtree during `removeFromSuperview`).
+    var separatorTopConstraint: NSLayoutConstraint?
     /// Last layout mode applied; gates the re-layout work so
     /// every `viewDidLayoutSubviews` call doesn't reshuffle the
     /// view hierarchy (it can fire many times per orientation
@@ -325,13 +346,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         separator.backgroundColor = UIColor(white: 1.0, alpha: 0.08)
         separator.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(separator)
+        let separatorTop = separator.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 10)
         NSLayoutConstraint.activate([
-            separator.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 10),
+            separatorTop,
             separator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         self.separator = separator
+        self.separatorTopConstraint = separatorTop
 
         // Hamburger button — only visible in landscape, drawn over
         // the editor at the safe-area top-trailing corner. Built
@@ -1379,7 +1402,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applyOrientationLayout() {
         guard let root = self.rootVC?.view else { return }
         let isLandscape = root.bounds.width > root.bounds.height
-        if self.lastLayoutLandscape != isLandscape {
+        let previousLandscape = self.lastLayoutLandscape
+        if previousLandscape != isLandscape {
             self.lastLayoutLandscape = isLandscape
             if isLandscape {
                 NSLayoutConstraint.deactivate(self.previewHostPortraitConstraints)
@@ -1390,6 +1414,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 self.auStatusLabel?.isHidden = true
                 self.hamburgerBtn?.isHidden = false
                 self.buildSidebarIfNeeded()
+                self.placeChromeInSidebar()
                 // `previewHost` was added to `root` after the
                 // hamburger, so by default it draws OVER it and
                 // the tap target is hidden. Hoist hamburger +
@@ -1405,6 +1430,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     root.bringSubviewToFront(sidebar)
                 }
             } else {
+                // Returning to portrait: pull chrome back into root
+                // BEFORE re-activating the portrait constraint set.
+                // `previewHostPortraitConstraints` anchors
+                // `previewHost.bottom` to `auBtn.topAnchor`; with
+                // auBtn still parked in the off-screen sidebar, the
+                // anchor resolves up near the safe-area top and
+                // previewHost collapses into a thin band — the
+                // "halfway up and cut off" failure mode of any
+                // portrait → landscape → portrait cycle.
+                //
+                // The `previousLandscape == true` gate matters: on
+                // the very first layout pass `previousLandscape` is
+                // nil and chrome is still in its initial root-side
+                // position from `application(_:didFinishLaunching…)`
+                // — running placeChromeInRoot there would
+                // remove-and-re-add chrome that's already correctly
+                // parented, auto-removing the still-active
+                // `separator.top → topBar.bottom` and
+                // `previewHost.bottom → auBtn.top` cross-view
+                // constraints in the process.
+                if previousLandscape == true {
+                    self.placeChromeInRoot()
+                }
                 NSLayoutConstraint.deactivate(self.previewHostLandscapeConstraints)
                 NSLayoutConstraint.activate(self.previewHostPortraitConstraints)
                 self.topBar?.isHidden = false
@@ -1416,6 +1464,130 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
         }
         self.applyEditorScale()
+    }
+
+    /// Re-parent the chrome (`topBar`, `auStatusLabel`,
+    /// `auTestButton`) back into `root` and rebuild every cross-
+    /// view constraint that the re-parent invalidated. UIKit auto-
+    /// removes any constraint whose endpoint views temporarily lack
+    /// a common ancestor, and a `removeFromSuperview` puts the view
+    /// in a no-superview state mid-move — which kills not just the
+    /// chrome's own root anchors but also `separator.top →
+    /// topBar.bottom` and the `previewHost.bottom → auBtn.top`
+    /// entry inside `previewHostPortraitConstraints`. Re-activating
+    /// the cached arrays would silently no-op on the orphaned
+    /// references; this method rebuilds them fresh and updates the
+    /// cached ivars so the next deactivate/activate cycle is sound.
+    ///
+    /// Only called on landscape → portrait transitions (see the
+    /// `previousLandscape == true` gate in `applyOrientationLayout`).
+    /// The initial portrait pass leaves chrome where the launch
+    /// code put it — calling this method there would re-parent
+    /// already-correctly-parented views and break the still-active
+    /// initial constraints.
+    func placeChromeInRoot() {
+        guard let root = self.rootVC?.view,
+              let previewHost = self.previewHost else { return }
+        let g = root.safeAreaLayoutGuide
+
+        // Drop the previous round of chrome root constraints
+        // explicitly. Some are already auto-removed (those whose
+        // endpoint chrome view sat in the sidebar subtree of root,
+        // still satisfied the common-ancestor test); others may
+        // still be active. Deactivate everything before rebuilding
+        // so the new set is the only active set.
+        NSLayoutConstraint.deactivate(self.chromeRootConstraints)
+        self.chromeRootConstraints.removeAll(keepingCapacity: true)
+        self.separatorTopConstraint?.isActive = false
+
+        if let topBar = self.topBar {
+            topBar.removeFromSuperview()
+            root.addSubview(topBar)
+            self.chromeRootConstraints.append(contentsOf: [
+                topBar.topAnchor.constraint(equalTo: g.topAnchor, constant: 8),
+                topBar.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
+                topBar.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
+            ])
+        }
+        if let statusLabel = self.auStatusLabel {
+            statusLabel.removeFromSuperview()
+            root.addSubview(statusLabel)
+            self.chromeRootConstraints.append(contentsOf: [
+                statusLabel.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -12),
+                statusLabel.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
+                statusLabel.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
+            ])
+        }
+        if let auBtn = self.auTestButton, let statusLabel = self.auStatusLabel {
+            auBtn.removeFromSuperview()
+            root.addSubview(auBtn)
+            self.chromeRootConstraints.append(contentsOf: [
+                auBtn.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -8),
+                auBtn.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
+                auBtn.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
+            ])
+        }
+
+        // Separator stays in root the whole time, but its top is
+        // tied to topBar.bottom — the cross-view constraint was
+        // auto-removed when topBar left root (above). Build a
+        // fresh one against the now re-parented topBar.
+        if let separator = self.separator, let topBar = self.topBar {
+            let newTop = separator.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 10)
+            self.separatorTopConstraint = newTop
+            self.chromeRootConstraints.append(newTop)
+        }
+
+        // `previewHostPortraitConstraints[1]` was
+        // previewHost.bottom → auBtn.top. auBtn's brief no-
+        // superview state during the move-back invalidated that
+        // entry, so the cached array no longer fully anchors
+        // previewHost. Build the entire set fresh; the caller
+        // re-activates it (we just deactivated the stale version
+        // here so the next `activate(self.previewHostPortrait…)`
+        // sees the new array).
+        if let separator = self.separator, let auBtn = self.auTestButton {
+            NSLayoutConstraint.deactivate(self.previewHostPortraitConstraints)
+            self.previewHostPortraitConstraints = [
+                previewHost.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
+                previewHost.bottomAnchor.constraint(equalTo: auBtn.topAnchor, constant: -16),
+                previewHost.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
+                previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
+            ]
+        }
+
+        NSLayoutConstraint.activate(self.chromeRootConstraints)
+    }
+
+    /// Move the chrome into the sidebar's vertical stack. The
+    /// stack manages each child's positioning internally — no
+    /// explicit constraints; `removeFromSuperview` drops the
+    /// previous root-side constraints automatically (they lose
+    /// their common-ancestor with the chrome view). Idempotent —
+    /// safe to call on every landscape entry, including after
+    /// `placeChromeInRoot` moved the views back.
+    func placeChromeInSidebar() {
+        guard let stack = self.chromeStack else { return }
+        if let topBar = self.topBar {
+            topBar.removeFromSuperview()
+            topBar.isHidden = false
+            stack.addArrangedSubview(topBar)
+        }
+        if let status = self.auStatusLabel {
+            status.removeFromSuperview()
+            status.isHidden = false
+            stack.addArrangedSubview(status)
+        }
+        if let btn = self.auTestButton {
+            btn.removeFromSuperview()
+            btn.isHidden = false
+            stack.addArrangedSubview(btn)
+            // The `>= 50` height anchor from the initial setup is
+            // intrinsic (no view-to-view ancestor requirement), so
+            // it survives `removeFromSuperview` and re-parenting.
+            // Adding another one per rotation would pile redundant
+            // constraints onto the same anchor.
+        }
     }
 
     /// Apply the uniform scale-to-fit transform to the editor
@@ -1488,9 +1660,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.sidebarOverlay = sidebar
         self.sidebarTrailingConstraint = trailing
 
-        // Move chrome from root into a vertical stack inside the
-        // sidebar. Re-parenting auto-deactivates the original
-        // constraints; we re-anchor in the new context.
+        // Build the empty chrome stack that the chrome views land
+        // in while landscape is active. The actual re-parenting
+        // happens in `placeChromeInSidebar`, called from
+        // `applyOrientationLayout` on every landscape entry — that
+        // method is also the only one that knows how to UNDO the
+        // move (`placeChromeInRoot`), so keeping the chrome views
+        // in root at build time means we never end up with chrome
+        // permanently trapped in an off-screen sidebar.
         let chromeStack = UIStackView()
         chromeStack.translatesAutoresizingMaskIntoConstraints = false
         chromeStack.axis = .vertical
@@ -1502,22 +1679,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             chromeStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
             chromeStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -16),
         ])
-        if let topBar = self.topBar {
-            topBar.removeFromSuperview()
-            topBar.isHidden = false
-            chromeStack.addArrangedSubview(topBar)
-        }
-        if let status = self.auStatusLabel {
-            status.removeFromSuperview()
-            status.isHidden = false
-            chromeStack.addArrangedSubview(status)
-        }
-        if let btn = self.auTestButton {
-            btn.removeFromSuperview()
-            btn.isHidden = false
-            chromeStack.addArrangedSubview(btn)
-            btn.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
-        }
+        self.chromeStack = chromeStack
     }
 
     /// Slide the sidebar in / out. No-op if the sidebar hasn't

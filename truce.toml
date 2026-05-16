@@ -64,10 +64,13 @@ welcome_bmp = "static/truce-welcome.bmp"
 #                             # (title, status, Play button) hides
 #                             # behind a hamburger overlay top-right
 #                             # so the editor fills the screen.
-#   ios_scale_editor_to_fit = true
-#                             # Uniformly shrinks an oversize editor
-#                             # to fit the container's hero region.
-#                             # Never up-scales above 1.0.
+#   ios_scale_editor_to_fit = false
+#                             # Opt out of the default shrink-to-fit
+#                             # of an oversize editor into the
+#                             # container's hero region. Default
+#                             # `true`; never up-scales above 1.0.
+#                             # Set `false` for plug-ins whose editor
+#                             # is already iPhone-sized.
 
 [[plugin]]
 name = "Truce Gain"
@@ -133,6 +136,7 @@ windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 ios_orientations = ["landscape-left", "landscape-right"]
+ios_scale_editor_to_fit = false
 
 [[plugin]]
 name = "Truce Gain Egui"
@@ -161,7 +165,6 @@ au3_name = "Truce Arpeggio (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
-ios_scale_editor_to_fit = true
 
 [[plugin]]
 name = "Truce Gain Iced"
@@ -218,7 +221,6 @@ au3_name = "Truce State (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
-ios_scale_editor_to_fit = true
 ios_orientations = ["landscape-left", "landscape-right"]
 
 [[plugin]]
