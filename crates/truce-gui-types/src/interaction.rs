@@ -186,12 +186,30 @@ pub struct InteractionState {
     pub hover_idx: Option<usize>,
     /// Currently open dropdown popup (at most one at a time).
     pub dropdown: Option<DropdownState>,
+    /// Active touch-drag on the open dropdown popup — set on
+    /// `MouseDown` inside the popup, updated on `MouseMove`
+    /// (mapping vertical motion to `scroll_offset` change),
+    /// cleared on `MouseUp`. iOS pattern: tap to select, swipe to
+    /// scroll. Desktop scroll-wheel handling stays through the
+    /// `Scroll` event.
+    pub popup_drag: Option<PopupDrag>,
     /// Set by event handlers whose visible side effect isn't otherwise
     /// observable to `dispatch_events` (e.g. `MouseLeave` clearing
     /// hover state). The editor reads this via `take_repaint_request`
     /// to avoid relying on diff-checks of every individual visible
     /// field.
     needs_repaint: bool,
+}
+
+/// Active touch-drag on the open dropdown popup.
+pub struct PopupDrag {
+    pub pointer_id: u64,
+    pub start_y: f32,
+    pub start_scroll_offset: usize,
+    /// True once the user has moved more than `ITEM_H / 2` from
+    /// `start_y`. Distinguishes a tap (select on release) from a
+    /// scroll-drag (keep popup open on release).
+    pub scrolled: bool,
 }
 
 pub struct DragState {
@@ -568,6 +586,15 @@ pub fn dispatch_in(
     for ev in events {
         match *ev {
             InputEvent::MouseMove { pointer_id, x, y } => {
+                // Popup-drag wins over knob-drag — a finger that
+                // landed inside the open popup scrolls the list,
+                // not any widget under it.
+                if let Some(drag) = state.popup_drag.as_ref()
+                    && drag.pointer_id == pointer_id
+                {
+                    apply_popup_scroll_drag(y, state);
+                    continue;
+                }
                 let drag_info = state
                     .drag_for(pointer_id)
                     .map(|d| (d.widget_type, d.region_idx));
@@ -603,9 +630,35 @@ pub fn dispatch_in(
             }
             InputEvent::MouseUp {
                 pointer_id,
+                x,
+                y,
                 button: MouseButton::Left,
-                ..
             } => {
+                // Popup-drag end: if the user didn't scroll
+                // appreciably (stayed within `ITEM_H / 2` of the
+                // start), treat the touch as a tap and commit the
+                // option under the release point. If they did
+                // scroll, just keep the popup open.
+                if let Some(drag) = state.popup_drag.take()
+                    && drag.pointer_id == pointer_id
+                {
+                    if !drag.scrolled
+                        && let Some(option_idx) = state.dropdown_popup_hit(x, y)
+                        && let Some(dd) = state.dropdown.as_ref()
+                    {
+                        let param_id = dd.param_id;
+                        let count = dd.options.len();
+                        let new_norm = f32::from_f64(discrete_norm(option_idx, count));
+                        edits.push(ParamEdit::Begin { id: param_id });
+                        edits.push(ParamEdit::Set {
+                            id: param_id,
+                            normalized: new_norm,
+                        });
+                        edits.push(ParamEdit::End { id: param_id });
+                        state.dropdown_close();
+                    }
+                    continue;
+                }
                 if let Some(drag) = state.end_drag(pointer_id) {
                     edits.push(ParamEdit::End { id: drag.param_id });
                     if drag.widget_type == WidgetType::XYPad
@@ -710,17 +763,20 @@ fn handle_mouse_down(
 ) {
     // If a dropdown popup is open, handle it first.
     if let Some(dd) = state.dropdown.as_ref() {
-        if let Some(option_idx) = state.dropdown_popup_hit(x, y) {
-            let param_id = dd.param_id;
-            let count = dd.options.len();
-            let new_norm = f32::from_f64(discrete_norm(option_idx, count));
-            edits.push(ParamEdit::Begin { id: param_id });
-            edits.push(ParamEdit::Set {
-                id: param_id,
-                normalized: new_norm,
+        // MouseDown inside the popup starts a touch-drag — the
+        // commit-or-scroll decision is deferred to MouseUp based
+        // on whether the user moved or stayed still. Without
+        // this, every tap on the popup commits immediately and
+        // there's no way for touch users to scroll a list longer
+        // than the visible area.
+        let (px, py, pw, ph) = dd.popup_rect;
+        if x >= px && x <= px + pw && y >= py && y <= py + ph {
+            state.popup_drag = Some(PopupDrag {
+                pointer_id,
+                start_y: y,
+                start_scroll_offset: dd.scroll_offset,
+                scrolled: false,
             });
-            edits.push(ParamEdit::End { id: param_id });
-            state.dropdown_close();
             return;
         }
         // Click outside popup: close. If it landed on the same dropdown
@@ -856,6 +912,43 @@ fn open_dropdown(
         scroll_offset,
         visible_count,
     });
+}
+
+/// Touch scroll-drag on the open dropdown popup. Maps vertical
+/// motion since the drag started into `scroll_offset` changes
+/// (one item per `item_h` of drag). If the user has moved more
+/// than half an item from the start, flips `scrolled = true` so
+/// the `MouseUp` handler treats the touch as a scroll instead of
+/// a commit-on-tap.
+//
+// Cast contract: `start_scroll_offset` is bounded by
+// `dd.options.len()` which (per the dropdown widget shape) caps
+// at a few hundred — well below `i32::MAX`. `items_scrolled` is
+// `(dy / item_h)` where `dy` is a finite single-frame motion;
+// the product never approaches i32 limits.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+fn apply_popup_scroll_drag(y: f32, state: &mut InteractionState) {
+    let item_h = 18.0f32;
+    let (start_y, start_scroll_offset) = match state.popup_drag.as_ref() {
+        Some(d) => (d.start_y, d.start_scroll_offset),
+        None => return,
+    };
+    let dy = start_y - y;
+    if dy.abs() > item_h / 2.0
+        && let Some(d) = state.popup_drag.as_mut()
+    {
+        d.scrolled = true;
+    }
+    let items_scrolled = (dy / item_h).round() as i32;
+    let new_offset = start_scroll_offset as i32 + items_scrolled;
+    if let Some(dd) = state.dropdown.as_mut() {
+        let max_offset = (dd.options.len() as i32 - dd.visible_count as i32).max(0);
+        dd.scroll_offset = new_offset.clamp(0, max_offset) as usize;
+    }
 }
 
 fn apply_drag(

@@ -1150,7 +1150,11 @@ mod tests {
         let padding = 4.0f32;
         let option_y = py + padding + item_h + item_h / 2.0; // middle of second item
 
+        // Touch model: down then up at the same point commits the
+        // option under the release point. (Down alone starts a
+        // popup-drag — the up handler decides commit-vs-scroll.)
         editor.on_mouse_down(px + 10.0, option_y);
+        editor.on_mouse_up(px + 10.0, option_y);
 
         assert!(!editor.interaction.dropdown_is_open());
         // Enum{count:4} → step_count=3 → 4 options. Index 1 → norm = 1/3
@@ -1570,6 +1574,7 @@ mod tests {
         let click_y = py + padding + item_h + item_h / 2.0; // middle of second visible item
 
         editor.on_mouse_down(px + 10.0, click_y);
+        editor.on_mouse_up(px + 10.0, click_y);
 
         assert!(!editor.interaction.dropdown_is_open());
         // Absolute index = scroll_offset(3) + local(1) = 4
