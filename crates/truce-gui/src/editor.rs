@@ -919,7 +919,7 @@ mod tests {
     use crate::widgets::WidgetType;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, Params};
+    use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, ParamValueKind, Params};
 
     // -- Mock Params with one enum param (4 options) and one float --
 
@@ -951,6 +951,7 @@ mod tests {
                     default_plain: 0.0,
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
+                    kind: ParamValueKind::Enum,
                 },
                 ParamInfo {
                     id: 1,
@@ -961,6 +962,7 @@ mod tests {
                     default_plain: 0.5,
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
+                    kind: ParamValueKind::Float,
                 },
             ]
         }
@@ -1268,6 +1270,7 @@ mod tests {
                     default_plain: 0.0,
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
+                    kind: ParamValueKind::Enum,
                 },
                 ParamInfo {
                     id: 1,
@@ -1278,6 +1281,7 @@ mod tests {
                     default_plain: 0.5,
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
+                    kind: ParamValueKind::Float,
                 },
             ]
         }

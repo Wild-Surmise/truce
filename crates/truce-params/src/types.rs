@@ -515,7 +515,7 @@ impl From<&MeterSlot> for u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::info::{ParamFlags, ParamUnit};
+    use crate::info::{ParamFlags, ParamUnit, ParamValueKind};
     use crate::range::ParamRange;
 
     fn info(name: &'static str, range: ParamRange, default_plain: f64) -> ParamInfo {
@@ -528,6 +528,7 @@ mod tests {
             default_plain,
             flags: ParamFlags::AUTOMATABLE,
             unit: ParamUnit::None,
+            kind: ParamValueKind::Float,
         }
     }
 

@@ -15,6 +15,24 @@ pub struct ParamInfo {
     pub default_plain: f64,
     pub flags: ParamFlags,
     pub unit: ParamUnit,
+    /// Which `*Param` type backs this entry. Drives display rounding
+    /// (`IntParam` skips fractional digits) and `value_text` parsing,
+    /// independently of [`ParamRange`] — a `FloatParam` declared with
+    /// `range = "discrete(...)"` should still format as a float, so
+    /// inferring kind from range alone is wrong.
+    pub kind: ParamValueKind,
+}
+
+/// Which strongly-typed `*Param` constructor produced this
+/// [`ParamInfo`]. The `#[derive(Params)]` macro sets it from the
+/// field type so format-side code can branch on the original
+/// typing without re-deriving it from `range` / `unit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamValueKind {
+    Float,
+    Int,
+    Bool,
+    Enum,
 }
 
 bitflags::bitflags! {

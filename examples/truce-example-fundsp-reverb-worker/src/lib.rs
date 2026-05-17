@@ -79,6 +79,7 @@ pub struct FundspReverbWorkerParams {
         name = "Mix",
         range = "linear(0, 1)",
         default = 0.25,
+        unit = "%",
         smooth = "exp(20)"
     )]
     pub mix: FloatParam,

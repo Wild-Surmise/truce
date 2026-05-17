@@ -806,6 +806,13 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         quote! { ::truce::params::ParamFlags::AUTOMATABLE }
     };
 
+    let kind = match f.kind {
+        ParamKind::Float => quote! { ::truce::params::ParamValueKind::Float },
+        ParamKind::Int => quote! { ::truce::params::ParamValueKind::Int },
+        ParamKind::Bool => quote! { ::truce::params::ParamValueKind::Bool },
+        ParamKind::Enum => quote! { ::truce::params::ParamValueKind::Enum },
+    };
+
     Some(quote! {
         ::truce::params::ParamInfo {
             id: #id,
@@ -816,6 +823,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             default_plain: #default_plain,
             flags: #flags,
             unit: #unit,
+            kind: #kind,
         }
     })
 }

@@ -6,7 +6,7 @@ pub mod sample;
 mod smooth;
 mod types;
 
-pub use info::{ParamFlags, ParamInfo, ParamUnit};
+pub use info::{ParamFlags, ParamInfo, ParamUnit, ParamValueKind};
 pub use range::ParamRange;
 pub use sample::{Float, Sample};
 pub use smooth::{Smoother, SmoothingStyle};
@@ -33,11 +33,29 @@ pub mod __private {
 /// Format a plain parameter value as a display string based on the parameter's unit.
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations
-/// on `FloatParam` and `IntParam` fields.
+/// on `FloatParam` and `IntParam` fields. `IntParam` is identified by
+/// `ParamValueKind::Int`, set by the derive from the field type — its
+/// value is always integer-valued, so the fractional `{:.1}` / `{:.2}`
+/// formats float-typed params use would render "0.0 st" / "0.00"
+/// instead of "0 st" / "0".
 #[must_use]
 pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
+    let is_int = info.kind == ParamValueKind::Int;
+    // Round to nearest integer before display so a smoothed IntParam
+    // that's mid-transition doesn't briefly render the rounded-down
+    // half-step (e.g. an `i32::from(value)` of -1 when value is -0.5
+    // mid-snap). `IntParam::value_i32` rounds the same way at the
+    // audio-thread read site.
+    #[allow(clippy::cast_possible_truncation)]
+    let int_value = value.round() as i64;
     match info.unit {
-        ParamUnit::Db => format!("{value:.1} dB"),
+        ParamUnit::Db => {
+            if is_int {
+                format!("{int_value} dB")
+            } else {
+                format!("{value:.1} dB")
+            }
+        }
         ParamUnit::Hz => {
             if value >= 1000.0 {
                 format!("{:.1} kHz", value / 1000.0)
@@ -45,7 +63,13 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
                 format!("{value:.0} Hz")
             }
         }
-        ParamUnit::Milliseconds => format!("{value:.1} ms"),
+        ParamUnit::Milliseconds => {
+            if is_int {
+                format!("{int_value} ms")
+            } else {
+                format!("{value:.1} ms")
+            }
+        }
         ParamUnit::Seconds => {
             if value >= 1.0 {
                 format!("{value:.2} s")
@@ -54,7 +78,13 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
             }
         }
         ParamUnit::Percent => format!("{:.0}%", value * 100.0),
-        ParamUnit::Semitones => format!("{value:.1} st"),
+        ParamUnit::Semitones => {
+            if is_int {
+                format!("{int_value} st")
+            } else {
+                format!("{value:.1} st")
+            }
+        }
         ParamUnit::Pan => {
             // Convention: pan params are normalized to [-1.0, 1.0]. Round
             // to nearest integer percent first so the dead-zone test and
@@ -68,7 +98,13 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
                 std::cmp::Ordering::Greater => format!("{pct}R"),
             }
         }
-        ParamUnit::None => format!("{value:.2}"),
+        ParamUnit::None => {
+            if is_int {
+                format!("{int_value}")
+            } else {
+                format!("{value:.2}")
+            }
+        }
     }
 }
 
@@ -263,6 +299,7 @@ mod tests {
             default_plain: 0.0,
             flags: ParamFlags::empty(),
             unit: ParamUnit::Pan,
+            kind: ParamValueKind::Float,
         }
     }
 
@@ -288,5 +325,40 @@ mod tests {
         assert_eq!(format_param_value(&info, 0.5), "50R");
         assert_eq!(format_param_value(&info, 1.0), "100R");
         assert_eq!(format_param_value(&info, 0.006), "1R");
+    }
+
+    fn int_info(unit: ParamUnit) -> ParamInfo {
+        ParamInfo {
+            id: 0,
+            name: "n",
+            short_name: "n",
+            group: "",
+            range: ParamRange::Discrete { min: -12, max: 12 },
+            default_plain: 0.0,
+            flags: ParamFlags::empty(),
+            unit,
+            kind: ParamValueKind::Int,
+        }
+    }
+
+    #[test]
+    fn int_param_no_fractional_zero() {
+        // Regression: transpose's IntParam(semitones, st) used to
+        // render "0.0 st" / "-5.0 st" because format_param_value
+        // hard-coded `{:.1}` regardless of param kind.
+        assert_eq!(
+            format_param_value(&int_info(ParamUnit::Semitones), 0.0),
+            "0 st"
+        );
+        assert_eq!(
+            format_param_value(&int_info(ParamUnit::Semitones), -5.0),
+            "-5 st"
+        );
+        assert_eq!(format_param_value(&int_info(ParamUnit::None), 0.0), "0");
+        assert_eq!(format_param_value(&int_info(ParamUnit::Db), 6.0), "6 dB");
+        assert_eq!(
+            format_param_value(&int_info(ParamUnit::Milliseconds), 50.0),
+            "50 ms"
+        );
     }
 }
