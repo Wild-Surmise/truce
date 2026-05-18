@@ -1156,13 +1156,7 @@ fn build_and_lipo_format(
             for &arch in archs {
                 let a = release_static_for_target(root, &p.dylib_stem(), Some(arch.triple()));
                 if !a.exists() {
-                    return Err(format!(
-                        "macOS bundle link needs a staticlib at {} but cargo didn't emit one. \
-                         Check that the plugin crate's `[lib]` block lists `\"staticlib\"` in \
-                         its `crate-type`.",
-                        a.display()
-                    )
-                    .into());
+                    return Err(crate::missing_staticlib_error(&a).into());
                 }
                 staticlibs.push((arch, a));
             }

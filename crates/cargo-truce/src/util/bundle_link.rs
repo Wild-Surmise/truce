@@ -42,6 +42,42 @@ pub(crate) const VST3_EXPORTS: &[&str] = &[
 /// probe.
 pub(crate) const VST2_EXPORTS: &[&str] = &["_VSTPluginMain", "_main_macho"];
 
+/// Single source of truth for the "no staticlib emitted" error.
+///
+/// Plugins scaffolded before 0.44.0 ship `crate-type = ["cdylib",
+/// "rlib"]`. The 0.44.0 macOS bundle-link pipeline reads
+/// `lib<stem>.a` (a Rust `staticlib` archive) and feeds it to
+/// `clang -bundle` to produce an `MH_BUNDLE`, so the missing
+/// staticlib makes the install / package step fail. We surface the
+/// exact one-line `Cargo.toml` fix here so plugin authors don't
+/// have to hunt for it in release notes.
+pub(crate) fn missing_staticlib_error(staticlib_path: &Path) -> String {
+    format!(
+        "macOS bundle link needs a Rust staticlib at\n  \
+           {path}\n\
+         but cargo didn't emit one.\n\
+         \n\
+         Starting with truce 0.44.0, macOS bundle formats (CLAP / VST3 / VST2) \
+         are linked from `lib<stem>.a` via `clang -bundle`. Plugins scaffolded \
+         before 0.44.0 only declared `[\"cdylib\", \"rlib\"]` and need to add \
+         `\"staticlib\"` to the `crate-type` array in their plugin crate's \
+         `Cargo.toml`.\n\
+         \n\
+         Exact change:\n\
+         \n\
+             # before\n\
+             [lib]\n\
+             crate-type = [\"cdylib\", \"rlib\"]\n\
+         \n\
+             # after\n\
+             [lib]\n\
+             crate-type = [\"cdylib\", \"staticlib\", \"rlib\"]\n\
+         \n\
+         Then re-run the failing command.",
+        path = staticlib_path.display(),
+    )
+}
+
 /// System frameworks the bundle needs at load time. Mirrors what the
 /// equivalent cdylib build pulls in from `objc2-app-kit`,
 /// `objc2-foundation`, `objc2-quartz-core`, `truce-gpu` (`Metal`),

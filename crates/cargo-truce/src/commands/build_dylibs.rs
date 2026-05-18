@@ -378,13 +378,7 @@ fn link_macos_bundle_for_plugin(
 ) -> Res {
     let staticlib = crate::release_static_for_target(root, &p.dylib_stem(), target);
     if !staticlib.exists() {
-        return Err(format!(
-            "macOS bundle link needs a staticlib at {} but cargo didn't emit one. \
-             Check that the plugin crate's `[lib]` block lists `\"staticlib\"` in \
-             its `crate-type`.",
-            staticlib.display()
-        )
-        .into());
+        return Err(crate::missing_staticlib_error(&staticlib).into());
     }
 
     // For host-only builds the cargo profile dir is `target/release/`;

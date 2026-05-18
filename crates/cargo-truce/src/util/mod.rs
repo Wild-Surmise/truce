@@ -27,7 +27,9 @@ pub(crate) use build::rustup_has_target;
 pub(crate) use build::{MacArch, cargo_build_for_arch, cargo_build_multi_arch, lipo_into};
 pub(crate) use build::{cargo_build, cargo_build_debug, sccache_wrapper};
 #[cfg(target_os = "macos")]
-pub(crate) use bundle_link::{CLAP_EXPORTS, VST2_EXPORTS, VST3_EXPORTS, link_macos_bundle};
+pub(crate) use bundle_link::{
+    CLAP_EXPORTS, VST2_EXPORTS, VST3_EXPORTS, link_macos_bundle, missing_staticlib_error,
+};
 pub(crate) use codesign::codesign_bundle;
 #[cfg(target_os = "macos")]
 pub(crate) use codesign::{
