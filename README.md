@@ -242,10 +242,8 @@ permission only.** The one carve-out: a Framework License is
 needed if you're using truce as the core of a **commercial**
 plug-in framework that you redistribute to other developers —
 anything sold, subscription-gated, dual-licensed commercially,
-or bundled into a paid offering. See
-[`COMMERCIAL_FRAMEWORK_LICENSING.md`](COMMERCIAL_FRAMEWORK_LICENSING.md) for the
-permission process and [`LICENSE`](LICENSE) for the precise
-boundary.
+or bundled into a paid offering. See [`LICENSE`](LICENSE) for the
+precise boundary and the permission process (Section 2.2).
 
 If you're building an audio plug-in or a free OSS project:
 ignore the third paragraph.

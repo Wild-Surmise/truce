@@ -21,8 +21,8 @@ depend on the kind of product you ship.
 
   - **For commercial audio-plug-in frameworks built on truce:**
     A separate Framework License is required, granted only by
-    written permission from the Licensor. See Section 2 below and
-    COMMERCIAL_FRAMEWORK_LICENSING.md in this repository.
+    written permission from the Licensor. See Section 2 below;
+    the request procedure is in Section 2.2.
 
 Read on for the precise boundary.
 
@@ -176,8 +176,32 @@ The Licensor is under no obligation to grant a Framework License.
 When granted, the Licensor may impose any terms (including but not
 limited to attribution, contribution-back, scope limits, financial
 terms, revocation conditions, and time limits) as a condition of the
-grant. Past grants do not bind future decisions. The procedure for
-requesting a Framework License is documented in COMMERCIAL_FRAMEWORK_LICENSING.md.
+grant. Past grants do not bind future decisions.
+
+Requests for a Framework License should be sent to
+`framework-licensing@truce.audio` (or initiated as a private
+discussion on the truce-audio GitHub organization, with the
+maintainers tagged, if email is inconvenient). A well-formed
+request describes:
+
+  (a) the product being built, its developer audience, and what
+      that audience receives from it;
+
+  (b) the role the Software plays inside the product — core,
+      one backend among several, internal implementation
+      detail, or otherwise;
+
+  (c) the distribution and commercialization model under which
+      the product reaches its third-party developers; and
+
+  (d) the proposed terms of the requested Framework License,
+      including any attribution, time, scope, or financial
+      terms the requester is willing to accept.
+
+The Licensor will acknowledge any well-formed request within
+two to four weeks of receipt. Acknowledgement is not a grant.
+The Licensor reserves the right to deny a request without
+detailed reasoning.
 
 If you are unsure whether your product is a Framework Product, or
 whether the Section 2.1 exemption applies to you, contact the
