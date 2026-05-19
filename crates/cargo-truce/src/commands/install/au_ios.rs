@@ -154,7 +154,7 @@ pub(crate) fn build_bundle(
     cfg: &crate::Config,
     target: IosTarget,
     orientations_override: Option<&[String]>,
-) -> Result<PathBuf, crate::BoxErr> {
+) -> Result<PathBuf, crate::CargoTruceError> {
     let out = truce_build::target_dir(root)
         .join("ios")
         .join(target.label());
@@ -521,11 +521,12 @@ pub(crate) fn build_bundle(
     let identity = signing_identity_for(target);
     let appex_prof_env = crate::ios_appex_provisioning_profile();
     let mobileprovision = if matches!(target, IosTarget::Device) {
-        let app_prof = crate::ios_provisioning_profile().ok_or_else(|| -> crate::BoxErr {
-            "iOS device install needs TRUCE_IOS_PROVISIONING_PROFILE pointing at a \
+        let app_prof =
+            crate::ios_provisioning_profile().ok_or_else(|| -> crate::CargoTruceError {
+                "iOS device install needs TRUCE_IOS_PROVISIONING_PROFILE pointing at a \
              .mobileprovision in .cargo/config.toml [env]"
-                .into()
-        })?;
+                    .into()
+            })?;
         // iOS installd validates BOTH the container app and the
         // appex against their own embedded.mobileprovision. A
         // mismatched / missing appex profile produces error
@@ -644,7 +645,10 @@ fn device_install(bundle: &Path, app_bundle_id: &str) -> Res {
 /// `<target>/ios/xcframework/<fw_name>.xcframework`. Consumed by
 /// the `package --ios` path; install paths pick a single slice and
 /// skip this step.
-pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
+pub(crate) fn build_xcframework(
+    root: &Path,
+    p: &PluginDef,
+) -> Result<PathBuf, crate::CargoTruceError> {
     let cfg = crate::load_config()?;
     let out = truce_build::target_dir(root).join("ios/xcframework");
     let _ = std::fs::remove_dir_all(&out);
@@ -726,7 +730,7 @@ pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, c
 /// for App Store / `TestFlight` submissions). Notarisation /
 /// `altool` upload is intentionally out of scope - that's a
 /// distribution step, not a build step.
-pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
+pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::CargoTruceError> {
     let cfg = crate::load_config()?;
     let app_dir = build_bundle(root, p, &cfg, IosTarget::Device, None)?;
     let out_dir = truce_build::target_dir(root).join("ios/ipa");
@@ -734,9 +738,11 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     fs_ctx::create_dir_all(&out_dir)?;
     let payload = out_dir.join("Payload");
     fs_ctx::create_dir_all(&payload)?;
-    let file_name = app_dir.file_name().ok_or_else(|| -> crate::BoxErr {
-        format!("app bundle has no file name: {}", app_dir.display()).into()
-    })?;
+    let file_name = app_dir
+        .file_name()
+        .ok_or_else(|| -> crate::CargoTruceError {
+            format!("app bundle has no file name: {}", app_dir.display()).into()
+        })?;
     crate::copy_dir_recursive(&app_dir, &payload.join(file_name))?;
     let ipa_path = out_dir.join(format!("{}.ipa", p.file_stem()));
     // `zip -r` over `Payload/` is the canonical Apple shape - the
@@ -781,7 +787,7 @@ fn embed_app_icon(
     app_dir: &Path,
     target: IosTarget,
     min_ios: &str,
-) -> Result<String, crate::BoxErr> {
+) -> Result<String, crate::CargoTruceError> {
     let Some(path) = p.ios_icon_set.as_deref() else {
         return Ok(String::new());
     };
@@ -1002,7 +1008,7 @@ fn run(cmd: &str, args: &[&str]) -> Res {
     Ok(())
 }
 
-fn run_capture(cmd: &str, args: &[&str]) -> Result<String, crate::BoxErr> {
+fn run_capture(cmd: &str, args: &[&str]) -> Result<String, crate::CargoTruceError> {
     let out = Command::new(cmd)
         .args(args)
         .output()
@@ -1067,7 +1073,7 @@ const DEFAULT_IOS_ORIENTATIONS: &[&str] = &["portrait", "landscape-left", "lands
 /// Convert the TOML-friendly orientation token into the
 /// `UIInterfaceOrientation*` constant iOS expects in the
 /// `UISupportedInterfaceOrientations` plist array.
-fn map_orientation(token: &str) -> Result<&'static str, crate::BoxErr> {
+fn map_orientation(token: &str) -> Result<&'static str, crate::CargoTruceError> {
     Ok(match token {
         "portrait" => "UIInterfaceOrientationPortrait",
         "portrait-upside-down" => "UIInterfaceOrientationPortraitUpsideDown",
@@ -1088,7 +1094,7 @@ fn map_orientation(token: &str) -> Result<&'static str, crate::BoxErr> {
 /// inner XML (no `<array>` wrapper). Rejects empty input and
 /// unknown tokens - empty would let iOS reject the bundle at
 /// install time with a less actionable message.
-fn render_orientation_array(tokens: &[String]) -> Result<String, crate::BoxErr> {
+fn render_orientation_array(tokens: &[String]) -> Result<String, crate::CargoTruceError> {
     if tokens.is_empty() {
         return Err("ios_orientations: list must contain at least one entry".into());
     }

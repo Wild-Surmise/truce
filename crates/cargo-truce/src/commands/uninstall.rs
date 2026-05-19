@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use truce_utils::shell_sidecar::sidecar_path;
 
 struct RemoveTarget {
     format: &'static str,
@@ -652,7 +653,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // formats. Skipped on `--stale` because we don't have crate
     // names there.
     for crate_name in &crate_names_for_sidecar_cleanup {
-        if let Some(path) = truce_utils::shell_sidecar::sidecar_path(crate_name)
+        if let Some(path) = sidecar_path(crate_name)
             && path.exists()
         {
             match fs::remove_file(&path) {
