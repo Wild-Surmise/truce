@@ -755,16 +755,6 @@ pub(crate) fn run_silent(cmd: &str, args: &[&OsStr]) {
         .status();
 }
 
-// Gated to macOS: only `cmd_status` (macOS impl) shells out to `auval`.
-#[cfg(target_os = "macos")]
-pub(crate) fn run_quiet(
-    cmd: &str,
-    args: &[&OsStr],
-) -> std::result::Result<String, CargoTruceError> {
-    let output = Command::new(cmd).args(args).output()?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
 /// Return the project-local temp directory (`<target>/tmp/`), creating it if needed.
 pub(crate) fn tmp_dir() -> PathBuf {
     let dir = truce_build::target_dir(&project_root()).join("tmp");

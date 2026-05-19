@@ -220,7 +220,8 @@ Validation / Inspection:
       plugin in truce.toml. Default name is <bundle_id>_screenshot.
 
   status
-      Show installed plugins and AU registration state.
+      Scan installed plugin bundles (filesystem-only; for an AU
+      registry check use `cargo truce validate --auval`).
 
   doctor
       Check development environment and installed plugins.

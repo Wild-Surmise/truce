@@ -1,9 +1,15 @@
-//! `cargo truce status` - show installed plugins and AU registration state.
+//! `cargo truce status` - scan installed plugin bundles for this
+//! project's vendor.
 //!
 //! macOS-only: every path it scans (`/Library/Audio/Plug-Ins/...`,
-//! `~/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific.
-//! Linux / Windows are handled with a clean "not supported" message
-//! instead of an empty banner that suggests nothing was found.
+//! `~/Library/Audio/Plug-Ins/...`) is Apple-specific. Linux / Windows
+//! are handled with a clean "not supported" message instead of an
+//! empty banner that suggests nothing was found.
+//!
+//! Filesystem-only: AU registration state is not probed via `auval`
+//! because that walks the `AudioComponentRegistrar` (slow, can hang
+//! on broken third-party components). Use `cargo truce validate
+//! --auval` when an actual registry check is wanted.
 
 use crate::Res;
 
@@ -12,10 +18,10 @@ fn print_help() {
         "\
 Usage: cargo truce status
 
-Show installed plugin bundles for this project's vendor and the AU
-registration state. macOS-only - every path scanned
-(/Library/Audio/Plug-Ins/..., ~/Library/Audio/Plug-Ins/..., auval -a)
-is Apple-specific.
+Scan installed plugin bundles for this project's vendor. macOS-only -
+every path scanned (/Library/Audio/Plug-Ins/...,
+~/Library/Audio/Plug-Ins/...) is Apple-specific. Filesystem-only;
+for an AU registry check use `cargo truce validate --auval`.
 
 Options:
   -h, --help       Show this message."
@@ -30,7 +36,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
     }
     Err(
         "`cargo truce status` is macOS-only - every directory it scans \
-         (`/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific. \
+         (`/Library/Audio/Plug-Ins/...`) is Apple-specific. \
          For Linux / Windows, list bundles directly under your DAW's \
          configured plug-in path."
             .into(),
@@ -39,8 +45,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn cmd_status(args: &[String]) -> Res {
-    use crate::{dirs, load_config, run_quiet};
-    use std::ffi::OsStr;
+    use crate::{dirs, load_config};
     use std::fs;
     use std::path::Path;
 
@@ -100,16 +105,6 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
             let name = name.to_string_lossy();
             if name.contains(vendor) {
                 eprintln!("  {name}");
-            }
-        }
-    }
-
-    eprintln!("\nauval");
-    if let Ok(output) = run_quiet("auval", &[OsStr::new("-a")]) {
-        let vendor_lower = vendor.to_lowercase();
-        for line in output.lines() {
-            if line.to_lowercase().contains(&vendor_lower) {
-                eprintln!("  {line}");
             }
         }
     }

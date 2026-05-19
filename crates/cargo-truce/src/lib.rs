@@ -94,7 +94,7 @@ pub(crate) use util::{
     CLAP_EXPORTS, MacArch, VST2_EXPORTS, VST3_EXPORTS, cargo_build_for_arch,
     cargo_build_multi_arch, copy_dir_recursive, extract_team_id, is_production_identity,
     link_macos_bundle, lipo_into, locate_wraptool_macos, missing_staticlib_error,
-    pace_sign_aax_macos, run_codesign, run_quiet, run_silent, tmp_au_v3,
+    pace_sign_aax_macos, run_codesign, run_silent, tmp_au_v3,
 };
 
 // Windows-only: VS / MSVC / cmake / ninja discovery + Program Files
