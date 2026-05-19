@@ -171,42 +171,12 @@ jobs:
       # so generated projects build against a published release. In CI
       # we want them to build against THIS commit instead, so rewrite
       # every git ref to a local `path = ...` pointing at the truce
-      # crates checked out in $GITHUB_WORKSPACE. Mirrors what the
-      # scaffold_e2e tests do; Python (preinstalled on every GHA
-      # runner) gives us consistent regex behavior across OSes.
+      # crates checked out in $GITHUB_WORKSPACE. Shared with
+      # `cli-backcompat.yml`.
       - name: Rewrite git deps to local paths
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import os, re, pathlib
-          truce_crates = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "crates").as_posix()
-          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "${{ matrix.shape.project_dir }}")
-          needle = '{ git = "https://github.com/truce-audio/truce"'
-          tag_re = re.compile(r',\s*tag\s*=\s*"[^"]*"')
-          rewrote = 0
-          for path in root.rglob("Cargo.toml"):
-              content = path.read_text()
-              if needle not in content:
-                  continue
-              new_lines = []
-              for line in content.splitlines():
-                  stripped = line.lstrip()
-                  if stripped.startswith("#") or needle not in line:
-                      new_lines.append(line)
-                      continue
-                  eq = line.find("=")
-                  key = line[:eq].strip() if eq >= 0 else "truce"
-                  replacement = f'{{ path = "{truce_crates}/{key}"'
-                  out = line.replace(needle, replacement, 1)
-                  out = tag_re.sub("", out, count=1)
-                  new_lines.append(out)
-              suffix = "\n" if content.endswith("\n") else ""
-              path.write_text("\n".join(new_lines) + suffix)
-              rewrote += 1
-              print(f"rewrote {path}")
-          if rewrote == 0:
-              print("WARNING: no Cargo.toml had a git dep to rewrite", flush=True)
-          PY
+        env:
+          SCAFFOLD_DIR: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: python3 scripts/ci/rewrite-scaffold-deps.py
 
       - name: cargo truce install --user
         shell: bash

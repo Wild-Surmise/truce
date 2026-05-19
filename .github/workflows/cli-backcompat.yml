@@ -140,45 +140,15 @@ jobs:
           "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" new ${{ matrix.shape.new_args }}
           ls -la "${{ matrix.shape.project_dir }}/"
 
-      # Rewrite scaffolded `{ git = ".../truce", tag = "..." }` to
-      # `{ path = "<workspace>/crates/<name>" }`. Same Python regex
-      # `cli-scaffold.yml` uses; promotes the older scaffold's deps
-      # to consume THIS commit's source instead of the published tag
-      # it was generated against.
+      # Rewrite scaffolded `{ git = ".../truce", tag = "..." }` deps
+      # to `{ path = "<workspace>/crates/<name>" }` so the older
+      # scaffold consumes THIS commit of truce instead of the
+      # published tag it was generated against. Shared with
+      # `cli-scaffold.yml`.
       - name: Rewrite git deps to local truce HEAD
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import os, re, pathlib
-          truce_crates = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "crates").as_posix()
-          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "${{ matrix.shape.project_dir }}")
-          needle = '{ git = "https://github.com/truce-audio/truce"'
-          tag_re = re.compile(r',\s*tag\s*=\s*"[^"]*"')
-          rewrote = 0
-          for path in root.rglob("Cargo.toml"):
-              content = path.read_text()
-              if needle not in content:
-                  continue
-              new_lines = []
-              for line in content.splitlines():
-                  stripped = line.lstrip()
-                  if stripped.startswith("#") or needle not in line:
-                      new_lines.append(line)
-                      continue
-                  eq = line.find("=")
-                  key = line[:eq].strip() if eq >= 0 else "truce"
-                  replacement = f'{{ path = "{truce_crates}/{key}"'
-                  out = line.replace(needle, replacement, 1)
-                  out = tag_re.sub("", out, count=1)
-                  new_lines.append(out)
-              suffix = "\n" if content.endswith("\n") else ""
-              path.write_text("\n".join(new_lines) + suffix)
-              rewrote += 1
-              print(f"rewrote {path}")
-          if rewrote == 0:
-              print("::error::no Cargo.toml had a git dep to rewrite - scaffold layout may have changed")
-              raise SystemExit(1)
-          PY
+        env:
+          SCAFFOLD_DIR: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: python3 scripts/ci/rewrite-scaffold-deps.py
 
       # `cargo check` (not `build`) is enough for the contract this
       # workflow guards: catches removed / renamed public items the

@@ -38,6 +38,15 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Pinned iPhone family + iOS runtime so the baked iOS PNGs are
+  # reproducible across runner-image bumps. MUST MATCH `ci-ios.yml`'s
+  # identical block, otherwise the screenshot tests there will fail
+  # against the just-baked baselines. The "Boot iOS Simulator" step
+  # below fails loudly if either pin is no longer available on the
+  # current runner, which is the signal to bump both files in lockstep
+  # and re-bake.
+  IOS_SIM_DEVICE: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+  IOS_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
   # Keep this list in sync with truce.toml's [[plugin]] entries that
   # have screenshot tests under examples/<crate>/src/lib.rs. The
   # `_linux` / `_macos` / `_windows` / `_default_ios` / `_container_ios`
@@ -228,20 +237,14 @@ jobs:
           key: bake-macos-latest-ios
           cache-bin: false
 
-      # Discover the runner's iOS runtime + a matching iPhone Pro
-      # device type at runtime; hard-coding (say) "iPhone 17 Pro /
-      # iOS 26.3" breaks the next time the image rev moves. Same
-      # pattern as `.github/workflows/ci-ios.yml`.
+      # Boot the simulator pinned to `IOS_SIM_DEVICE` /
+      # `IOS_SIM_RUNTIME` (see workflow-level `env:` block). The
+      # script fails loudly with the runner's currently-available
+      # IDs if either pin has been retired — that's the signal to
+      # bump both workflows (this one and `ci-ios.yml`) in lockstep
+      # and re-bake the iOS baselines.
       - name: Boot iOS Simulator
-        run: |
-          set -euo pipefail
-          RUNTIME=$(xcrun simctl list runtimes -j \
-            | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin)["runtimes"] if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")]; rs.sort(key=lambda r: tuple(int(x) for x in r["version"].split("."))); print(rs[-1]["identifier"])')
-          DEVICE=$(xcrun simctl list devicetypes -j \
-            | python3 -c 'import json,sys; ds=[d for d in json.load(sys.stdin)["devicetypes"] if "iPhone" in d["name"] and "Pro" in d["name"] and "Max" not in d["name"]]; ds.sort(key=lambda d: d["name"]); print(ds[-1]["identifier"])')
-          xcrun simctl create truce-bake "$DEVICE" "$RUNTIME"
-          xcrun simctl boot truce-bake
-          xcrun simctl bootstatus truce-bake
+        run: python3 scripts/ci/boot-ios-simulator.py truce-bake
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce --release
