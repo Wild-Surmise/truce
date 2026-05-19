@@ -91,6 +91,17 @@ impl FloatParam {
         self.smoother.next_block::<N>(target)
     }
 
+    /// Internal: advance the smoother by `n_samples` and return only
+    /// the final value. Plugin authors reach this through
+    /// [`FloatParamReadF32::read_after`] /
+    /// [`FloatParamReadF64::read_after`] in the prelude.
+    #[doc(hidden)]
+    #[inline]
+    pub fn raw_smoothed_next_after(&self, n_samples: usize) -> f32 {
+        let target = self.value.load();
+        self.smoother.next_after(target, n_samples)
+    }
+
     /// Read the value rounded to the nearest non-negative `usize`.
     /// Use this for discrete-range params consumed as array indices.
     /// Negatives, NaN, and infinities saturate at `0` / `usize::MAX`.
@@ -185,6 +196,18 @@ pub trait FloatParamReadF32 {
     #[must_use]
     fn read_block<const N: usize>(&self) -> [f32; N];
 
+    /// Advance the smoother by `n_samples` in one call, returning
+    /// only the final value. Use for **block-rate** DSP - hard
+    /// gates, mode switches, anything that needs one smoothed value
+    /// per audio block. Pass `buffer.num_samples()` to keep the
+    /// smoother's wall-clock convergence time matching the smoother
+    /// declaration (`smooth = "exp(20)"` then actually settles in
+    /// ~20 ms instead of ~20 blocks). One atomic load + one atomic
+    /// store; the intermediate envelope from [`Self::read_block`]
+    /// is skipped.
+    #[must_use]
+    fn read_after(&self, n_samples: usize) -> f32;
+
     /// Current smoothed value without advancing.
     #[must_use]
     fn current(&self) -> f32;
@@ -206,6 +229,10 @@ pub trait FloatParamReadF64 {
     /// widen on top of the same one-atomic-pair fast path.
     #[must_use]
     fn read_block<const N: usize>(&self) -> [f64; N];
+    /// f64 view of [`FloatParamReadF32::read_after`]; one widen
+    /// on top of the same one-atomic-pair fast path.
+    #[must_use]
+    fn read_after(&self, n_samples: usize) -> f64;
     #[must_use]
     fn current(&self) -> f64;
     #[must_use]
@@ -221,6 +248,11 @@ impl FloatParamReadF32 for FloatParam {
     #[inline]
     fn read_block<const N: usize>(&self) -> [f32; N] {
         self.raw_smoothed_next_block::<N>()
+    }
+
+    #[inline]
+    fn read_after(&self, n_samples: usize) -> f32 {
+        self.raw_smoothed_next_after(n_samples)
     }
 
     #[inline]
@@ -248,6 +280,11 @@ impl FloatParamReadF64 for FloatParam {
             out[i] = f64::from(v);
         }
         out
+    }
+
+    #[inline]
+    fn read_after(&self, n_samples: usize) -> f64 {
+        f64::from(self.raw_smoothed_next_after(n_samples))
     }
 
     #[inline]

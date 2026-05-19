@@ -134,6 +134,12 @@ pub struct EqParams {
 
 const NUM_BANDS: usize = 3;
 
+/// Upper bound on the audio block size we'll service. Each of the
+/// 10 smoothed shape params gets a `[f64; MAX_BLOCK]` scratch
+/// (~40 KB total) so the per-sample inner loop indexes into stack
+/// arrays instead of calling 10 atomic loads per sample.
+const MAX_BLOCK: usize = 512;
+
 pub struct Eq {
     pub params: Arc<EqParams>,
     /// One stereo filter per band; L and R advance through the
@@ -190,27 +196,36 @@ impl PluginLogic for Eq {
         let sr = self.sample_rate;
         let num_ch = buffer.channels();
         let stereo = num_ch >= 2;
-        let n = buffer.num_samples();
+        let n = buffer.num_samples().min(MAX_BLOCK);
+
+        // Block-read every smoothed shape param in one atomic-pair
+        // each (10 pairs total) instead of one pair per param per
+        // sample (10 * n pairs). Coefficient updates still happen
+        // per sample so a fast knob sweep stays click-free; only
+        // the smoother traffic moves out of the inner loop.
+        let low_freq = self.params.low_freq.read_block::<MAX_BLOCK>();
+        let low_gain = self.params.low_gain.read_block::<MAX_BLOCK>();
+        let low_q = self.params.low_q.read_block::<MAX_BLOCK>();
+        let mid_freq = self.params.mid_freq.read_block::<MAX_BLOCK>();
+        let mid_gain = self.params.mid_gain.read_block::<MAX_BLOCK>();
+        let mid_q = self.params.mid_q.read_block::<MAX_BLOCK>();
+        let high_freq = self.params.high_freq.read_block::<MAX_BLOCK>();
+        let high_gain = self.params.high_gain.read_block::<MAX_BLOCK>();
+        let high_q = self.params.high_q.read_block::<MAX_BLOCK>();
+        let output = self.params.output.read_block::<MAX_BLOCK>();
 
         for i in 0..n {
-            // All reads return `f64` because the prelude is `prelude64`.
-            let low_freq = self.params.low_freq.read();
-            let low_gain = self.params.low_gain.read();
-            let low_q = self.params.low_q.read();
-            let mid_freq = self.params.mid_freq.read();
-            let mid_gain = self.params.mid_gain.read();
-            let mid_q = self.params.mid_q.read();
-            let high_freq = self.params.high_freq.read();
-            let high_gain = self.params.high_gain.read();
-            let high_q = self.params.high_q.read();
-            let output = db_to_linear(self.params.output.read());
-
             // Per-sample coefficient updates because every shape
             // param is smoothed; one coefficient set serves both
             // channels.
-            self.bands[0].update_coefficients(low_shelf(low_freq, low_gain, low_q, sr));
-            self.bands[1].update_coefficients(peaking(mid_freq, mid_gain, mid_q, sr));
-            self.bands[2].update_coefficients(high_shelf(high_freq, high_gain, high_q, sr));
+            self.bands[0].update_coefficients(low_shelf(low_freq[i], low_gain[i], low_q[i], sr));
+            self.bands[1].update_coefficients(peaking(mid_freq[i], mid_gain[i], mid_q[i], sr));
+            self.bands[2].update_coefficients(high_shelf(
+                high_freq[i],
+                high_gain[i],
+                high_q[i],
+                sr,
+            ));
 
             // Read both channels (or duplicate the mono channel
             // into the second lane) before advancing any filter,
@@ -223,9 +238,10 @@ impl PluginLogic for Eq {
                 sample = band.run(sample);
             }
             let (l, r) = sample.to_lr();
-            buffer.io(0).1[i] = l * output;
+            let out_gain = db_to_linear(output[i]);
+            buffer.io(0).1[i] = l * out_gain;
             if stereo {
-                buffer.io(1).1[i] = r * output;
+                buffer.io(1).1[i] = r * out_gain;
             }
         }
 

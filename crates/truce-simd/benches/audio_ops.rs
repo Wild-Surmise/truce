@@ -426,13 +426,13 @@ fn bench_trim_block(c: &mut Criterion) {
 //   - `gain`              — examples/truce-example-gain (naive, per-sample
 //                           atomic + scalar multiply, the "before"
 //                           shape every plugin author has written).
-//   - `gain_simd_fast`    — examples/truce-example-gain-simd's
+//   - `gain_simd_fast`    — examples/truce-example-block-gain's
 //                           converged-smoother fast path (constant
 //                           gain across the block; scale_block per
 //                           channel). The typical real-world
 //                           case (user dials in -6 dB and walks
 //                           away).
-//   - `gain_simd_slow`    — examples/truce-example-gain-simd's
+//   - `gain_simd_slow`    — examples/truce-example-block-gain's
 //                           slow path (active smoother;
 //                           math::db_to_linear_block precompute,
 //                           chunks_mut + mul_block apply). The
@@ -479,7 +479,7 @@ fn simd_fast_gain_process(
     let mut output_refs: Vec<&mut [f32]> = out.iter_mut().map(Vec::as_mut_slice).collect();
     let mut buf = AudioBuffer::from_slices_checked(&input_refs[..], &mut output_refs[..], FRAMES);
     // Mirrors the converged-smoother branch of
-    // examples/truce-example-gain-simd. Caller is responsible for
+    // examples/truce-example-block-gain. Caller is responsible for
     // ensuring the smoothers are at target (this bench's
     // make_converged_param helper handles that).
     let gain_db = gain_p.value();
@@ -504,7 +504,7 @@ fn simd_slow_gain_process(
     let mut output_refs: Vec<&mut [f32]> = out.iter_mut().map(Vec::as_mut_slice).collect();
     let mut buf = AudioBuffer::from_slices_checked(&input_refs[..], &mut output_refs[..], FRAMES);
     // Mirrors the active-smoother branch of
-    // examples/truce-example-gain-simd, including the
+    // examples/truce-example-block-gain, including the
     // math::db_to_linear_block precompute (Phase 9).
     let n = buf.num_samples();
     let gain_db = gain_p.read_block::<FRAMES>();

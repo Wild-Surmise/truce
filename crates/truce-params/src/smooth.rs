@@ -132,6 +132,71 @@ impl Smoother {
         }
     }
 
+    /// Advance the smoother by `n_samples` samples in one call,
+    /// returning only the final value. Use for **block-rate**
+    /// consumers (hard gates, mode switches, anything that needs a
+    /// single smoothed value per audio block) where the intermediate
+    /// envelope from [`Self::next_block`] is wasted work.
+    ///
+    /// One atomic load and one atomic store regardless of
+    /// `n_samples`. For `Exponential`, uses the closed-form
+    /// `current + (target - current) * (1 - (1 - coeff)^N)` (one
+    /// `powf` per call) instead of looping; for `Linear`, loops
+    /// because the snap-when-close-enough check breaks any clean
+    /// closed form.
+    ///
+    /// Semantics match `next` step-for-step: equivalent to calling
+    /// `next(target)` `n_samples` times and returning the last
+    /// result, but without paying per-sample atomic costs.
+    // Smoother state stays in `[-1e10, 1e10]`; the f32 narrowing
+    // matches `next` / `next_block`.
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_precision_loss)]
+    #[inline]
+    pub fn next_after(&self, target: f64, n_samples: usize) -> f32 {
+        if n_samples == 0 {
+            return self.current.load() as f32;
+        }
+
+        let mut current = self.current.load();
+        let coeff = self.coeff.load();
+
+        match self.style {
+            SmoothingStyle::None => {
+                current = target;
+            }
+            SmoothingStyle::Linear(_) => {
+                // Same per-step math as `next_block`, including the
+                // snap-when-close-enough check. Looped because the
+                // snap branch wrecks any closed-form derivation.
+                let threshold = (target.abs() * 1e-6).max(1e-8);
+                for _ in 0..n_samples {
+                    let diff = target - current;
+                    if diff.abs() < threshold {
+                        current = target;
+                        break;
+                    }
+                    let step = diff * coeff;
+                    current = if step.abs() >= diff.abs() {
+                        target
+                    } else {
+                        current + step
+                    };
+                }
+            }
+            SmoothingStyle::Exponential(_) => {
+                // Closed form: N iterations of `current += coeff *
+                // (target - current)` converge to
+                // `target + (current - target) * (1 - coeff)^N`.
+                let decay = (1.0 - coeff).powf(n_samples as f64);
+                current = target + (current - target) * decay;
+            }
+        }
+
+        self.current.store(current);
+        current as f32
+    }
+
     /// Advance the smoother by `N` samples in one call, returning the
     /// intermediate per-sample values as a stack-allocated array.
     ///
@@ -262,5 +327,77 @@ mod tests {
         s.snap(20_000.0);
         assert!(s.is_converged(20_000.01));
         assert!(!s.is_converged(20_001.0));
+    }
+
+    #[test]
+    fn next_after_matches_next_block_exponential() {
+        // The closed-form path for Exponential should land on the
+        // same value the step-by-step `next_block` produces (within
+        // f32 rounding).
+        const N: usize = 512;
+        let stepwise = Smoother::new(SmoothingStyle::Exponential(20.0));
+        stepwise.set_sample_rate(48_000.0);
+        stepwise.snap(0.0);
+        let block = stepwise.next_block::<N>(1.0);
+
+        let closed = Smoother::new(SmoothingStyle::Exponential(20.0));
+        closed.set_sample_rate(48_000.0);
+        closed.snap(0.0);
+        let after = closed.next_after(1.0, N);
+
+        let diff = (block[N - 1] - after).abs();
+        assert!(
+            diff < 1e-6,
+            "block last = {}, after = {}",
+            block[N - 1],
+            after
+        );
+    }
+
+    #[test]
+    fn next_after_matches_next_block_linear() {
+        const N: usize = 64;
+        let stepwise = Smoother::new(SmoothingStyle::Linear(5.0));
+        stepwise.set_sample_rate(48_000.0);
+        stepwise.snap(0.0);
+        let mut last = 0.0_f32;
+        for _ in 0..N {
+            last = stepwise.next(1.0);
+        }
+
+        let chunked = Smoother::new(SmoothingStyle::Linear(5.0));
+        chunked.set_sample_rate(48_000.0);
+        chunked.snap(0.0);
+        let after = chunked.next_after(1.0, N);
+
+        assert!(
+            (last - after).abs() < 1e-6,
+            "stepwise = {last}, after = {after}"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn next_after_zero_samples_is_no_op() {
+        // n=0 must return current value and leave state untouched.
+        // Float equality is the right check here: we want bit-exact
+        // identity, not "close enough".
+        let s = Smoother::new(SmoothingStyle::Exponential(5.0));
+        s.set_sample_rate(48_000.0);
+        s.snap(0.25);
+        let before = s.current();
+        let v = s.next_after(0.99, 0);
+        assert_eq!(v, before);
+        assert_eq!(s.current(), before);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn next_after_none_snaps_immediately() {
+        let s = Smoother::new(SmoothingStyle::None);
+        s.snap(0.0);
+        let v = s.next_after(0.7, 1024);
+        assert_eq!(v, 0.7);
+        assert_eq!(s.current(), 0.7);
     }
 }

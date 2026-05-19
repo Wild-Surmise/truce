@@ -93,7 +93,7 @@ fn naive_gain(inp: &[Vec<f32>], out: &mut [Vec<f32>], gain_p: &FloatParam, pan_p
 }
 
 /// Mirrors the converged-smoother fast path of
-/// `examples/truce-example-gain-simd/src/lib.rs`.
+/// `examples/truce-example-block-gain/src/lib.rs`.
 fn simd_fast_gain(inp: &[Vec<f32>], out: &mut [Vec<f32>], gain_p: &FloatParam, pan_p: &FloatParam) {
     let input_refs: Vec<&[f32]> = inp.iter().map(Vec::as_slice).collect();
     let mut output_refs: Vec<&mut [f32]> = out.iter_mut().map(Vec::as_mut_slice).collect();

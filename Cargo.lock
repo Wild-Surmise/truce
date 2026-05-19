@@ -6708,7 +6708,112 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-drywet"
+name = "truce-example-block-drywet"
+version = "0.44.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-simd",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-block-gain"
+version = "0.44.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-simd",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-block-gate"
+version = "0.44.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-simd",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-block-saturate"
+version = "0.44.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-simd",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-block-surround-meter"
+version = "0.44.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-simd",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-block-widen"
 version = "0.44.0"
 dependencies = [
  "clap-sys",
@@ -6859,27 +6964,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-gain-simd"
-version = "0.44.0"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-simd",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
 name = "truce-example-gain-slint"
 version = "0.44.0"
 dependencies = [
@@ -6903,48 +6987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-gate"
-version = "0.44.0"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-simd",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
-name = "truce-example-saturate"
-version = "0.44.0"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-simd",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
 name = "truce-example-state"
 version = "0.44.0"
 dependencies = [
@@ -6960,27 +7002,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
-name = "truce-example-surround-meter"
-version = "0.44.0"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-simd",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -7043,27 +7064,6 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
-name = "truce-example-widen"
-version = "0.44.0"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-simd",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
