@@ -249,12 +249,30 @@ jobs:
       - name: Build cargo-truce
         run: cargo build -p cargo-truce --release
 
-      # Each iOS install is a fresh `cargo build` + `swiftc` + sign +
-      # `simctl install` + launch + `simctl io screenshot` pass, ~30-60s
-      # per crate. The artifact uploads `_default_ios.png` (editor crop)
-      # and `_container_ios.png` (container chrome) per crate. iced is
-      # excluded — its iOS backend doesn't build (winit upstream issue)
-      # and its container app never wires the editor.
+      # Pre-build every example's iOS-sim slice in a single cargo
+      # invocation. Lets cargo dedup shared dep compilation (truce-core,
+      # wgpu, baseview, etc.) across all plugins instead of paying the
+      # dep build cost separately in each per-crate `install_one_screenshot`
+      # below. After this step, the `cargo build` inside each install is
+      # a fast fingerprint-only no-op.
+      - name: Pre-build iOS plugin slices
+        run: |
+          set -euo pipefail
+          args=()
+          for crate in $EXAMPLE_CRATES; do
+            [ "$crate" = "truce-example-gain-iced" ] && continue
+            args+=("-p" "$crate")
+          done
+          cargo build "${args[@]}" --target aarch64-apple-ios-sim \
+            --release --no-default-features --features au
+
+      # One install + launch + simctl capture per crate, with both
+      # `_default_ios.png` (editor crop) and `_container_ios.png`
+      # (container chrome) emitted from the same screenshot. Was
+      # doing the install + launch twice per crate; `--container-out`
+      # writes the second crop from the same captured PNG.
+      # iced is excluded — its iOS backend doesn't build (winit
+      # upstream issue) and its container app never wires the editor.
       - name: Bake iOS screenshots
         run: |
           set -euo pipefail
@@ -264,18 +282,13 @@ jobs:
             fi
             short="${crate#truce-example-}"
             short="${short//-/_}"
-            for mode in default container; do
-              out="examples/${crate}/screenshots/${short}_${mode}_ios.png"
-              echo "::group::Baking $out"
-              if [ "$mode" = "container" ]; then
-                ./target/release/cargo-truce screenshot --ios \
-                  --crop-mode container --out "$out" -p "$crate"
-              else
-                ./target/release/cargo-truce screenshot --ios \
-                  --out "$out" -p "$crate"
-              fi
-              echo "::endgroup::"
-            done
+            default_out="examples/${crate}/screenshots/${short}_default_ios.png"
+            container_out="examples/${crate}/screenshots/${short}_container_ios.png"
+            echo "::group::Baking $default_out + $container_out"
+            ./target/release/cargo-truce screenshot --ios \
+              --out "$default_out" --container-out "$container_out" \
+              -p "$crate"
+            echo "::endgroup::"
           done
 
       - uses: actions/upload-artifact@v4

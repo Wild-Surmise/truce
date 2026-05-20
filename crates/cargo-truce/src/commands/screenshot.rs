@@ -361,7 +361,12 @@ Options:
   --crop-mode <m>  (--ios only) `editor` (default) crops to the plug-in editor's
                    region. `container` crops just the iOS status bar band off the
                    top, keeping the rest of the container chrome - use for
-                   framework-level tests that gate on the container layout."
+                   framework-level tests that gate on the container layout.
+  --container-out <path>
+                   (--ios only) Also emit a container-crop image at <path> from
+                   the same captured screenshot. Cuts the install + launch
+                   round-trip in half when both crops are wanted. Incompatible
+                   with --check."
     );
 }
 
@@ -369,6 +374,7 @@ Options:
 fn cmd_screenshot_ios(args: &[String]) -> Res {
     let mut plugin_filter: Option<&str> = None;
     let mut out_path: Option<PathBuf> = None;
+    let mut container_out_path: Option<PathBuf> = None;
     let mut check_mode = false;
     let mut crop_mode = IosCropMode::Editor;
     let mut i = 0;
@@ -380,6 +386,13 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
                 out_path = args.get(i).map(PathBuf::from);
                 if out_path.is_none() {
                     return Err("--out needs a path".into());
+                }
+            }
+            "--container-out" => {
+                i += 1;
+                container_out_path = args.get(i).map(PathBuf::from);
+                if container_out_path.is_none() {
+                    return Err("--container-out needs a path".into());
                 }
             }
             "-p" => {
@@ -406,6 +419,9 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
         i += 1;
     }
     let out_path = out_path.ok_or("--out <path> required")?;
+    if container_out_path.is_some() && check_mode {
+        return Err("--container-out is not supported in --check mode yet".into());
+    }
 
     // Resolve plugin + drive the install pipeline so the simulator
     // has a freshly-built bundle to launch.
@@ -476,6 +492,30 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
         return Ok(());
     }
     capture_simctl_screenshot(&resolved_out)?;
+    // `--container-out` reuses the just-captured framebuffer: copy
+    // it to the second destination, then run `crop_for_mode` over
+    // each copy independently. Saves one full install + launch +
+    // sleep round-trip per crate in the screenshot bake loop.
+    if let Some(container_out) = container_out_path {
+        let container_resolved = if container_out.is_absolute() {
+            container_out
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(container_out)
+        };
+        if let Some(parent) = container_resolved.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::copy(&resolved_out, &container_resolved).map_err(|e| {
+            format!(
+                "copy {} -> {}: {e}",
+                resolved_out.display(),
+                container_resolved.display()
+            )
+        })?;
+        crop_for_mode(&container_resolved, &bundle_id, IosCropMode::Container);
+    }
     crop_for_mode(&resolved_out, &bundle_id, crop_mode);
     Ok(())
 }
