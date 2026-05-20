@@ -36,6 +36,7 @@ use quote::quote;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use syn::Type;
+use truce_build::lv2::Lv2Param;
 
 /// Write the per-struct sidecar. Best-effort; errors don't fail the
 /// build (a missing sidecar will surface later when
@@ -63,9 +64,15 @@ pub(crate) fn write_struct_sidecar(
         if let Some(r) = &p.attrs.range {
             let _ = writeln!(buf, "range = \"{}\"", toml_escape(r));
         }
-        if let Some(d) = p.attrs.default {
-            let _ = writeln!(buf, "default = {d}");
-        }
+        // Always emit `default` so the LV2 TTL matches the runtime
+        // `ParamInfo::default_plain`. The runtime falls back to `0.0`
+        // when `#[param(default = ...)]` is omitted (see
+        // `gen_param_info_literal`); the LV2 sidecar has to mirror
+        // that, otherwise hosts read `lv2:default` from the TTL and
+        // open the plugin at the range's minimum (e.g. gain at -60 dB)
+        // while VST3 / standalone honour the runtime's 0.0.
+        let default = p.attrs.default.unwrap_or(0.0);
+        let _ = writeln!(buf, "default = {default}");
         if let Some(u) = &p.attrs.unit {
             let _ = writeln!(buf, "unit = \"{}\"", toml_escape(u));
         }
@@ -227,8 +234,7 @@ fn aggregate(
     Ok(())
 }
 
-fn parse_param_entry(v: &toml::Value) -> Result<truce_build::lv2::Lv2Param, String> {
-    use truce_build::lv2::{Lv2Param, Lv2Range};
+fn parse_param_entry(v: &toml::Value) -> Result<Lv2Param, String> {
     let id = v
         .get("id")
         .and_then(toml::Value::as_integer)
@@ -241,6 +247,9 @@ fn parse_param_entry(v: &toml::Value) -> Result<truce_build::lv2::Lv2Param, Stri
         .to_string();
     let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("Float");
     let range_str = v.get("range").and_then(|x| x.as_str()).unwrap_or("");
+    // The sidecar writer always emits `default`; the `NaN` sentinel
+    // here is a defensive backstop for an out-of-tree producer that
+    // skips the field.
     let default = v
         .get("default")
         .and_then(toml_value_to_f64)
@@ -248,19 +257,13 @@ fn parse_param_entry(v: &toml::Value) -> Result<truce_build::lv2::Lv2Param, Stri
     let unit = v.get("unit").and_then(|x| x.as_str()).unwrap_or("");
     let flags = v.get("flags").and_then(|x| x.as_str()).unwrap_or("");
     let range = parse_range_value(range_str, kind)?;
-    let default_plain = if default.is_nan() {
-        match (kind, &range) {
-            ("Bool" | "Enum", _) | (_, Lv2Range::Enum { .. }) => 0.0,
-            (
-                _,
-                Lv2Range::Linear { min, .. }
-                | Lv2Range::Logarithmic { min, .. }
-                | Lv2Range::Discrete { min, .. },
-            ) => *min,
-        }
-    } else {
-        default
-    };
+    // Match `truce-derive::gen_param_info_literal`'s implicit default
+    // (`a.default.unwrap_or(0.0)`) so the LV2 TTL agrees with the
+    // ParamInfo VST3 / standalone read at runtime. The defensive
+    // `NaN` branch only fires when the sidecar omits `default`
+    // entirely (out-of-tree producer); the in-tree writer always
+    // emits the field, so this normally lands in the `else` arm.
+    let default_plain = if default.is_nan() { 0.0 } else { default };
     Ok(Lv2Param {
         id,
         name,
