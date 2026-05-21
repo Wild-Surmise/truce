@@ -6671,6 +6671,7 @@ name = "truce-example-gain"
 version = "0.48.3"
 dependencies = [
  "clap-sys",
+ "hound",
  "truce",
  "truce-aax",
  "truce-au",

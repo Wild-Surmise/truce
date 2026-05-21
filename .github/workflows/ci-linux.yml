@@ -55,7 +55,16 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
             libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
             libasound2-dev libjack-jackd2-dev \
-            libfontconfig1-dev libfreetype-dev
+            libfontconfig1-dev libfreetype-dev \
+            alsa-utils
+
+      - name: Point ALSA default PCM at the null device
+        run: |
+          sudo tee /etc/asound.conf >/dev/null <<'EOF'
+          pcm.!default { type null }
+          ctl.!default { type null }
+          EOF
+          aplay -L | head -4
 
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
