@@ -60,7 +60,7 @@ edition = "2024"
 # The compound is not a registered SPDX expression, so we ship via
 # `license-file` rather than `license =`.
 license-file = "LICENSE"
-rust-version = "1.90"
+rust-version = "1.92"
 description = "Build audio plugins in Rust. One codebase, every format."
 repository = "https://github.com/truce-audio/truce"
 homepage = "https://github.com/truce-audio/truce"
