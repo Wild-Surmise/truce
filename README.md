@@ -91,7 +91,7 @@ a real-time spectrum analyzer with diff overlay for debugging/reverse-engineerin
 
 <img src="examples/screenshots/analyzer_diff.png" width="600">
 
-Nine smaller example plugins ship in-tree to cover the basics — gain,
+Smaller example plugins ship in-tree to cover the basics — gain,
 EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
 showing the egui / iced / Slint backends. See
 [truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
