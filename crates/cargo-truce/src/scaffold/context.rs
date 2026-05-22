@@ -12,8 +12,6 @@ use super::case::to_pascal_case;
 use super::kind::PluginKind;
 use super::spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 
-const REPO_URL: &str = "https://github.com/truce-audio/truce";
-
 // ---------------------------------------------------------------------------
 // PluginScaffoldingContext - fields the per-plugin templates (Cargo.toml,
 // build.rs, src/lib.rs, src/main.rs) reference.
@@ -25,7 +23,7 @@ pub(crate) struct PluginScaffoldingContext {
     pub crate_lib: String,
     pub struct_name: String,
     pub upper_name: String,
-    pub tag: String,
+    pub version: String,
 
     pub is_workspace: bool,
     pub has_standalone: bool,
@@ -47,7 +45,7 @@ impl PluginScaffoldingContext {
         kind: PluginKind,
         dep_form: DepForm,
         features: FeatureSet,
-        tag: &str,
+        version: &str,
     ) -> Self {
         let struct_name = to_pascal_case(crate_name);
         let crate_lib = crate_name.replace('-', "_");
@@ -58,12 +56,12 @@ impl PluginScaffoldingContext {
             crate_name: crate_name.to_string(),
             crate_lib,
             upper_name,
-            tag: tag.to_string(),
+            version: version.to_string(),
             is_workspace,
             has_standalone,
             default_label: default_label(features),
             default_features: default_features(features),
-            dep_args: dep_args(dep_form, tag),
+            dep_args: dep_args(dep_form, version),
             params_struct: kind.params_struct(&struct_name),
             process_body: kind.process_body(),
             bus_layouts_method: kind.bus_layouts_method(),
@@ -81,18 +79,18 @@ impl PluginScaffoldingContext {
 #[derive(Serialize)]
 pub(crate) struct WorkspaceContext {
     pub members: Vec<String>,
-    pub tag: String,
+    pub version: String,
     pub has_standalone: bool,
 }
 
 impl WorkspaceContext {
-    pub fn new(plugins: &[PluginSpec], features: FeatureSet, tag: &str) -> Self {
+    pub fn new(plugins: &[PluginSpec], features: FeatureSet, version: &str) -> Self {
         Self {
             members: plugins
                 .iter()
                 .map(|p| format!("plugins/{}", p.name))
                 .collect(),
-            tag: tag.to_string(),
+            version: version.to_string(),
             has_standalone: features.standalone,
         }
     }
@@ -197,9 +195,9 @@ fn default_features(features: FeatureSet) -> &'static str {
     }
 }
 
-fn dep_args(dep_form: DepForm, tag: &str) -> String {
+fn dep_args(dep_form: DepForm, version: &str) -> String {
     match dep_form {
-        DepForm::GitTag => format!(r#"git = "{REPO_URL}", tag = "{tag}""#),
+        DepForm::Registry => format!(r#"version = "{version}""#),
         DepForm::Workspace => "workspace = true".to_string(),
     }
 }

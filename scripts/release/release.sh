@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# release.sh — tag HEAD, publish to crates.io, push, create the
-# GitHub Release. Idempotent: each step skips if it's already done.
+# release.sh — tag HEAD, publish every truce workspace crate to
+# crates.io, push the tag, create the GitHub Release. Idempotent:
+# each step skips if it's already done.
 #
 # Usage:
 #   scripts/release/release.sh
@@ -13,50 +14,91 @@
 # there to create a new feature branch + PR, merge, then run this
 # script from main with main pointing at the merged hotfix commit.)
 #
-# Idempotency:
-#   - If the tag already exists locally + on origin: skip create + push.
-#   - If a crate version is already on crates.io: skip publish.
-#   - If the GitHub Release exists: skip create.
-#   - Re-running after a partial failure picks up where it left off.
+# Publish order is computed from `cargo metadata` — every workspace
+# member under `crates/` (i.e. excluding `examples/*`) is published
+# in topological dep order. Each step is idempotent against
+# crates.io, so re-running after a partial failure picks up where
+# it left off.
+#
+# Rate-limit handling
+# -------------------
+# crates.io throttles new-crate publishes more aggressively than
+# version updates of existing crates. The script:
+#   1. Sleeps `INDEX_PROP_DELAY` after every successful publish so
+#      the next dependent crate's resolver sees the new index entry.
+#   2. Detects rate-limit errors in cargo's stderr (`429`,
+#      "rate limit", "too many requests") and retries the same
+#      crate with exponential backoff up to `MAX_RETRY_ATTEMPTS`.
+# A first-time-publishing-everything run hits the new-crate token
+# bucket; the retry loop absorbs that without operator intervention.
 #
 # Pre-reqs:
 #   - `cargo login <token>` already run.
 #   - `gh auth login` already run.
 #   - HEAD's Cargo.toml contains the version we want to ship.
+#   - Every internal workspace dep in [workspace.dependencies] has
+#     `version = "<workspace version>"` (verified below).
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tunables
+# ---------------------------------------------------------------------------
+
+# Wait for the sparse index to surface a freshly-published crate
+# before publishing anything that depends on it. ~30 s has been a
+# safe margin against historical index lag.
+INDEX_PROP_DELAY="${INDEX_PROP_DELAY:-30}"
+
+# Initial backoff after a rate-limit failure, in seconds. Doubles
+# each retry. With the defaults (60 s, 5 doublings) total worst-case
+# wait per crate is ~63 minutes — comfortably above crates.io's
+# strictest sustained throttle window for new-crate publishes.
+RATE_LIMIT_INITIAL_DELAY="${RATE_LIMIT_INITIAL_DELAY:-60}"
+MAX_RETRY_ATTEMPTS="${MAX_RETRY_ATTEMPTS:-6}"
+
+# ---------------------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 is_published_on_crates_io() {
     # Args: <crate> <version>. Returns 0 if the crate@version is on
-    # crates.io. Uses the public HTTP API (no cargo dependencies).
+    # crates.io. Uses the public HTTP API (no cargo dependency).
     local crate="$1" version="$2"
     curl -sf -o /dev/null \
         "https://crates.io/api/v1/crates/$crate/$version" \
         2>/dev/null
 }
 
+crate_exists_on_crates_io() {
+    # Args: <crate>. Returns 0 if any version of the crate is on
+    # crates.io (i.e. publishing this version is an UPDATE, not a
+    # first publish).
+    local crate="$1"
+    curl -sf -o /dev/null \
+        "https://crates.io/api/v1/crates/$crate" \
+        2>/dev/null
+}
+
 is_tag_on_origin() {
-    # Args: <tag>. Returns 0 if origin has the tag.
     local tag="$1"
     git ls-remote --tags origin "refs/tags/$tag" 2>/dev/null \
         | grep -q "refs/tags/$tag$"
 }
 
 is_github_release_present() {
-    # Args: <tag>. Returns 0 if a GitHub Release exists for the tag.
     local tag="$1"
     gh release view "$tag" >/dev/null 2>&1
 }
 
-# ----------------------------------------------------------------------------
-# Read + verify versions
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Read + verify workspace version, then verify every internal dep
+# pins the same version (cargo strips `path` at publish time and
+# embeds the registry version; drift here breaks downstream
+# resolution after publish).
+# ---------------------------------------------------------------------------
 
 echo "→ reading + verifying versions in Cargo.toml"
 
@@ -65,31 +107,29 @@ WS_VERSION="$(awk -F\" '
     p && /^version = / { print $2; exit }
 ' Cargo.toml)"
 
-SHIM_VERSION="$(awk -F\" '
-    /^truce-shim-types = / { print $2; exit }
-' Cargo.toml)"
-
-BUILD_VERSION="$(awk -F\" '
-    /^truce-build = / { print $2; exit }
-' Cargo.toml)"
-
-UTILS_VERSION="$(awk -F\" '
-    /^truce-utils = / { print $2; exit }
-' Cargo.toml)"
-
 if [[ -z "$WS_VERSION" ]]; then
     echo "Error: could not read [workspace.package].version" >&2
     exit 1
 fi
 
-if [[ "$WS_VERSION" != "$SHIM_VERSION" \
-   || "$WS_VERSION" != "$BUILD_VERSION" \
-   || "$WS_VERSION" != "$UTILS_VERSION" ]]; then
-    echo "Error: version drift in Cargo.toml" >&2
-    echo "  [workspace.package].version               = $WS_VERSION" >&2
-    echo "  [workspace.dependencies].truce-shim-types = $SHIM_VERSION" >&2
-    echo "  [workspace.dependencies].truce-build      = $BUILD_VERSION" >&2
-    echo "  [workspace.dependencies].truce-utils      = $UTILS_VERSION" >&2
+DRIFT="$(awk -v want="$WS_VERSION" '
+    /^\[workspace\.dependencies\]/ { in_deps = 1; next }
+    in_deps && /^\[/ { in_deps = 0 }
+    in_deps && /^truce/ && /version *=/ && /path *=/ {
+        if (match($0, /version *= *"[^"]*"/)) {
+            v = substr($0, RSTART, RLENGTH)
+            sub(/^version *= *"/, "", v)
+            sub(/"$/, "", v)
+            name = $0
+            sub(/ *=.*/, "", name)
+            if (v != want) printf "  %s = \"%s\"\n", name, v
+        }
+    }
+' Cargo.toml)"
+
+if [[ -n "$DRIFT" ]]; then
+    echo "Error: workspace dependency version drift vs $WS_VERSION:" >&2
+    echo "$DRIFT" >&2
     exit 1
 fi
 
@@ -99,9 +139,9 @@ echo
 echo "Releasing $TAG (HEAD: $(git rev-parse --short HEAD))"
 echo
 
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Step 1 — local tag
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 echo "→ local tag $TAG"
 if git rev-parse --verify "$TAG" >/dev/null 2>&1; then
@@ -122,72 +162,153 @@ else
     echo "  created"
 fi
 
-# ----------------------------------------------------------------------------
-# Step 2 — publish leaf crates consumed by cargo-truce
+# ---------------------------------------------------------------------------
+# Step 2 — compute publish order from cargo metadata
 #
-# `truce-shim-types`, `truce-build`, and `truce-utils` are all pulled
-# in by `cargo-truce`'s lib half. None of them depend on each other,
-# so order between them doesn't matter — but all three must land on
-# the registry before `cargo publish -p cargo-truce` will resolve.
-# ----------------------------------------------------------------------------
-
-PUBLISHED_ANY=0
+# Filter: workspace members under `crates/` (examples are scaffolded
+# demonstrations, not published). Topo-sort by intra-workspace
+# dependencies so every dep is on the registry before its dependents.
+# ---------------------------------------------------------------------------
 
 echo
-echo "→ publishing truce-shim-types $WS_VERSION"
-if is_published_on_crates_io truce-shim-types "$WS_VERSION"; then
-    echo "  already on crates.io; skipping"
-else
-    cargo publish -p truce-shim-types --dry-run
-    cargo publish -p truce-shim-types
-    PUBLISHED_ANY=1
+echo "→ computing publish order from cargo metadata"
+
+ORDER="$(python3 - <<'PY'
+import json
+import subprocess
+import sys
+
+meta = json.loads(subprocess.check_output(
+    ["cargo", "metadata", "--format-version", "1", "--no-deps"]))
+
+ws_members = set(meta["workspace_members"])
+pkgs = [
+    p for p in meta["packages"]
+    if p["id"] in ws_members
+    and "/crates/" in p["manifest_path"]
+    and p.get("publish") != []  # opt-out via `publish = false`
+]
+names = {p["name"] for p in pkgs}
+
+# Edges: package -> set of intra-workspace dep names. A dep listed
+# multiple times (e.g. once per target / per kind) collapses naturally
+# through the set. Dev-deps (`kind == "dev"`) are stripped at publish
+# time, so excluding them here matches the actual on-registry shape.
+# The current workspace is cycle-free in normal deps (test crates
+# that need a `truce` dev-dep live in their own publish=false crate,
+# `truce-loader-tests`), but the filter is kept defensively: a
+# future test relocation that re-introduces a back-edge shouldn't
+# silently break the publish topology.
+incoming = {p["name"]: set() for p in pkgs}
+for p in pkgs:
+    for d in p["dependencies"]:
+        if d.get("kind") == "dev":
+            continue
+        if d["name"] in names and d["name"] != p["name"]:
+            incoming[p["name"]].add(d["name"])
+
+# Kahn topo sort, alphabetical tie-break for determinism.
+order = []
+ready = sorted(n for n, deps in incoming.items() if not deps)
+while ready:
+    n = ready.pop(0)
+    order.append(n)
+    for m, deps in list(incoming.items()):
+        if n in deps:
+            deps.discard(n)
+            if not deps and m not in order and m not in ready:
+                ready.append(m)
+    ready.sort()
+
+remaining = [n for n in incoming if n not in order]
+if remaining:
+    sys.exit(f"cycle: unresolved={remaining}")
+
+print("\n".join(order))
+PY
+)"
+
+if [[ -z "$ORDER" ]]; then
+    echo "Error: no publishable crates found under crates/" >&2
+    exit 1
 fi
 
 echo
-echo "→ publishing truce-build $WS_VERSION"
-if is_published_on_crates_io truce-build "$WS_VERSION"; then
-    echo "  already on crates.io; skipping"
-else
-    cargo publish -p truce-build --dry-run
-    cargo publish -p truce-build
-    PUBLISHED_ANY=1
-fi
+echo "Publish order:"
+printf '%s\n' "$ORDER" | sed 's/^/  /'
+
+# ---------------------------------------------------------------------------
+# Step 3 — publish each crate in topo order
+# ---------------------------------------------------------------------------
+
+publish_one() {
+    # Run `cargo publish -p <crate>`, retrying on rate-limit errors
+    # with exponential backoff. Returns non-zero on a non-rate-limit
+    # failure or after MAX_RETRY_ATTEMPTS rate-limit retries.
+    local crate="$1"
+    local log delay attempts
+    log="$(mktemp -t truce-publish.XXXXXX)"
+    delay="$RATE_LIMIT_INITIAL_DELAY"
+    attempts=0
+
+    while (( attempts < MAX_RETRY_ATTEMPTS )); do
+        attempts=$((attempts + 1))
+        # pipefail (set above) propagates cargo's exit through tee.
+        if cargo publish -p "$crate" 2>&1 | tee "$log"; then
+            rm -f "$log"
+            return 0
+        fi
+
+        if grep -qiE '429|rate.?limit|too many requests' "$log"; then
+            if (( attempts >= MAX_RETRY_ATTEMPTS )); then
+                echo "Error: $crate still rate-limited after $attempts attempts" >&2
+                rm -f "$log"
+                return 1
+            fi
+            echo "  rate-limited; sleeping ${delay}s before retry $((attempts + 1))/$MAX_RETRY_ATTEMPTS"
+            sleep "$delay"
+            delay=$((delay * 2))
+            continue
+        fi
+
+        # Non-rate-limit failure — bail immediately so the operator
+        # can see the compile / network / auth error.
+        rm -f "$log"
+        return 1
+    done
+
+    rm -f "$log"
+    return 1
+}
 
 echo
-echo "→ publishing truce-utils $WS_VERSION"
-if is_published_on_crates_io truce-utils "$WS_VERSION"; then
-    echo "  already on crates.io; skipping"
-else
-    cargo publish -p truce-utils --dry-run
-    cargo publish -p truce-utils
-    PUBLISHED_ANY=1
-fi
+echo "→ publishing crates"
 
-# ----------------------------------------------------------------------------
-# Step 3 — wait for index propagation (only if we just published)
-# ----------------------------------------------------------------------------
-
-if [[ "$PUBLISHED_ANY" == "1" ]]; then
+while IFS= read -r crate; do
+    [[ -z "$crate" ]] && continue
     echo
-    echo "→ sleeping 30s for crates.io index propagation"
-    sleep 30
-fi
+    echo "→ $crate $WS_VERSION"
 
-# ----------------------------------------------------------------------------
-# Step 4 — publish cargo-truce
-# ----------------------------------------------------------------------------
+    if is_published_on_crates_io "$crate" "$WS_VERSION"; then
+        echo "  already on crates.io at $WS_VERSION; skipping"
+        continue
+    fi
 
-echo
-echo "→ publishing cargo-truce $WS_VERSION"
-if is_published_on_crates_io cargo-truce "$WS_VERSION"; then
-    echo "  already on crates.io; skipping"
-else
-    cargo publish -p cargo-truce
-fi
+    if crate_exists_on_crates_io "$crate"; then
+        echo "  (existing crate — publishing new version)"
+    else
+        echo "  (NEW crate — first publish; rate-limit retries enabled)"
+    fi
 
-# ----------------------------------------------------------------------------
-# Step 5 — push tag
-# ----------------------------------------------------------------------------
+    publish_one "$crate"
+
+    echo "  sleeping ${INDEX_PROP_DELAY}s for index propagation"
+    sleep "$INDEX_PROP_DELAY"
+done <<< "$ORDER"
+
+# ---------------------------------------------------------------------------
+# Step 4 — push tag
+# ---------------------------------------------------------------------------
 
 echo
 echo "→ pushing tag $TAG"
@@ -197,9 +318,9 @@ else
     git push origin "$TAG"
 fi
 
-# ----------------------------------------------------------------------------
-# Step 6 — GitHub Release
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Step 5 — GitHub Release
+# ---------------------------------------------------------------------------
 
 echo
 echo "→ creating GitHub Release"
@@ -209,13 +330,11 @@ if is_github_release_present "$TAG"; then
 else
     gh release create "$TAG" \
         --title "truce $WS_VERSION"
-#
-#        --generate-notes \
 fi
 
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Done
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 echo
 echo "Released $TAG."

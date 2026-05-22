@@ -553,46 +553,61 @@ fn walk_cargo_toml(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Line-based rewrite:
 ///
 /// ```text
-/// <key> = { git = "https://github.com/truce-audio/truce"[, tag = "..."][, ...] }
+/// truce-* = { version = "X.Y.Z"[, ...] }
 ///                           ↓
-/// <key> = { path = "<crates>/<key>"[, ...] }
+/// truce-* = { path = "<crates>/<key>"[, ...] }
 /// ```
 ///
-/// `tag = "..."` is stripped because path deps reject the key.
-/// Scaffolds emit `tag = "vX.Y.Z"` exclusively.
+/// Replaces the scaffolded crates.io registry pin with a path dep
+/// pointing at the local checkout, so the e2e tests can `cargo
+/// check` a fresh scaffold without the published version having
+/// to resolve.
 ///
-/// Skips commented-out lines (so the workspace `[workspace.dependencies]`
-/// block's commented "Uncomment to opt in" entries pass through
-/// unchanged). Scaffolded Cargo.tomls always use the single-line form,
-/// so a regex-less line scan suffices.
+/// Only lines whose key starts with `truce` are touched. Commented
+/// lines and non-truce deps (e.g. `clap-sys`) pass through unchanged.
+/// Scaffolded Cargo.tomls always use the single-line form so a
+/// regex-less line scan suffices.
 fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
-    const NEEDLE: &str = r#"{ git = "https://github.com/truce-audio/truce""#;
+    const NEEDLE: &str = r#"version = ""#;
     let mut out = String::with_capacity(content.len());
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') || !line.contains(NEEDLE) {
+        if trimmed.starts_with('#') {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        // Extract the key (the `truce-foo` in `truce-foo = { git = ... }`).
         let Some(eq_idx) = line.find('=') else {
             out.push_str(line);
             out.push('\n');
             continue;
         };
         let key = line[..eq_idx].trim();
-        let replacement = format!(r#"{{ path = "{crates_dir}/{key}""#);
-        let mut rewritten = line.replacen(NEEDLE, &replacement, 1);
-        // Strip `, tag = "..."` if present - invalid on path deps.
-        // Scaffolds emit it immediately after the URL.
-        let needle = r#", tag = ""#;
-        if let Some(start) = rewritten.find(needle) {
-            let after = start + needle.len();
-            if let Some(end_quote) = rewritten[after..].find('"') {
-                rewritten.replace_range(start..=(after + end_quote), "");
-            }
+        // Only rewrite truce-* deps; leave `clap-sys = { version =
+        // "0.5", ... }` and the `[package]`'s own `version = "0.1.0"`
+        // untouched.
+        if !key.starts_with("truce") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
         }
+        let Some(start) = line.find(NEEDLE) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let after = start + NEEDLE.len();
+        let Some(end_rel) = line[after..].find('"') else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let span_end = after + end_rel; // index of the closing `"`
+        let replacement = format!(r#"path = "{crates_dir}/{key}""#);
+        let mut rewritten = String::with_capacity(line.len() + replacement.len());
+        rewritten.push_str(&line[..start]);
+        rewritten.push_str(&replacement);
+        rewritten.push_str(&line[(span_end + 1)..]);
         out.push_str(&rewritten);
         out.push('\n');
     }
@@ -1012,8 +1027,8 @@ fn decode_to_f32(path: &Path) -> Vec<f32> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn rewrite_simple_git_ref() {
-    let input = r#"truce = { git = "https://github.com/truce-audio/truce" }
+fn rewrite_simple_version_ref() {
+    let input = r#"truce = { version = "0.48.6" }
 "#;
     let expected = r#"truce = { path = "/abs/crates/truce" }
 "#;
@@ -1022,8 +1037,8 @@ fn rewrite_simple_git_ref() {
 
 #[test]
 fn rewrite_preserves_features_and_optional() {
-    let input = r#"truce-clap = { git = "https://github.com/truce-audio/truce", optional = true }
-truce-standalone = { git = "https://github.com/truce-audio/truce", features = ["gui"] }
+    let input = r#"truce-clap = { version = "0.48.6", optional = true }
+truce-standalone = { version = "0.48.6", features = ["gui"] }
 "#;
     let expected = r#"truce-clap = { path = "/abs/crates/truce-clap", optional = true }
 truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"] }
@@ -1032,14 +1047,22 @@ truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"] }
 }
 
 #[test]
-fn rewrite_strips_tag_pin() {
-    let input = r#"truce = { git = "https://github.com/truce-audio/truce", tag = "v0.15.3" }
-truce-clap = { git = "https://github.com/truce-audio/truce", tag = "v0.15.3", optional = true }
-truce-standalone = { git = "https://github.com/truce-audio/truce", tag = "v0.15.3", features = ["gui"], optional = true }
+fn rewrite_leaves_non_truce_deps_alone() {
+    // clap-sys has its own crates.io entry and isn't a truce path;
+    // also catches `[package].version` lines that share the substring.
+    let input = r#"[package]
+version = "0.1.0"
+
+[dependencies]
+truce = { version = "0.48.6" }
+clap-sys = { version = "0.5", optional = true }
 "#;
-    let expected = r#"truce = { path = "/abs/crates/truce" }
-truce-clap = { path = "/abs/crates/truce-clap", optional = true }
-truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"], optional = true }
+    let expected = r#"[package]
+version = "0.1.0"
+
+[dependencies]
+truce = { path = "/abs/crates/truce" }
+clap-sys = { version = "0.5", optional = true }
 "#;
     assert_eq!(rewrite_git_refs(input, "/abs/crates"), expected);
 }
@@ -1083,12 +1106,12 @@ fn scan_diagnostics_strips_ansi_color() {
 
 #[test]
 fn rewrite_leaves_commented_lines_alone() {
-    let input = r#"# truce-lv2 = { git = "https://github.com/truce-audio/truce" }
-#   truce-au = { git = "https://github.com/truce-audio/truce" }
-truce = { git = "https://github.com/truce-audio/truce" }
+    let input = r#"# truce-lv2 = { version = "0.48.6" }
+#   truce-au = { version = "0.48.6" }
+truce = { version = "0.48.6" }
 "#;
     let got = rewrite_git_refs(input, "/abs/crates");
-    assert!(got.contains(r#"# truce-lv2 = { git = "https://github.com/truce-audio/truce" }"#));
-    assert!(got.contains(r#"#   truce-au = { git = "https://github.com/truce-audio/truce" }"#));
+    assert!(got.contains(r#"# truce-lv2 = { version = "0.48.6" }"#));
+    assert!(got.contains(r#"#   truce-au = { version = "0.48.6" }"#));
     assert!(got.contains(r#"truce = { path = "/abs/crates/truce" }"#));
 }

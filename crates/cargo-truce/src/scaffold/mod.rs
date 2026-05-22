@@ -45,13 +45,14 @@ pub use spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 /// one place).
 pub struct Scaffolder {
     renderer: Renderer,
-    tag: String,
+    version: String,
 }
 
 impl Scaffolder {
-    /// Build a fresh scaffolder. The pinned tag is derived from
-    /// cargo-truce's own version (`CARGO_PKG_VERSION`) - when the
-    /// workspace version bumps, scaffolds automatically follow.
+    /// Build a fresh scaffolder. The pinned crates.io version is
+    /// derived from cargo-truce's own version (`CARGO_PKG_VERSION`) -
+    /// when the workspace version bumps, scaffolds automatically
+    /// follow.
     // No `Default` impl: the workspace never constructs a
     // `Scaffolder` through `Default::default`, so the trait would be
     // dead code.
@@ -60,7 +61,7 @@ impl Scaffolder {
     pub fn new() -> Self {
         Self {
             renderer: Renderer::new(),
-            tag: format!("v{}", env!("CARGO_PKG_VERSION")),
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
@@ -83,7 +84,7 @@ impl Scaffolder {
             &layout,
             &plugin.name,
             plugin.kind,
-            DepForm::GitTag,
+            DepForm::Registry,
             features,
         )?;
 
@@ -120,7 +121,7 @@ impl Scaffolder {
         // Workspace root: Cargo.toml, truce.toml, .gitignore, .cargo/config.toml.
         fs::create_dir_all(ws_layout.cargo_dir())?;
 
-        let ws_ctx = WorkspaceContext::new(plugins, features, &self.tag);
+        let ws_ctx = WorkspaceContext::new(plugins, features, &self.version);
         write(
             &ws_layout.cargo_toml(),
             self.renderer.render(tpl::WORKSPACE_CARGO_TOML, &ws_ctx),
@@ -165,7 +166,8 @@ impl Scaffolder {
         fs::create_dir_all(layout.src_dir())?;
         fs::create_dir_all(layout.cargo_dir())?;
 
-        let ctx = PluginScaffoldingContext::new(crate_name, kind, dep_form, features, &self.tag);
+        let ctx =
+            PluginScaffoldingContext::new(crate_name, kind, dep_form, features, &self.version);
 
         write(
             &layout.cargo_toml(),
@@ -185,7 +187,7 @@ impl Scaffolder {
         // workspace-mode plugins inherit those from the workspace
         // root (caller handles), so skip when `dep_form` is
         // `Workspace`.
-        if dep_form == DepForm::GitTag {
+        if dep_form == DepForm::Registry {
             write(
                 &layout.gitignore(),
                 self.renderer.render(tpl::PLUGIN_GITIGNORE, &ctx),

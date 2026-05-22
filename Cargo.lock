@@ -434,9 +434,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "baseview"
-version = "0.1.1"
-source = "git+https://github.com/truce-audio/baseview.git#4d72f2c2ea13aaf04329937eea11df5f3416d211"
+name = "baseview-truce"
+version = "0.1.1-truce.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a17dd2f90f82f5c347a8587765d4b8d749300a7143491e0cdc1f18cf7cc2446"
 dependencies = [
  "keyboard-types 0.6.2",
  "nix 0.22.3",
@@ -6438,7 +6439,7 @@ dependencies = [
 name = "truce-egui"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "egui",
  "egui-wgpu",
  "keyboard-types 0.6.2",
@@ -6846,7 +6847,7 @@ version = "0.48.6"
 name = "truce-gpu"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "bytemuck",
  "fontdue",
  "lyon_tessellation",
@@ -6862,7 +6863,7 @@ dependencies = [
 name = "truce-gui"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "fontdue",
  "log",
  "objc",
@@ -6893,7 +6894,7 @@ dependencies = [
 name = "truce-iced"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "iced",
  "iced_graphics",
  "iced_runtime",
@@ -6916,11 +6917,21 @@ dependencies = [
  "libloading 0.9.0",
  "log",
  "parking_lot",
+ "truce-core",
+ "truce-gpu",
+ "truce-gui",
+ "truce-params",
+]
+
+[[package]]
+name = "truce-loader-tests"
+version = "0.48.6"
+dependencies = [
  "truce",
  "truce-core",
  "truce-derive",
- "truce-gpu",
  "truce-gui",
+ "truce-loader",
  "truce-params",
 ]
 
@@ -6968,7 +6979,7 @@ dependencies = [
 name = "truce-slint"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "bytemuck",
  "log",
  "objc",
@@ -6996,7 +7007,7 @@ dependencies = [
 name = "truce-standalone"
 version = "0.48.6"
 dependencies = [
- "baseview",
+ "baseview-truce",
  "cpal",
  "crossbeam-queue",
  "dirs",

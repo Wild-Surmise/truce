@@ -26,9 +26,13 @@ optional = true
 version = "0.12"
 optional = true
 
-[dev-dependencies]
-truce = { workspace = true }
-truce-derive = { workspace = true }
+# Integration tests live in the sibling `truce-loader-tests` crate.
+# They need the umbrella `truce` (because `#[derive(Params)]` /
+# `#[derive(State)]` expand to `::truce::params::*` / `::truce::core::*`
+# paths), and `truce` already depends on us for the
+# `truce::plugin!` macro's HotShell wiring. Holding those tests in
+# a separate crate keeps the dev edge from forming a `truce <->
+# truce-loader` cycle in cargo metadata.
 
 [features]
 default = []

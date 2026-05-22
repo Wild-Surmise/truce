@@ -18,6 +18,7 @@ members = [
     "crates/truce-test",
     "crates/truce-build",
     "crates/truce-loader",
+    "crates/truce-loader-tests",
     "crates/truce-derive",
     "crates/cargo-truce",
     "crates/truce-gpu",
@@ -79,44 +80,43 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
-# Workspace deps. `version =` is intentionally only set on path deps
-# whose crate is published to crates.io and consumed by another
-# published crate via `workspace = true` (cargo strips `path` at
-# publish time and needs a registry version to record). Today that's
-# `truce-shim-types`, `truce-build`, and `truce-utils` — all three
-# pulled in by `cargo-truce`'s lib half. Other entries are git-only /
-# dev-only; omitting `version =` removes one place per release that
-# has to track `[workspace.package].version`.
+# Workspace deps. Every internal `truce-*` entry pins
+# `version = "<workspace version>"` alongside `path = "..."`. The
+# version is load-bearing for `cargo publish` — cargo strips `path`
+# at publish time and embeds the registry version, so every internal
+# dep referenced by `workspace = true` from another published crate
+# must declare the registry version up front. `bump.sh` rewrites all
+# of these in one pass with a global sed on the version string.
 [workspace.dependencies]
 # `default-features = false` at the workspace so individual examples
 # can override per-format gating without iOS pulling `truce/clap`
 # transitively. The macOS / Windows / Linux examples each
 # explicitly enable `truce/<format>` in their own `[features]` block
 # (`clap = ["…", "truce/clap"]`).
-truce = { path = "crates/truce", default-features = false }
-truce-core = { path = "crates/truce-core" }
-truce-params = { path = "crates/truce-params" }
-truce-clap = { path = "crates/truce-clap" }
-truce-vst3 = { path = "crates/truce-vst3" }
-truce-au = { path = "crates/truce-au" }
-truce-standalone = { path = "crates/truce-standalone" }
-truce-driver = { path = "crates/truce-driver" }
-truce-gui = { path = "crates/truce-gui" }
-truce-gui-types = { path = "crates/truce-gui-types" }
-truce-plugin = { path = "crates/truce-plugin" }
-truce-vst2 = { path = "crates/truce-vst2" }
-truce-lv2 = { path = "crates/truce-lv2" }
-truce-aax = { path = "crates/truce-aax" }
-truce-test = { path = "crates/truce-test" }
-truce-loader = { path = "crates/truce-loader" }
-truce-derive = { path = "crates/truce-derive" }
-truce-gpu = { path = "crates/truce-gpu" }
-truce-egui = { path = "crates/truce-egui" }
-truce-iced = { path = "crates/truce-iced" }
-truce-slint = { path = "crates/truce-slint" }
-truce-slint-build = { path = "crates/truce-slint-build" }
-truce-simd = { path = "crates/truce-simd" }
-truce-font = { path = "crates/truce-font" }
+truce = { version = "0.48.6", path = "crates/truce", default-features = false }
+truce-core = { version = "0.48.6", path = "crates/truce-core" }
+truce-params = { version = "0.48.6", path = "crates/truce-params" }
+truce-clap = { version = "0.48.6", path = "crates/truce-clap" }
+truce-vst3 = { version = "0.48.6", path = "crates/truce-vst3" }
+truce-au = { version = "0.48.6", path = "crates/truce-au" }
+truce-standalone = { version = "0.48.6", path = "crates/truce-standalone" }
+truce-driver = { version = "0.48.6", path = "crates/truce-driver" }
+truce-gui = { version = "0.48.6", path = "crates/truce-gui" }
+truce-gui-types = { version = "0.48.6", path = "crates/truce-gui-types" }
+truce-plugin = { version = "0.48.6", path = "crates/truce-plugin" }
+truce-vst2 = { version = "0.48.6", path = "crates/truce-vst2" }
+truce-lv2 = { version = "0.48.6", path = "crates/truce-lv2" }
+truce-aax = { version = "0.48.6", path = "crates/truce-aax" }
+truce-test = { version = "0.48.6", path = "crates/truce-test" }
+truce-loader = { version = "0.48.6", path = "crates/truce-loader" }
+truce-derive = { version = "0.48.6", path = "crates/truce-derive" }
+truce-gpu = { version = "0.48.6", path = "crates/truce-gpu" }
+truce-egui = { version = "0.48.6", path = "crates/truce-egui" }
+truce-iced = { version = "0.48.6", path = "crates/truce-iced" }
+truce-slint = { version = "0.48.6", path = "crates/truce-slint" }
+truce-slint-build = { version = "0.48.6", path = "crates/truce-slint-build" }
+truce-simd = { version = "0.48.6", path = "crates/truce-simd" }
+truce-font = { version = "0.48.6", path = "crates/truce-font" }
 truce-build = { version = "0.48.6", path = "crates/truce-build" }
 truce-shim-types = { version = "0.48.6", path = "crates/truce-shim-types" }
 truce-utils = { version = "0.48.6", path = "crates/truce-utils" }
@@ -137,10 +137,12 @@ toml = "1"
 wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
-# (responder / tracking-area / layer-contents cleanup). GUI crates
-# consume this via `baseview = { workspace = true }` so the fork
-# origin is declared once.
-baseview = { git = "https://github.com/truce-audio/baseview.git" }
+# (responder / tracking-area / layer-contents cleanup). Published to
+# crates.io as `baseview-truce`; the `package =` rename keeps every
+# `use baseview::*` in the GUI crates compiling unchanged. GUI crates
+# consume this via `baseview = { workspace = true }` so the registry
+# pin lives in exactly one place.
+baseview = { package = "baseview-truce", version = "0.1.1-truce.3" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features

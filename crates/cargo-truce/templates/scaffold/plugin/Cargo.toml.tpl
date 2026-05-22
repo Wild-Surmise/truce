@@ -26,7 +26,7 @@ required-features = ["standalone"]
 # Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # add the matching feature + optional dep below (e.g.
 # `lv2 = ["dep:truce-lv2"]` +
-# `truce-lv2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}", optional = true }`).
+# `truce-lv2 = \{ version = "{version}", optional = true }`).
 # VST2 is a legacy format - the Steinberg VST2 SDK was deprecated in
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms.

@@ -1,0 +1,31 @@
+[package]
+name = "truce-loader-tests"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Integration tests for truce-loader. Lives in its own crate so the test deps (umbrella `truce` + `truce-derive`) can be normal deps without forming a `truce <-> truce-loader` cycle in cargo metadata."
+# Internal-only — never published. The `release.sh` filter excludes
+# `publish = false` crates from the workspace publish set.
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+truce = { workspace = true }
+truce-core = { workspace = true }
+truce-derive = { workspace = true }
+truce-gui = { workspace = true }
+truce-loader = { workspace = true }
+truce-params = { workspace = true }
+
+[features]
+# Mirror `truce-loader`'s `shell` feature so `#[cfg(feature = "shell")]`
+# gates inside the integration tests stay consistent with the gates
+# in `truce-loader` itself. The dylib-loading tests (`loader_test`,
+# `graceful_degradation`) opt in by enabling this feature.
+shell = ["truce-loader/shell"]
+
+[lints]
+workspace = true

@@ -11,17 +11,18 @@ pub struct PluginSpec {
 }
 
 /// How `[dependencies]` lines are written. Single-mode pins each
-/// truce dep to a git tag; workspace-mode plugins inherit from the
-/// workspace root via `workspace = true`.
+/// truce dep to a crates.io version; workspace-mode plugins inherit
+/// from the workspace root via `workspace = true`.
 #[derive(Clone, Copy, PartialEq)]
 pub enum DepForm {
-    /// `truce-* = { git = "...", tag = "..." }`. Used when the
-    /// scaffolded plugin lives outside any workspace and needs to
-    /// reach truce directly.
-    GitTag,
+    /// `truce-* = { version = "X.Y.Z" }`. Used when the scaffolded
+    /// plugin lives outside any workspace and needs to reach truce
+    /// directly. Caret semver lets the plugin pick up patch
+    /// releases without re-scaffolding.
+    Registry,
     /// `truce-* = { workspace = true }`. Used by plugin crates
     /// inside a `cargo truce new --workspace` scaffold; the workspace
-    /// root carries the actual git+tag pin.
+    /// root carries the actual registry pin.
     Workspace,
 }
 
