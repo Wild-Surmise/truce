@@ -392,30 +392,33 @@ fn package_ios(args: &[String]) -> Res {
     }
     let root = crate::project_root();
     let config = crate::load_config()?;
-    let crate_name = if let Some(s) = plugin_filter {
-        s.to_string()
-    } else if config.plugin.len() == 1 {
-        config.plugin[0].crate_name.clone()
+    let plugins: Vec<&crate::PluginDef> = if let Some(s) = plugin_filter {
+        let p = config
+            .plugin
+            .iter()
+            .find(|p| p.crate_name == s || p.bundle_id == s)
+            .ok_or_else(|| -> crate::CargoTruceError {
+                format!("No plugin with crate name or bundle id '{s}'.").into()
+            })?;
+        vec![p]
     } else {
-        return Err(
-            "iOS packaging needs `-p <crate>` when the workspace has multiple plugins.".into(),
-        );
+        config.plugin.iter().collect()
     };
-    let p = config
-        .plugin
-        .iter()
-        .find(|p| p.crate_name == crate_name || p.bundle_id == crate_name)
-        .ok_or_else(|| -> crate::CargoTruceError {
-            format!("No plugin with crate name or bundle id '{crate_name}'.").into()
-        })?;
-    if xcframework_only {
-        let xcfw = au_ios::build_xcframework(&root, p)?;
-        eprintln!("\nPackaged: {}", xcfw.display());
-        return Ok(());
+
+    // Print each "Packaged: ..." line as the plugin finishes rather
+    // than batching them at the end - gives the user feedback during
+    // multi-plugin runs (each ipa is minutes of cargo build), and
+    // avoids any flush race between the final eprintln batch and
+    // process exit.
+    for p in plugins {
+        let path = if xcframework_only {
+            au_ios::build_xcframework(&root, p)?
+        } else {
+            au_ios::package_ipa(&root, p)?
+        };
+        eprintln!("Packaged: {}", path.display());
     }
-    let ipa = au_ios::package_ipa(&root, p)?;
-    eprintln!("\nPackaged: {}", ipa.display());
-    if let Some(team) = crate::ios_team_id() {
+    if !xcframework_only && let Some(team) = crate::ios_team_id() {
         eprintln!("Signed for team {team}.");
     }
     Ok(())

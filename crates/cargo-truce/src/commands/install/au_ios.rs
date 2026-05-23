@@ -773,10 +773,15 @@ pub(crate) fn build_xcframework(
 pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::CargoTruceError> {
     let cfg = crate::load_config()?;
     let app_dir = build_bundle(root, p, &cfg, IosTarget::Device, None)?;
-    let out_dir = truce_build::target_dir(root).join("ios/ipa");
-    let _ = std::fs::remove_dir_all(&out_dir);
-    fs_ctx::create_dir_all(&out_dir)?;
-    let payload = out_dir.join("Payload");
+    // Per-plugin staging so iterating across plugins in one
+    // `cargo truce package --ios` run doesn't blow away sibling
+    // Payload/ dirs mid-flight.
+    let work_dir = truce_build::target_dir(root)
+        .join("ios/ipa")
+        .join(&p.crate_name);
+    let _ = std::fs::remove_dir_all(&work_dir);
+    fs_ctx::create_dir_all(&work_dir)?;
+    let payload = work_dir.join("Payload");
     fs_ctx::create_dir_all(&payload)?;
     let file_name = app_dir
         .file_name()
@@ -784,13 +789,27 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
             format!("app bundle has no file name: {}", app_dir.display()).into()
         })?;
     crate::copy_dir_recursive(&app_dir, &payload.join(file_name))?;
-    let ipa_path = out_dir.join(format!("{}.ipa", p.file_stem()));
+    // Final ipa lands in `target/dist/` next to the macOS .pkg /
+    // Windows .exe / Linux .tar.gz so CI scripts find every
+    // platform's artifact in the same place. Filename mirrors the
+    // other formats: `<crate>-<version>-ios.ipa`.
+    let dist_dir = truce_build::target_dir(root).join("dist");
+    fs_ctx::create_dir_all(&dist_dir)?;
+    let version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
+        "0.0.0".to_string()
+    });
+    let ipa_path = dist_dir.join(format!("{}-{}-ios.ipa", p.crate_name, version));
+    // Pre-clean the dist artifact: `zip -r` appends to an existing
+    // archive rather than replacing it, so leaving a stale .ipa in
+    // place would accumulate duplicate Payload/ entries across runs.
+    let _ = std::fs::remove_file(&ipa_path);
     // `zip -r` over `Payload/` is the canonical Apple shape - the
     // `.ipa` extension is documentation. Strip resource forks
     // (`-X`) so Linux / Windows hosts that unpack the ipa don't see
     // AppleDouble metadata files.
     let status = Command::new("zip")
-        .current_dir(&out_dir)
+        .current_dir(&work_dir)
         .args(["-r", "-X", "-q"])
         .arg(&ipa_path)
         .arg("Payload")
