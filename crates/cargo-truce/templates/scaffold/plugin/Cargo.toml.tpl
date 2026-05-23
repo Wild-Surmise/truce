@@ -31,14 +31,9 @@ required-features = ["standalone"]
 {{- else -}}
 # `truce-lv2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}", optional = true }`).
 {{- endif }}
-# VST2 is a legacy format - the Steinberg VST2 SDK was deprecated in
-# 2018 and distributing VST2 plugins may require agreement with
-# Steinberg's licensing terms.
 {{- endif }}
 # Each format feature gates the matching wrapper crate as an optional
-# dep. The `truce::plugin!` macro keys its per-format expansion arm on
-# `#[cfg(feature = "<format>")]` against this crate's features and
-# references the wrapper through `::truce_<format>::` absolute paths.
+# dep.
 [features]
 default = {default_features | unescaped}
 clap = ["dep:truce-clap", "dep:clap-sys"]
