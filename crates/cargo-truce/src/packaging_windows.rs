@@ -1299,12 +1299,17 @@ fn render_iss(
     // otherwise re-resolve `{autopf}` to `{commonpf}` and land the
     // standalone .exe system-wide despite `--user`.
     let pf_const = scoped_pf(scope);
+    // `DefaultDirName` is a real path - any `/` in `p.name` would be
+    // parsed as a directory separator by Inno (and downstream Windows
+    // file APIs reject literal `/` in a leaf name), so route through
+    // the same `file_stem` the install side uses. `AppName` /
+    // `UninstallDisplayName` above still show the raw display name.
     let _ = write!(
         setup,
         "DefaultDirName={}\\{}\\{}\r\n",
         pf_const,
         iss_escape(publisher),
-        iss_escape(&p.name),
+        iss_escape(&p.file_stem()),
     );
     setup.push_str("DisableDirPage=yes\r\n");
     let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
@@ -1392,9 +1397,13 @@ fn render_iss(
     if formats.contains(&PkgFormat::Standalone) {
         let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
             .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+        // `[Icons] Name:` is a Start Menu path under `{programs}` -
+        // a `/` in `p.name` would split into a "Truce Dry" subfolder
+        // with a "Wet" shortcut inside. Use the sanitised stem to
+        // match the on-disk install layout.
         write_icons_section(
             &mut setup,
-            &iss_escape(&p.name),
+            &iss_escape(&p.file_stem()),
             &bin_stem,
             "standalone",
             scope,
@@ -1634,8 +1643,10 @@ fn render_suite_iss(
                 let prefix = sanitize_component_name(&plugin.name);
                 let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
                     .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
+                // Suite-installer Start Menu shortcut: same path-vs-
+                // display split as the per-plugin renderer above.
                 (
-                    iss_escape(&plugin.name),
+                    iss_escape(&plugin.file_stem()),
                     bin_stem,
                     format!("{prefix}\\standalone"),
                 )
@@ -2056,7 +2067,11 @@ fn iss_files_block(
                 .join(arch.vst3_bundle_subdir());
             let src_glob = src_dir.join("*");
             let src_quoted = iss_escape_path(&src_glob);
-            let name = iss_escape(&p.name);
+            // Dest is a real path - reuse the same `file_stem` the
+            // source side (`format!("{}.vst3", p.file_stem())` above)
+            // and the per-plugin install go through, so "Truce Dry/
+            // Wet.vst3" doesn't land as a nested `Truce Dry\Wet.vst3`.
+            let name = iss_escape(&p.file_stem());
             let subdir = arch.vst3_bundle_subdir();
             let dest = format!(
                 "{}\\VST3\\{name}.vst3\\Contents\\{subdir}",
@@ -2145,7 +2160,11 @@ fn iss_files_block(
                 .join("Contents")
                 .join("Resources")
                 .join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
-            let name = iss_escape(&p.name);
+            // Same path-component fix as VST3 above - AAX bundles
+            // live at `{commoncf}\Avid\Audio\Plug-Ins\<stem>.aaxplugin`
+            // and the install side uses `p.file_stem()`, so the
+            // packager has to too.
+            let name = iss_escape(&p.file_stem());
             let subdir = arch.aax_bundle_subdir();
             let bundle_root = format!("{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin");
             let mut out = String::new();
@@ -2304,7 +2323,15 @@ fn iss_uninstall_lines(
     scope: PkgScope,
     component_prefix: Option<&str>,
 ) -> Vec<String> {
-    let name = iss_escape(plugin_name);
+    // VST3 / AAX path components must match what the install side
+    // wrote, which goes through `PluginDef::file_stem()` → here we
+    // mirror that with the same `safe_filename` so a display name
+    // like "Truce Dry/Wet" lands and unlands on the same on-disk
+    // `Truce Dry-Wet.vst3` / `.aaxplugin`. Bypassing this produced
+    // an uninstaller that ran cleanly but left the bundle in place
+    // (Windows file APIs reject literal `/` in a leaf name, so the
+    // mismatched delete silently no-op'd).
+    let safe_stem = iss_escape(&truce_utils::safe_filename(plugin_name));
     let comp = |suffix: &str| -> String {
         match component_prefix {
             Some(prefix) => format!("{prefix}\\{suffix}"),
@@ -2316,7 +2343,7 @@ fn iss_uninstall_lines(
             // Mirror the install destination: `{autocf}` under `--ask`
             // matches whichever mode the user picked at install time, so
             // the uninstall hits the same path the bundle was written to.
-            let path = format!("{}\\VST3\\{name}.vst3", scoped_cf(scope));
+            let path = format!("{}\\VST3\\{safe_stem}.vst3", scoped_cf(scope));
             let component = comp("vst3");
             vec![format!(
                 "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
@@ -2328,7 +2355,9 @@ fn iss_uninstall_lines(
             // uninstall, but the empty `{slug}.lv2` dir would be left
             // behind. Mirror the install root (per-LV2-spec `APPDATA`
             // for user scope, `COMMONPROGRAMFILES` for system) so the
-            // sweep hits the same path the install wrote to.
+            // sweep hits the same path the install wrote to. `lv2_slug`
+            // already handles non-ASCII / separator chars, so the raw
+            // `plugin_name` is the right input here.
             use crate::commands::package::stage::lv2_slug;
             let slug = lv2_slug(plugin_name);
             let lv2_root = match scope {
@@ -2349,7 +2378,7 @@ fn iss_uninstall_lines(
             // One line covers every case the file actually lands.
             let component = comp("aax");
             vec![format!(
-                "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\"; Components: {component}"
+                "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{safe_stem}.aaxplugin\"; Components: {component}"
             )]
         }
         _ => Vec::new(),
