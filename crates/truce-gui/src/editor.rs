@@ -961,6 +961,25 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             self.render();
         }
     }
+
+    fn screenshot(
+        &mut self,
+        _params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        // Headless render of the widget tree into a fresh
+        // `CpuBackend` at the live content scale. Mirrors
+        // `GpuEditor::screenshot`'s shape: same `render_to` call
+        // path, same physical-size rounding so reference PNGs baked
+        // on either backend match dimensions exactly. Used by
+        // `truce_test::assert_screenshot::<P>()`.
+        let (lw, lh) = self.size();
+        let scale = self.scale.get_f32();
+        let mut backend = CpuBackend::new(lw, lh, scale)?;
+        self.render_to(&mut backend);
+        let pixels = backend.data().to_vec();
+        let (phys_w, phys_h) = (backend.width(), backend.height());
+        Some((pixels, phys_w, phys_h))
+    }
 }
 
 #[cfg(test)]
