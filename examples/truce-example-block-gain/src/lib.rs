@@ -17,7 +17,7 @@
 
 use truce::prelude::*;
 use truce_core::buffer::ChunkItem;
-use truce_gui::layout::{GridLayout, knob, meter, widgets, xy_pad};
+use truce_gui_types::layout::{GridLayout, knob, meter, widgets, xy_pad};
 use truce_simd::{math, ops};
 
 use GainParamsParamId as P;

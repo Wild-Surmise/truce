@@ -16,7 +16,7 @@ mod biquad;
 use ::biquad::{Biquad, DirectForm2Transposed};
 use biquad::{StereoSample, high_shelf, low_shelf, peaking};
 use truce::prelude64::*;
-use truce_gui::layout::{GridLayout, knob, section, widgets};
+use truce_gui_types::layout::{GridLayout, knob, section, widgets};
 
 type StereoBiquad = DirectForm2Transposed<f64, StereoSample>;
 

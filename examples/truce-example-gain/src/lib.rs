@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, meter, widgets, xy_pad};
+use truce_gui_types::layout::{GridLayout, knob, meter, widgets, xy_pad};
 
 // --- Parameters ---
 

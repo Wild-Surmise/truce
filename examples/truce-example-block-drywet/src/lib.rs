@@ -19,7 +19,7 @@
 //! smoothing times.
 
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, meter, widgets};
+use truce_gui_types::layout::{GridLayout, knob, meter, widgets};
 use truce_simd::{math, ops};
 
 use DryWetParamsParamId as P;

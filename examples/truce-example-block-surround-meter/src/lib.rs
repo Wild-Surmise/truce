@@ -26,7 +26,7 @@
 
 use truce::prelude::*;
 use truce_core::bus::{BusLayout, ChannelConfig};
-use truce_gui::layout::{GridLayout, knob, meter, widgets};
+use truce_gui_types::layout::{GridLayout, knob, meter, widgets};
 use truce_simd::{math, ops};
 
 use SurroundMeterParamsParamId as P;

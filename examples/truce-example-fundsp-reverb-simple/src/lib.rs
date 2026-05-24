@@ -22,7 +22,7 @@ use fundsp::prelude::{
 };
 use std::sync::Arc;
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, meter, widgets};
+use truce_gui_types::layout::{GridLayout, knob, meter, widgets};
 
 use FundspReverbSimpleParamsParamId as P;
 

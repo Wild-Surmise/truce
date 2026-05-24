@@ -1,6 +1,6 @@
 use truce::prelude::*;
 use truce_core::cast::len_u32;
-use truce_gui::layout::{GridLayout, dropdown, knob, widgets};
+use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
 
 // --- Arp pattern enum ---
 

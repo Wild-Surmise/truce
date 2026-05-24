@@ -5,7 +5,7 @@
 // and narrows on the way out.
 use truce::prelude64::*;
 use truce_core::midi::norm_7bit;
-use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
+use truce_gui_types::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
 use voice::Voice;
