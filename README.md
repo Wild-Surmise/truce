@@ -171,9 +171,8 @@ BeatMaker 3, Loopy Pro). LV2 is the native Linux format and also
 builds on macOS and Windows — supports audio, MIDI, state, and UI
 (X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). AAX
 requires the Avid AAX SDK and PACE/iLok signing for retail Pro Tools
-releases. VST2 is opt-in on all platforms — see note below. iOS only
-hosts AU v3 by platform contract; every other format is unviable
-there.
+releases. VST2 is opt-in on all platforms. iOS only hosts AU v3 by 
+platform contract; every other format is unviable there.
 
 ## Features
 
@@ -207,7 +206,7 @@ testing / shipping / hot-reload reference, per-format gotchas
   shim on modern distros). 
 - **iOS**: full Xcode, a booted iOS Simulator (`xcrun simctl boot ...`)
   for `--ios`, or a paired & trusted device + Apple Developer team ID
-  + `.mobileprovision` for `--ios-device`.
+  and `.mobileprovision` for `--ios-device`.
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
 
 ## Acknowledgements
