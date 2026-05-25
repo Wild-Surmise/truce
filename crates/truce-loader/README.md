@@ -8,7 +8,7 @@ Hot-reload mechanics for truce: dylib loading, ABI canary
 (including a `sample_precision` field that pins `f32` vs `f64`),
 vtable probe, and the shells (`HotShell<P, S>`, `StaticShell<P,
 L, S>`) that bridge the user-facing leaf traits onto
-`truce_core::Plugin` for format wrappers. Used by every truce
+`truce_core::PluginRuntime` for format wrappers. Used by every truce
 plugin, in two modes:
 
 - **Static (default).** `export_static!` embeds the user's struct
@@ -23,7 +23,7 @@ plugin, in two modes:
 Plugin authors don't reach into this crate directly. They write
 a single `impl PluginLogic` (from `truce-plugin`) on their plugin
 struct -- one trait covering both DSP (`reset`, `process`, …) and
-GUI (`layout`, `custom_editor`, …) -- and `truce::plugin!` emits
+GUI (`editor`) -- and `truce::plugin!` emits
 the right `export_*!` call based on the `shell` Cargo feature.
 
 ## Key types and macros

@@ -85,8 +85,12 @@ impl PluginLogic for MyPlugin {
         ProcessStatus::Normal
     }
 
-    // GUI methods (layout, custom_editor, …) all have defaults -
-    // omit them for built-in widgets with the default layout.
+    fn editor(&self) -> Box<dyn Editor> {
+        // Built-in widgets from a GridLayout. See the GUI guide for
+        // framework backends (egui / iced / slint) and custom editors.
+        GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
+            .into_editor(&self.params)
+    }
 }
 
 truce::plugin! { logic: MyPlugin, params: MyParams }

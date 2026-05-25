@@ -1,40 +1,44 @@
 # truce-gui
 
-Built-in GPU-free GUI runtime for truce plugins.
+Built-in GUI runtime for truce plugins.
 
 ## Overview
 
-Provides a complete widget toolkit that renders entirely on the CPU using
-tiny-skia for software rasterization. This gives plugins a zero-dependency GUI
-that works on every platform without requiring a GPU. The `BuiltinEditor`
-can auto-generate a full UI from your parameter layout, or you can compose
-widgets manually for a custom look.
+Provides a complete widget toolkit that draws knobs, sliders, meters,
+dropdowns, and XY pads straight from your parameter layout — no custom
+editor code, no pixel math. The `BuiltinEditor` auto-generates a full UI
+from a `GridLayout`. By default it rasterises on the CPU with tiny-skia;
+opt into GPU rendering (wgpu) with the `gpu` feature.
 
-Windowing is handled through baseview; the tiny-skia pixmap is uploaded to a
-wgpu surface each frame for compositing. All supported formats (CLAP, VST3,
-VST2, AU, LV2, AAX, standalone) use the same path.
+Windowing is handled through baseview. In CPU mode the tiny-skia pixmap
+is uploaded to a wgpu surface each frame for compositing; in GPU mode
+`GpuEditor` renders the widgets directly through wgpu. All supported
+formats (CLAP, VST3, VST2, AU, LV2, AAX, standalone) use the same path.
 
-`truce-gui` is the **heavy** half of the GUI split - the
-`BuiltinEditor` and its runtime dependencies (tiny-skia,
-baseview, fontdue, truce-font) live here. The lightweight
-trait + data surface (`GridLayout`, `RenderBackend`,
+`truce-gui` orchestrates the two `RenderBackend` implementations into
+editor types. The renderers themselves live in sibling crates, so a
+plugin only compiles the one it uses:
+
+- the CPU rasteriser (`CpuBackend`, tiny-skia + fontdue) lives in
+  [`truce-cpu`](../truce-cpu), pulled in by the default `cpu` feature;
+- the GPU backend (`WgpuBackend`, wgpu) lives in
+  [`truce-gpu`](../truce-gpu), pulled in by the `gpu` feature.
+
+The lightweight trait + data surface (`GridLayout`, `RenderBackend`,
 `WidgetType`, `Theme`, …) lives in
 [`truce-gui-types`](../truce-gui-types) so alt-GUI backends
-(`truce-egui` / `truce-iced` / `truce-slint`) and plugin authors
-using a custom editor don't transitively pull in the
-rasterisation + windowing stack.
+(`truce-egui` / `truce-iced` / `truce-slint`) and plugin authors using a
+custom editor don't transitively pull in the rasterisation + windowing
+stack.
 
 ## Key types
 
 - **`BuiltinEditor`** -- the main `Editor` implementation; auto-generates UI from params
-- **`CpuBackend`** -- default tiny-skia software rasterizer (the
-  `RenderBackend` trait it implements lives in `truce-gui-types`)
+- **`GpuEditor`** (with the `gpu` feature) -- wraps `BuiltinEditor` to render through `truce_gpu::WgpuBackend`
+- **`default_editor()` / `IntoLayoutEditor`** -- turn a `GridLayout` into a `Box<dyn Editor>`, picking the renderer the active feature selects
+- **`CpuBackend`** (re-exported from `truce-cpu` with the `cpu` feature) -- the tiny-skia software rasterizer (the `RenderBackend` trait it implements lives in `truce-gui-types`)
 - **`BaseviewTranslator`** -- maps `baseview::Event`s into the
   `InputEvent` stream consumed by `truce_gui_types::interaction::dispatch`
-- **`ColorExt`** -- extension trait that adds `to_skia()` /
-  `to_premultiplied()` to the light `truce_gui_types::theme::Color`
-  type (the rasterizer-specific conversions live here so the
-  light crate stays tiny-skia-free)
 - **Re-exports** of every `truce-gui-types` and `truce-plugin`
   public symbol so existing `truce_gui::layout::*` /
   `truce_gui::PluginLogic` paths keep resolving
@@ -44,14 +48,16 @@ rasterisation + windowing stack.
 Knobs, sliders, toggles, dropdowns, XY pads, level meters, labels, and
 parameter groups. All widgets bind directly to truce parameters. The
 widget data types + draw helpers live in `truce-gui-types::widgets`;
-this crate provides the CPU rasterizer that the draw helpers paint
-into.
+this crate orchestrates the renderer the draw helpers paint into.
 
 ## Usage
 
 ```rust
-fn editor() -> Option<Box<dyn Editor>> {
-    Some(Box::new(BuiltinEditor::new()))
+fn editor(&self) -> Box<dyn Editor> {
+    GridLayout::build(vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+    ])])
+    .into_editor(&self.params)
 }
 ```
 

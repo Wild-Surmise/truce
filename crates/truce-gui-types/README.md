@@ -11,7 +11,8 @@ not its impl), `WidgetType`, `WidgetRegion`, `InteractionState`,
 macros. Crates that only need to *describe* layouts and react
 to platform-translated input events depend on this crate; the
 heavy machinery (tiny-skia rasterisation, baseview windowing,
-truce-font / fontdue) stays in `truce-gui`.
+truce-font / fontdue) stays in the renderer crates (`truce-cpu`,
+`truce-gpu`) and `truce-gui`.
 
 ## Crate split
 
@@ -24,28 +25,31 @@ truce-plugin        ← PluginLogic / PluginLogic64 / PluginLogicCore
    ↓                ↘
 truce-gui           truce-egui / truce-iced / truce-slint  ← alt GUI backends
 (BuiltinEditor,     each depends on truce-gui-types but not truce-gui
- CpuBackend, font,
- baseview, ...)
+ baseview)
+   ↓        ↘
+truce-cpu  truce-gpu  ← RenderBackend impls, pulled by truce-gui's
+(tiny-skia, (wgpu)       cpu (default) / gpu features
+ fontdue)
 ```
 
 A slint-only plugin's dep tree contains `truce-plugin →
 truce-gui-types → truce-core` - `tiny-skia`, `baseview`,
 `fontdue`, `truce-font` don't appear unless the plugin also
-reaches into `truce-gui::BuiltinEditor`.
+depends on `truce-gui`.
 
 ## Key types
 
 - **`GridLayout` / `PluginLayout`** - declarative widget layouts
-- **`RenderBackend`** - trait alternative GUI backends impl (the
-  built-in `CpuBackend` in `truce-gui` is one impl;
-  `truce-gpu::GpuBackend` is another)
+- **`RenderBackend`** - trait the renderer backends implement (the
+  `CpuBackend` in `truce-cpu` is one impl; `truce_gpu::WgpuBackend`
+  is another)
 - **`WidgetType` / `WidgetKind` / `WidgetRegion`** - widget
   enumeration + hit-test regions
 - **`InteractionState` / `InputEvent`** - input dispatch primitives
   (the `BaseviewTranslator` that maps baseview events into these
   lives in `truce-gui`)
 - **`Theme` / `Color`** - visual theme (tiny-skia conversions live
-  on `ColorExt` in `truce-gui`)
+  on `ColorExt` in `truce-cpu`)
 - **`ParamSnapshot`** - per-frame view of params for widget code
 
 ## Macros
