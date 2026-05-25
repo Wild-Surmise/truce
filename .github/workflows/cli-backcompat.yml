@@ -24,10 +24,13 @@ concurrency:
 # scaffold-templated plugins lean on (renamed prelude items, dropped
 # re-exports, derive-macro signature shifts).
 #
-# v1 scope: macOS only, against the latest git tag. Three shapes
+# v1 scope: Linux only, against the latest git tag. Three shapes
 # (effect, instrument, workspace-mixed) run as parallel matrix jobs
 # so a regression in one template doesn't mask the others. Tag
 # resolution runs once in a setup job and feeds the matrix.
+# Linux is cheaper / faster than macOS for the pure-Rust `cargo
+# check` we run; format-specific install/package coverage stays on
+# the platform-specific workflows.
 
 # `cargo install` of the released cargo-truce takes ~1 min on a
 # fresh runner; we cache it by tag and reuse across the three
@@ -39,7 +42,7 @@ concurrency:
 jobs:
   setup:
     name: resolve last release
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.latest.outputs.tag }}
     steps:
@@ -69,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/old-cargo-truce
-          key: old-cargo-truce-${{ steps.latest.outputs.tag }}-macos-14
+          key: old-cargo-truce-${{ steps.latest.outputs.tag }}-ubuntu
 
       - name: Install released cargo-truce
         if: steps.cache-old-cargo-truce.outputs.cache-hit != 'true'
@@ -83,7 +86,7 @@ jobs:
   backcompat:
     needs: setup
     name: ${{ matrix.shape.id }} (scaffold w/ ${{ needs.setup.outputs.tag }})
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -115,7 +118,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/old-cargo-truce
-          key: old-cargo-truce-${{ needs.setup.outputs.tag }}-macos-14
+          key: old-cargo-truce-${{ needs.setup.outputs.tag }}-ubuntu
 
       - name: Install released cargo-truce (cache-miss fallback)
         if: steps.cache-restore.outputs.cache-hit != 'true'
