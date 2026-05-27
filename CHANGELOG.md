@@ -5,26 +5,14 @@ Notable changes per release.
 ## 0.49.6 (2026-05-27)
 
 - **`truce-standalone`: the `gui` feature no longer pulls `truce-gpu`.**
-  A standalone build now compiles the GPU backend only when the plugin
-  opts into it (`truce-gui = { …, features = ["gpu"] }`, which enables
-  `truce-gui/gpu`). CPU-renderer plugins no longer drag `truce-gpu` and
-  its wgpu graphics backends into the build. Previously every standalone
-  GUI build pulled `truce-gpu` regardless of the renderer in use, even
-  though `truce-standalone` never references it — it gets the editor
-  from the plugin's own `editor()`.
+  Standalone builds compile the GPU backend only when the plugin opts in
+  via `truce-gui = { …, features = ["gpu"] }`.
 
 ## 0.49.4 (2026-05-27)
 
 - **Fixed a macOS stack-overflow crash in the built-in (CPU) GUI /
   standalone path.** Moving the cursor over a freshly-opened editor
-  window aborted the process. baseview's `hitTest:` override recursed
-  without bound once AppKit isa-swizzled the view (e.g. via KVO): it
-  resolved its `super` target from the live (swizzled) class instead of
-  `NSView`, so the super-send re-entered the override. Fixed in
-  `baseview-truce 0.1.1-truce.4` — the override now stays anchored to
-  `NSView` and is gated behind the `opengl` feature, which truce's
-  wgpu / CoreGraphics present path doesn't use, so CPU GUI builds no
-  longer install it at all.
+  window aborted the process. Fixed in `baseview-truce 0.1.1-truce.4`.
 
 ## 0.49.2 (2026-05-25)
 
