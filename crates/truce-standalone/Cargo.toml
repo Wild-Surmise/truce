@@ -60,7 +60,6 @@ rfd = { version = "0.15", default-features = false, optional = true }
 default = []
 gui = [
     "dep:truce-gui",
-    "dep:truce-gpu",
     "dep:baseview",
     "dep:raw-window-handle",
     "dep:keyboard-types",
