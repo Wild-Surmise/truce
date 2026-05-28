@@ -684,6 +684,48 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     }
 }
 
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: u32,
+    h: u32,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() || w == 0 || h == 0 {
+            return 0;
+        }
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let Some(ref mut editor) = inst.editor else {
+            return 0;
+        };
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(w, h) else {
+            return 0;
+        };
+        i32::from(editor.set_size(adjusted_w, adjusted_h))
+    }
+}
+
+unsafe extern "C" fn cb_gui_adjust_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: *mut u32,
+    h: *mut u32,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() || w.is_null() || h.is_null() {
+            return 0;
+        }
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let Some(ref editor) = inst.editor else {
+            return 0;
+        };
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(*w, *h) else {
+            return 0;
+        };
+        *w = adjusted_w;
+        *h = adjusted_h;
+        1
+    }
+}
+
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
@@ -769,10 +811,32 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     }),
                     request_resize: {
                         let ctx_for_resize = ctx_raw;
+                        #[cfg(target_os = "macos")]
+                        let parent_for_resize = SendPtr::new(parent.cast_const());
                         Box::new(move |w, h| {
-                            let inst = &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                            let inst =
+                                &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
                             if let Some(ref mut editor) = inst.editor {
-                                editor.set_size(w, h)
+                                let Some((w, h)) = editor.adjust_size(w, h) else {
+                                    return false;
+                                };
+                                let old_size = editor.size();
+                                if !editor.set_size(w, h) {
+                                    return false;
+                                }
+                                #[cfg(target_os = "macos")]
+                                {
+                                    if truce_au_v2_resize_editor_view(
+                                        parent_for_resize.as_ptr().cast_mut(),
+                                        w,
+                                        h,
+                                    ) == 0
+                                    {
+                                        let _ = editor.set_size(old_size.0, old_size.1);
+                                        return false;
+                                    }
+                                }
+                                true
                             } else {
                                 false
                             }
@@ -855,6 +919,11 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    fn truce_au_v2_resize_editor_view(
+        parent: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +1029,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         output_sysex_at: cb_output_sysex_at::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
+        gui_adjust_size: cb_gui_adjust_size::<P>,
+        gui_set_size: cb_gui_set_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
     }));

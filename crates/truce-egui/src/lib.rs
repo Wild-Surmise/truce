@@ -40,3 +40,16 @@ pub use editor::{EditorUi, EguiEditor};
 
 #[cfg(target_os = "ios")]
 pub use editor_ios::{EditorUi, EguiEditor};
+
+fn actual_window_size_id() -> egui::Id {
+    egui::Id::new("truce_egui_actual_window_size")
+}
+
+pub fn set_actual_window_size(ctx: &egui::Context, size: (u32, u32)) {
+    ctx.data_mut(|data| data.insert_temp(actual_window_size_id(), size));
+}
+
+#[must_use]
+pub fn actual_window_size(ctx: &egui::Context) -> Option<(u32, u32)> {
+    ctx.data(|data| data.get_temp(actual_window_size_id()))
+}

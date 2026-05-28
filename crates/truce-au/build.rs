@@ -50,6 +50,7 @@ fn main() {
             .collect()
     };
     let view_factory_name = format!("TruceAUCocoaViewProxy_{sanitized}");
+    let view_class_name = format!("TruceAUCocoaEditorView_{sanitized}");
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
@@ -77,6 +78,7 @@ fn main() {
     }
     if is_macos {
         build.define("TRUCE_AU_VIEW_FACTORY_NAME", view_factory_name.as_str());
+        build.define("TRUCE_AU_VIEW_CLASS_NAME", view_class_name.as_str());
     }
 
     build.compile("au_shim");
@@ -116,5 +118,6 @@ fn main() {
         // AppKit lives only on macOS; iOS uses UIKit (linked from
         // the Swift extension binary, not the Rust framework).
         println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
     }
 }

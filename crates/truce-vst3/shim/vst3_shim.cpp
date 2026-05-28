@@ -208,11 +208,13 @@ struct Vst3Callbacks {
                                    uint32_t* /*len*/);
     // GUI
     int32_t (*gui_has_editor)(void*);
+    int32_t (*gui_can_resize)(void*);
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
     void (*gui_open)(void*, void*);
     void (*gui_close)(void*);
     void (*gui_set_content_scale)(void*, double);
-    void (*gui_set_size)(void*, uint32_t, uint32_t);
+    int32_t (*gui_set_size)(void*, uint32_t, uint32_t);
+    int32_t (*gui_adjust_size)(void*, uint32_t*, uint32_t*);
 };
 
 // ---------------------------------------------------------------------------
@@ -416,7 +418,10 @@ public:
                 }
             }
         }
-        if (g_cb && ctx) g_cb->destroy(ctx);
+        if (g_cb && ctx) {
+            g_cb->gui_close(ctx);
+            g_cb->destroy(ctx);
+        }
     }
 
     // --- FUnknown ---
@@ -1035,6 +1040,7 @@ struct TrucePlugView {
     void* ctx;              // Rust plugin context
     TruceComponent* comp;   // owning component (for state-loaded check)
     void* frame;            // IPlugFrame* from setFrame, for resizeView
+    bool attached;          // true after IPlugView::attached until removed/release
 };
 
 static TrucePlugView* pv_from_scale(void* s) {
@@ -1061,7 +1067,12 @@ static uint32 pv_addRef(void* s) { return ++((TrucePlugView*)s)->refCount; }
 static uint32 pv_release(void* s) {
     auto* pv = (TrucePlugView*)s;
     if (--pv->refCount <= 0) {
-        if (pv->comp) pv->comp->deferredParent = nullptr;
+        if (pv->attached && g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+        if (pv->comp) {
+            pv->comp->deferredParent = nullptr;
+            if (pv->comp->plugView == pv) pv->comp->plugView = nullptr;
+        }
+        pv->frame = nullptr;
         free(pv);
         return 0;
     }
@@ -1100,6 +1111,8 @@ static tresult pv_isPlatformTypeSupported(void*, FIDString type) {
 static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
     auto* pv = (TrucePlugView*)s;
     if (!g_cb || !pv->ctx) return kResultOk;
+    pv->attached = true;
+    if (pv->comp) pv->comp->plugView = pv;
     if (pv->comp && !pv->comp->stateLoaded) {
         // Editor attached before state was restored - defer gui_open
         pv->comp->deferredParent = parent;
@@ -1110,8 +1123,13 @@ static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
 }
 static tresult pv_removed(void* s) {
     auto* pv = (TrucePlugView*)s;
-    if (pv->comp) pv->comp->deferredParent = nullptr;
-    if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+    if (pv->attached && g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+    pv->attached = false;
+    pv->frame = nullptr;
+    if (pv->comp) {
+        pv->comp->deferredParent = nullptr;
+        if (pv->comp->plugView == pv) pv->comp->plugView = nullptr;
+    }
     return kResultOk;
 }
 static tresult pv_getSize(void* s, void* rect) {
@@ -1142,13 +1160,28 @@ static tresult pv_onSize(void* s, void* rect) {
     if (g_cb && pv->ctx) {
         uint32_t w = (uint32_t)(r->right - r->left);
         uint32_t h = (uint32_t)(r->bottom - r->top);
-        g_cb->gui_set_size(pv->ctx, w, h);
+        return g_cb->gui_set_size(pv->ctx, w, h) ? kResultOk : kResultFalse;
     }
-    return kResultOk;
+    return kResultFalse;
 }
-static tresult pv_canResize(void*) { return kResultOk; }
-static tresult pv_checkSizeConstraint(void*, void* rect) {
-    (void)rect;
+static tresult pv_canResize(void* s) {
+    auto* pv = (TrucePlugView*)s;
+    if (!g_cb || !pv->ctx || !g_cb->gui_can_resize) return kResultFalse;
+    return g_cb->gui_can_resize(pv->ctx) ? kResultOk : kResultFalse;
+}
+static tresult pv_checkSizeConstraint(void* s, void* rect) {
+    auto* pv = (TrucePlugView*)s;
+    auto* r = (ViewRect*)rect;
+    if (!g_cb || !pv->ctx || !g_cb->gui_adjust_size) return kResultFalse;
+
+    uint32_t w = (uint32_t)(r->right - r->left);
+    uint32_t h = (uint32_t)(r->bottom - r->top);
+    if (!g_cb->gui_adjust_size(pv->ctx, &w, &h)) return kResultFalse;
+
+    r->left = 0;
+    r->top = 0;
+    r->right = (int32)w;
+    r->bottom = (int32)h;
     return kResultOk;
 }
 

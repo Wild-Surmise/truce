@@ -131,6 +131,8 @@ typedef struct {
     /* GUI */
     int32_t (*gui_has_editor)(void *ctx);
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);
+    int32_t (*gui_adjust_size)(void *ctx, uint32_t *w, uint32_t *h);
+    int32_t (*gui_set_size)(void *ctx, uint32_t w, uint32_t h);
     void (*gui_open)(void *ctx, void *parent);
     void (*gui_close)(void *ctx);
 } AuCallbacks;

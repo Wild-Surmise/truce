@@ -107,6 +107,42 @@ struct Vst3Instance<P: PluginExport> {
     tail_cache: AtomicU32,
 }
 
+#[cfg(target_os = "macos")]
+fn logical_to_host_size(width: u32, height: u32, _scale: f64) -> (u32, u32) {
+    (width, height)
+}
+
+#[cfg(target_os = "macos")]
+fn host_to_logical_size(width: u32, height: u32, _scale: f64) -> (u32, u32) {
+    (width, height)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn logical_to_host_size(width: u32, height: u32, scale: f64) -> (u32, u32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (
+        (f64::from(width) * scale).round().max(1.0) as u32,
+        (f64::from(height) * scale).round().max(1.0) as u32,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn host_to_logical_size(width: u32, height: u32, scale: f64) -> (u32, u32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (
+        (f64::from(width) / scale).round().max(1.0) as u32,
+        (f64::from(height) / scale).round().max(1.0) as u32,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // C callback implementations
 //
@@ -776,6 +812,23 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
     }
 }
 
+unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        if inst.editor.is_none() {
+            inst.editor = inst.plugin.editor();
+        }
+        i32::from(
+            inst.editor
+                .as_ref()
+                .is_some_and(|editor| editor.can_resize()),
+        )
+    }
+}
+
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: *mut u32,
@@ -798,18 +851,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                // Round-to-nearest, not truncate - `(w * scale) as u32`
-                // would round 199.9 → 199, drifting one pixel on
-                // fractional scales. Matches the CLAP / AAX / `to_physical_px`
-                // helper used elsewhere. Logical pixel sizes are bounded
-                // by `u32::MAX / scale`; in practice no editor exceeds
-                // 16384 logical pixels, so the `f64 → u32` truncation
-                // and sign casts are safe.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                {
-                    *w = (f64::from(ew) * inst.host_scale).round() as u32;
-                    *h = (f64::from(eh) * inst.host_scale).round() as u32;
-                }
+                (*w, *h) = logical_to_host_size(ew, eh, inst.host_scale);
             }
         }
     }
@@ -840,15 +882,45 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: u32,
     h: u32,
-) {
+) -> i32 {
     unsafe {
         if ctx.is_null() || w == 0 || h == 0 {
-            return;
+            return 0;
         }
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref mut editor) = inst.editor {
-            editor.set_size(w, h);
+        let Some(ref mut editor) = inst.editor else {
+            return 0;
+        };
+        let (logical_w, logical_h) = host_to_logical_size(w, h, inst.host_scale);
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(logical_w, logical_h) else {
+            return 0;
+        };
+        if (adjusted_w, adjusted_h) != (logical_w, logical_h) {
+            return 0;
         }
+        i32::from(editor.set_size(logical_w, logical_h))
+    }
+}
+
+unsafe extern "C" fn cb_gui_adjust_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: *mut u32,
+    h: *mut u32,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() || w.is_null() || h.is_null() {
+            return 0;
+        }
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let Some(ref editor) = inst.editor else {
+            return 0;
+        };
+        let (logical_w, logical_h) = host_to_logical_size(*w, *h, inst.host_scale);
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(logical_w, logical_h) else {
+            return 0;
+        };
+        (*w, *h) = logical_to_host_size(adjusted_w, adjusted_h, inst.host_scale);
+        1
     }
 }
 
@@ -890,7 +962,37 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     request_resize: {
                         let ctx_for_resize = SendPtr::new(ctx);
                         Box::new(move |w, h| {
-                            ffi::truce_vst3_request_resize(ctx_for_resize.as_ptr().cast_mut(), w, h)
+                            let (adjusted_w, adjusted_h, host_w, host_h) = {
+                                let inst = &mut *ctx_for_resize
+                                    .as_ptr()
+                                    .cast_mut()
+                                    .cast::<Vst3Instance<P>>();
+                                let Some(ref editor) = inst.editor else {
+                                    return false;
+                                };
+                                let Some((adjusted_w, adjusted_h)) = editor.adjust_size(w, h)
+                                else {
+                                    return false;
+                                };
+                                let (host_w, host_h) =
+                                    logical_to_host_size(adjusted_w, adjusted_h, inst.host_scale);
+                                (adjusted_w, adjusted_h, host_w, host_h)
+                            };
+                            let accepted = ffi::truce_vst3_request_resize(
+                                ctx_for_resize.as_ptr().cast_mut(),
+                                host_w,
+                                host_h,
+                            );
+                            if accepted {
+                                let inst = &mut *ctx_for_resize
+                                    .as_ptr()
+                                    .cast_mut()
+                                    .cast::<Vst3Instance<P>>();
+                                if let Some(ref mut editor) = inst.editor {
+                                    let _ = editor.set_size(adjusted_w, adjusted_h);
+                                }
+                            }
+                            accepted
                         })
                     },
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
@@ -1085,11 +1187,13 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         get_output_sysex_count: cb_get_output_sysex_count::<P>,
         get_output_sysex_event: cb_get_output_sysex_event::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
+        gui_can_resize: cb_gui_can_resize::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
         gui_set_content_scale: cb_gui_set_content_scale::<P>,
         gui_set_size: cb_gui_set_size::<P>,
+        gui_adjust_size: cb_gui_adjust_size::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

@@ -145,6 +145,8 @@ pub struct AuCallbacks {
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
+    pub gui_adjust_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32,
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32) -> i32,
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
 }
