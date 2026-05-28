@@ -23,6 +23,10 @@
 @import QuartzCore;
 #import <AudioUnit/AUCocoaUIView.h>
 
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
 #include "au_shim_types.h"
 
 // Private properties exposed by `au_v2_shim.c`:
@@ -45,6 +49,62 @@
 #endif
 
 int32_t truce_au_v2_is_context_alive(void *ctx);
+static BOOL truce_au_responsive_resize_enabled(void);
+static void truce_prepare_container_view(NSView *view);
+static void truce_prepare_resizable_view(NSView *view);
+static void truce_prepare_editor_subviews(NSView *view);
+
+static BOOL truce_resize_debug_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("TRUCE_AU_RESIZE_DEBUG");
+        enabled = (value && value[0] && strcmp(value, "0") != 0) ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
+static BOOL truce_au_responsive_resize_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("TRUCE_AU_RESIZE_MODE");
+        enabled = (value &&
+                   (strcmp(value, "responsive") == 0 ||
+                    strcmp(value, "freeform") == 0 ||
+                    strcmp(value, "1") == 0 ||
+                    strcmp(value, "true") == 0)) ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
+static NSString *truce_view_summary(NSView *view) {
+    if (!view) {
+        return @"(nil)";
+    }
+
+    NSRect frame = [view frame];
+    NSRect bounds = [view bounds];
+    NSRect windowFrame = [[view window] frame];
+    return [NSString stringWithFormat:@"%@ %p frame=(%.1f %.1f %.1f %.1f) bounds=(%.1f %.1f %.1f %.1f) mask=%lu subviews=%lu window=(%.1f %.1f %.1f %.1f)",
+        NSStringFromClass([view class]), view,
+        frame.origin.x, frame.origin.y, frame.size.width, frame.size.height,
+        bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height,
+        (unsigned long)[view autoresizingMask],
+        (unsigned long)[[view subviews] count],
+        windowFrame.origin.x, windowFrame.origin.y, windowFrame.size.width, windowFrame.size.height];
+}
+
+static void truce_log_view_chain(NSString *label, NSView *view) {
+    if (!truce_resize_debug_enabled()) {
+        return;
+    }
+
+    NSLog(@"[TRUCE-AU-RESIZE] %@ chain start", label);
+    NSView *cur = view;
+    for (NSUInteger depth = 0; cur && depth < 8; ++depth, cur = [cur superview]) {
+        NSLog(@"[TRUCE-AU-RESIZE] %@ depth=%lu %@", label, (unsigned long)depth, truce_view_summary(cur));
+    }
+    NSLog(@"[TRUCE-AU-RESIZE] %@ chain end", label);
+}
 
 @interface TRUCE_AU_VIEW_CLASS_NAME : NSView {
     void *_truceCtx;
@@ -52,6 +112,7 @@ int32_t truce_au_v2_is_context_alive(void *ctx);
     BOOL _truceEditorOpen;
     uint32_t _truceLastWidth;
     uint32_t _truceLastHeight;
+    NSView *_truceObservedSuperview;
 }
 - (void)truceAttachContext:(void *)ctx callbacks:(const AuCallbacks *)callbacks;
 - (void)truceNotifySize:(NSSize)size;
@@ -66,6 +127,8 @@ int32_t truce_au_v2_is_context_alive(void *ctx);
     _truceEditorOpen = YES;
     _truceLastWidth = 0;
     _truceLastHeight = 0;
+    truce_prepare_container_view(self);
+    truce_log_view_chain(@"attach", self);
     [self truceNotifySize:[self frame].size];
 }
 
@@ -85,26 +148,95 @@ int32_t truce_au_v2_is_context_alive(void *ctx);
         return;
     }
 
-    if (_truceCallbacks->gui_set_size(_truceCtx, width, height)) {
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] notify-size proposed=%ux%u last=%ux%u %@", width, height, _truceLastWidth, _truceLastHeight, truce_view_summary(self));
+    }
+
+    int32_t accepted = _truceCallbacks->gui_set_size(_truceCtx, width, height);
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] notify-size result=%d proposed=%ux%u", accepted, width, height);
+    }
+    if (accepted) {
         _truceLastWidth = width;
         _truceLastHeight = height;
     }
 }
 
 - (void)setFrameSize:(NSSize)newSize {
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] container setFrameSize %.1fx%.1f before %@", newSize.width, newSize.height, truce_view_summary(self));
+    }
     [super setFrameSize:newSize];
+    truce_log_view_chain(@"container setFrameSize after", self);
     [self truceNotifySize:newSize];
 }
 
 - (void)setFrame:(NSRect)frameRect {
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] container setFrame %.1f %.1f %.1f %.1f before %@", frameRect.origin.x, frameRect.origin.y, frameRect.size.width, frameRect.size.height, truce_view_summary(self));
+    }
     [super setFrame:frameRect];
+    truce_log_view_chain(@"container setFrame after", self);
     [self truceNotifySize:frameRect.size];
+}
+
+- (void)viewDidMoveToSuperview {
+    [super viewDidMoveToSuperview];
+
+    if (_truceObservedSuperview) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:NSViewFrameDidChangeNotification
+                                                      object:_truceObservedSuperview];
+        _truceObservedSuperview = nil;
+    }
+
+    NSView *superview = [self superview];
+    if (superview) {
+        _truceObservedSuperview = superview;
+        [superview setPostsFrameChangedNotifications:YES];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(truceSuperviewFrameChanged:)
+                                                     name:NSViewFrameDidChangeNotification
+                                                   object:superview];
+        truce_prepare_container_view(self);
+        truce_prepare_editor_subviews(self);
+    }
+
+    truce_log_view_chain(@"viewDidMoveToSuperview", self);
+}
+
+- (void)truceSuperviewFrameChanged:(NSNotification *)notification {
+    NSView *superview = (NSView *)[notification object];
+    NSRect superBounds = [superview bounds];
+    NSRect frame = [self frame];
+
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] observed-superview-frame-change %@", truce_view_summary(superview));
+        truce_log_view_chain(@"observed-superview-frame-change before-sync", self);
+    }
+
+    if (superBounds.size.width >= 1.0 && superBounds.size.height >= 1.0 &&
+        truce_au_responsive_resize_enabled() &&
+        (fabs(frame.size.width - superBounds.size.width) > 0.5 ||
+         fabs(frame.size.height - superBounds.size.height) > 0.5)) {
+        [self setFrame:NSMakeRect(0, 0, superBounds.size.width, superBounds.size.height)];
+        truce_prepare_editor_subviews(self);
+    }
+
+    truce_log_view_chain(@"observed-superview-frame-change after-sync", self);
 }
 
 - (void)truceCloseEditor {
     void *ctx = _truceCtx;
     const AuCallbacks *callbacks = _truceCallbacks;
     BOOL shouldClose = _truceEditorOpen && ctx && callbacks && truce_au_v2_is_context_alive(ctx);
+
+    if (_truceObservedSuperview) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:NSViewFrameDidChangeNotification
+                                                      object:_truceObservedSuperview];
+        _truceObservedSuperview = nil;
+    }
 
     _truceEditorOpen = NO;
     _truceCtx = NULL;
@@ -135,29 +267,69 @@ static void truce_prepare_resizable_view(NSView *view) {
     [view setNeedsDisplay:YES];
 }
 
+static void truce_prepare_container_view(NSView *view) {
+    if (!view) {
+        return;
+    }
+
+    if (truce_au_responsive_resize_enabled()) {
+        truce_prepare_resizable_view(view);
+    } else {
+        [view setPostsFrameChangedNotifications:YES];
+        [view setAutoresizingMask:0];
+        [view invalidateIntrinsicContentSize];
+        [view setNeedsLayout:YES];
+        [view setNeedsDisplay:YES];
+    }
+}
+
+static void truce_prepare_editor_subviews(NSView *view) {
+    if (!view) {
+        return;
+    }
+
+    NSRect bounds = [view bounds];
+    for (NSView *child in [view subviews]) {
+        [child setFrame:bounds];
+        truce_prepare_resizable_view(child);
+    }
+}
+
 static void truce_resize_editor_view(NSView *view, NSSize size) {
     if (!view) {
         return;
+    }
+
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] resize_editor_view begin target=%.1fx%.1f", size.width, size.height);
+        truce_log_view_chain(@"resize_editor_view before", view);
     }
 
     NSView *superview = [view superview];
     if (superview) {
         NSRect superFrame = [superview frame];
         superFrame.size = size;
+        if (truce_resize_debug_enabled()) {
+            NSLog(@"[TRUCE-AU-RESIZE] resize_editor_view set superview frame %.1f %.1f %.1f %.1f before %@", superFrame.origin.x, superFrame.origin.y, superFrame.size.width, superFrame.size.height, truce_view_summary(superview));
+        }
         [superview setFrame:superFrame];
-        truce_prepare_resizable_view(superview);
+        if (truce_resize_debug_enabled()) {
+            NSLog(@"[TRUCE-AU-RESIZE] resize_editor_view superview after %@", truce_view_summary(superview));
+        }
     }
 
+    if (truce_resize_debug_enabled()) {
+        NSLog(@"[TRUCE-AU-RESIZE] resize_editor_view set container frame target=%.1fx%.1f before %@", size.width, size.height, truce_view_summary(view));
+    }
     [view setFrame:NSMakeRect([view frame].origin.x, [view frame].origin.y, size.width, size.height)];
-    truce_prepare_resizable_view(view);
+    truce_prepare_container_view(view);
 
     // Match JUCE's AU holder model: keep the host container and the
     // hosted editor child in sync, but do not rewrite arbitrary
     // descendants. Deeper views/layers own their own coordinate systems.
-    for (NSView *child in [view subviews]) {
-        [child setFrame:NSMakeRect(0, 0, size.width, size.height)];
-        truce_prepare_resizable_view(child);
-    }
+    truce_prepare_editor_subviews(view);
+
+    truce_log_view_chain(@"resize_editor_view after", view);
 }
 
 @interface TRUCE_AU_VIEW_FACTORY_NAME : NSObject <AUCocoaUIBase>
@@ -195,6 +367,7 @@ static void truce_resize_editor_view(NSView *view, NSSize size) {
     [container truceAttachContext:ctx callbacks:cb];
     [container setPostsFrameChangedNotifications:YES];
     cb->gui_open(ctx, (__bridge void *)container);
+    truce_prepare_editor_subviews(container);
     return container;
 }
 
@@ -213,8 +386,12 @@ int32_t truce_au_v2_resize_editor_view(void *viewPtr, uint32_t width, uint32_t h
     [CATransaction setDisableActions:YES];
 
     @try {
+        if (truce_resize_debug_enabled()) {
+            NSLog(@"[TRUCE-AU-RESIZE] resize_editor_view ffi request=%ux%u", width, height);
+        }
         truce_resize_editor_view(view, size);
         [view layoutSubtreeIfNeeded];
+        truce_log_view_chain(@"resize_editor_view ffi after layout", view);
     } @catch (NSException *exception) {
         ok = 0;
         NSLog(@"Truce AU resize failed: %@ %@", [exception name], [exception reason]);

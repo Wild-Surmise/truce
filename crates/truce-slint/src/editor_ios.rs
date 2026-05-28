@@ -189,7 +189,6 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         unsafe {
             if !inner.display_link.is_null() {
                 let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
             }
             if !inner.child_view.is_null() {
                 let cls: &AnyClass = msg_send![inner.child_view, class];
@@ -295,7 +294,6 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, std::ptr::null_mut());
         }
-        let _: () = msg_send![link, retain];
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;

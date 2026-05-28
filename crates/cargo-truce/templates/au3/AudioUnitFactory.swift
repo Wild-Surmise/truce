@@ -656,8 +656,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         self.view.addSubview(container)
         guiContainer = container
         self.preferredContentSize = guiPtSize
-        // Center the GUI in the host's view (which may be oversized)
-        centerGUI()
+        layoutGUI()
         guiSetUp = true
 
         // Sync Rust param values → AUParameterTree at ~30fps.
@@ -673,7 +672,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        centerGUI()
+        layoutGUI()
     }
     #else
     override func viewDidDisappear(_ animated: Bool) {
@@ -683,7 +682,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        centerGUI()
+        layoutGUI()
     }
     #endif
 
@@ -700,14 +699,36 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guiSetUp = false
     }
 
-    private func centerGUI() {
+    private func layoutGUI() {
         guard let container = guiContainer, guiPtSize.width > 0 else { return }
+        #if os(iOS)
+        let hostW = self.view.bounds.width
+        let hostH = self.view.bounds.height
+        guard hostW > 0, hostH > 0 else { return }
+
+        var w = UInt32(max(1, hostW.rounded()))
+        var h = UInt32(max(1, hostH.rounded()))
+        if let ctx = myCtx, let cb = g_callbacks,
+           cb.pointee.gui_adjust_size(ctx, &w, &h) != 0 {
+            let next = NSSize(width: CGFloat(w), height: CGFloat(h))
+            if abs(next.width - guiPtSize.width) > 0.5 ||
+               abs(next.height - guiPtSize.height) > 0.5 {
+                if cb.pointee.gui_set_size(ctx, w, h) != 0 {
+                    guiPtSize = next
+                    self.preferredContentSize = next
+                }
+            }
+        }
+
+        container.frame = NSRect(origin: .zero, size: guiPtSize)
+        #else
         let hostW = self.view.bounds.width
         let hostH = self.view.bounds.height
         let x = max(0, (hostW - guiPtSize.width) / 2)
         let y = max(0, (hostH - guiPtSize.height) / 2)
         container.frame = NSRect(x: x, y: y,
                                  width: guiPtSize.width, height: guiPtSize.height)
+        #endif
     }
 
     // MARK: - Parameter sync (GUI ↔ host)

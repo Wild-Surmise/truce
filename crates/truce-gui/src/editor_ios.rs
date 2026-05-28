@@ -82,13 +82,14 @@ struct Inner<P: Params + 'static> {
     /// the parent's view hierarchy after `addSubview:`; we keep a
     /// raw pointer so `close()` can call `removeFromSuperview`.
     child_view: *mut AnyObject,
-    /// `CADisplayLink*` we registered with the run loop. Invalidate
-    /// on close to stop the repaint pump.
+    /// `CADisplayLink*` we registered with the run loop. The run loop
+    /// retains it while active; invalidate on close to stop the repaint
+    /// pump and release that run-loop ownership.
     display_link: *mut AnyObject,
     /// `NSObject*` (runtime-allocated) that owns the `tick:`
     /// selector the display link targets. Pointer-equivalent to a
     /// retain - the run loop holds a strong ref while the link is
-    /// active; we release it on close.
+    /// active; invalidating the link releases that ownership.
     tick_target: *mut AnyObject,
     /// Bounds in logical points, captured at `open` time. The child
     /// view's frame is fixed to whatever the layout reported - no
@@ -211,7 +212,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         unsafe {
             if !inner.display_link.is_null() {
                 let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
             }
             if !inner.child_view.is_null() {
                 // Reclaim the Arc the view's ivar was holding.
@@ -349,7 +349,6 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, std::ptr::null_mut());
         }
-        let _: () = msg_send![link, retain];
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         // The framework's exported `NSRunLoopCommonModes` constant

@@ -242,10 +242,15 @@ pub(crate) fn build_bundle(
     let au_sub = p.resolved_fourcc();
     let au_mfr = &cfg.vendor.au_manufacturer;
     let au_tag = &p.au_tag;
+    let au_name = format!(
+        "{vendor}: {plugin}",
+        vendor = cfg.vendor.name,
+        plugin = app_name
+    );
 
     let appex_info =
         crate::templates::au3::render_appex_info_plist(&crate::templates::au3::AppexPlistValues {
-            au_name: app_name,
+            au_name: &au_name,
             au_type,
             au_sub,
             au_mfr,
