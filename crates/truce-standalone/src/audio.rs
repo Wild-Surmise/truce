@@ -278,6 +278,111 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
     (default_name, names)
 }
 
+/// Background-refreshed cache of cpal device names.
+///
+/// `CoreAudio` enumeration is slow - hundreds of milliseconds with a
+/// few devices connected - and the macOS menu used to run it
+/// synchronously on the main thread every time a device submenu
+/// opened, which made the submenu visibly lag. The menu now reads
+/// cached names (instant) and fires an off-thread refresh so the
+/// *next* open reflects hot-plugged or removed devices. Cloneable;
+/// all clones share one cache.
+#[derive(Clone)]
+pub struct DeviceCache {
+    inner: Arc<Mutex<DeviceNames>>,
+    refreshing: Arc<AtomicBool>,
+}
+
+impl Default for DeviceCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Default)]
+struct DeviceNames {
+    outputs: Vec<String>,
+    inputs: Vec<String>,
+    /// False until the first enumeration lands. Distinguishes "not
+    /// warmed yet" from "warmed and genuinely empty" so a machine with
+    /// no inputs doesn't re-enumerate on every read.
+    warmed: bool,
+}
+
+impl DeviceCache {
+    /// Create the cache and warm it on a background thread.
+    #[must_use]
+    pub fn new() -> Self {
+        let cache = Self {
+            inner: Arc::new(Mutex::new(DeviceNames::default())),
+            refreshing: Arc::new(AtomicBool::new(false)),
+        };
+        cache.refresh_async();
+        cache
+    }
+
+    /// Cached output device names. Blocks once on a cold read (a menu
+    /// opened before the warm-up finished) so the list is never
+    /// spuriously empty.
+    #[must_use]
+    pub fn outputs(&self) -> Vec<String> {
+        self.ensure_warm();
+        self.inner
+            .lock()
+            .map(|g| g.outputs.clone())
+            .unwrap_or_default()
+    }
+
+    /// Cached input device names. Same cold-read guarantee as
+    /// [`Self::outputs`].
+    #[must_use]
+    pub fn inputs(&self) -> Vec<String> {
+        self.ensure_warm();
+        self.inner
+            .lock()
+            .map(|g| g.inputs.clone())
+            .unwrap_or_default()
+    }
+
+    fn ensure_warm(&self) {
+        // Check (and release the lock) before the slow enumeration so
+        // we never hold the mutex across a CoreAudio round-trip.
+        match self.inner.lock() {
+            Ok(g) if g.warmed => return,
+            Ok(_) => {}
+            Err(_) => return,
+        }
+        let (_, outputs) = enumerate_devices(true);
+        let (_, inputs) = enumerate_devices(false);
+        if let Ok(mut names) = self.inner.lock() {
+            names.outputs = outputs;
+            names.inputs = inputs;
+            names.warmed = true;
+        }
+    }
+
+    /// Re-enumerate both device lists on a background thread, storing
+    /// the result for the next read. No-op while a refresh is already
+    /// in flight, so rapid menu reopens don't pile up threads.
+    pub fn refresh_async(&self) {
+        if self.refreshing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let inner = Arc::clone(&self.inner);
+        let refreshing = Arc::clone(&self.refreshing);
+        std::thread::spawn(move || {
+            let (_, outputs) = enumerate_devices(true);
+            let (_, inputs) = enumerate_devices(false);
+            if let Ok(mut names) = inner.lock() {
+                names.outputs = outputs;
+                names.inputs = inputs;
+                names.warmed = true;
+            }
+            refreshing.store(false, Ordering::Release);
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // start_audio
 // ---------------------------------------------------------------------------

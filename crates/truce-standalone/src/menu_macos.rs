@@ -33,7 +33,7 @@ use objc::declare::ClassDecl;
 use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
-use crate::audio::{self, InputController, OutputController};
+use crate::audio::{DeviceCache, InputController, OutputController};
 use crate::vlog;
 
 /// Heap-allocated state the Objective-C class points at via ivar.
@@ -54,6 +54,10 @@ struct MenuState {
     /// Pointer to the action-target object itself, for re-targeting
     /// the device items repopulated each open.
     target: *mut Object,
+    /// Background-refreshed device-name cache. Read on menu open
+    /// (instant) instead of enumerating cpal synchronously on the
+    /// GUI thread.
+    device_cache: DeviceCache,
 }
 
 /// Install the native menu bar.
@@ -101,8 +105,19 @@ pub fn install(
         // Input device submenu - only useful for effects (instrument
         // runners don't read from the input ring). Empty at install;
         // repopulated on open.
+        //
+        // The parent item is built with `noopAction:` (see
+        // `make_menu_item`). A submenu parent that carries an action
+        // but no target gets auto-disabled by AppKit's menu validation
+        // - it can't find anything in the responder chain that handles
+        // `noopAction:`, so the item grays out even though it has a
+        // populated submenu. (Top-level menu-bar items like "Audio"
+        // dodge this because AppKit always enables those for
+        // navigation.) Point the item at `target`, which implements
+        // `noopAction:`, so validation passes and it stays clickable.
         let input_dev_menu = if is_effect {
             let input_dev_item = make_menu_item("Input Device");
+            let _: () = msg_send![input_dev_item, setTarget: target];
             let menu = make_menu("Input Device");
             let _: () = msg_send![input_dev_item, setSubmenu: menu];
             let _: () = msg_send![plugin_menu, addItem: input_dev_item];
@@ -111,8 +126,10 @@ pub fn install(
             std::ptr::null_mut()
         };
 
-        // Output device submenu - every plugin needs this.
+        // Output device submenu - every plugin needs this. Same target
+        // requirement as the input submenu above.
         let output_dev_item = make_menu_item("Output Device");
+        let _: () = msg_send![output_dev_item, setTarget: target];
         let output_dev_menu = make_menu("Output Device");
         let _: () = msg_send![output_dev_item, setSubmenu: output_dev_menu];
         let _: () = msg_send![plugin_menu, addItem: output_dev_item];
@@ -399,7 +416,7 @@ fn ensure_class() -> &'static Class {
                 };
 
                 if !state.input_device_menu.is_null() && menu == state.input_device_menu {
-                    let (_, names) = audio::list_input_devices();
+                    let names = state.device_cache.inputs();
                     let current = state.input.current_name();
                     populate_device_menu(
                         state.input_device_menu,
@@ -408,11 +425,15 @@ fn ensure_class() -> &'static Class {
                         current.as_deref(),
                         sel!(selectInputDeviceAction:),
                     );
+                    // Refresh off-thread so the next open reflects
+                    // hot-plugged / removed devices without blocking
+                    // this one.
+                    state.device_cache.refresh_async();
                     return;
                 }
 
                 if menu == state.output_device_menu {
-                    let (_, names) = audio::list_output_devices();
+                    let names = state.device_cache.outputs();
                     let current = state.output.current_name();
                     populate_device_menu(
                         state.output_device_menu,
@@ -421,6 +442,7 @@ fn ensure_class() -> &'static Class {
                         current.as_deref(),
                         sel!(selectOutputDeviceAction:),
                     );
+                    state.device_cache.refresh_async();
                     return;
                 }
 
@@ -479,6 +501,7 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
         input_device_menu: std::ptr::null_mut(),
         output_device_menu: std::ptr::null_mut(),
         target: std::ptr::null_mut(),
+        device_cache: DeviceCache::new(),
     }));
     // SAFETY: `target` was just `alloc`+`init`'d above; it's a valid
     // TruceMenuTarget instance whose ivar layout we declared.
