@@ -2,6 +2,17 @@
 
 Notable changes per release.
 
+## 0.49.10 (2026-05-27)
+
+- **Fixed a use-after-free crash when a host closes the editor without
+  calling `close()`** (seen in Ableton with several plugins loaded). The
+  macOS frame timer kept firing against the freed editor; every editor
+  backend now cancels its window on drop.
+- **Fixed meters not updating in the built-in (CPU) editor.** The
+  repaint gate only watched parameter changes, so a moving meter stayed
+  frozen until an unrelated repaint (e.g. dragging a knob) fired; the
+  editor now repaints when a meter value moves.
+
 ## 0.49.9 (2026-05-27)
 
 - **Fixed `#[derive(State)]` custom state not persisting when edited
