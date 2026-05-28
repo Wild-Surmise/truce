@@ -300,3 +300,16 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         Some((pixels, phys_w, phys_h))
     }
 }
+
+impl<P: Params + 'static> Drop for GpuEditor<P> {
+    fn drop(&mut self) {
+        // Dropping the baseview `WindowHandle` does not cancel the macOS
+        // frame timer, so if the host drops us without a prior
+        // `Editor::close` the timer keeps firing `on_frame`. The handler
+        // holds owned `Arc` clones rather than a raw editor pointer, so
+        // this leaks / renders into a dead surface rather than crashing
+        // outright - but it is the same defect the cpu path crashes on.
+        // Tear the window down here too; idempotent via `Option::take`.
+        Editor::close(self);
+    }
+}

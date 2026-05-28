@@ -982,6 +982,24 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     }
 }
 
+#[cfg(feature = "cpu")]
+impl<P: Params + 'static> Drop for BuiltinEditor<P> {
+    fn drop(&mut self) {
+        // The baseview `WindowHandle` does not cancel the macOS frame
+        // timer when it drops, and the NSView keeps its own strong
+        // `Rc<WindowState>`, so the timer keeps firing `on_frame`
+        // against the handler's raw `*mut BuiltinEditor`. If the host
+        // drops us without calling `Editor::close` first, that pointer
+        // dangles the moment our fields (`scale`, the shared backend)
+        // are freed - the next tick deref'd freed memory and crashes in
+        // `EditorScale::take_change`. Run the same teardown here so the
+        // timer is always cancelled before our fields go away; it is
+        // idempotent via the `Option::take`s, so a prior `close` makes
+        // this a no-op.
+        Editor::close(self);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Layout-coordinate assertions compare stored anchor values for

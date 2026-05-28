@@ -531,3 +531,21 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         })
     }
 }
+
+impl<P: Params + ?Sized> Drop for SlintEditor<P> {
+    fn drop(&mut self) {
+        // `baseview::WindowHandle` does not cancel the macOS frame timer
+        // on drop, so a host that drops the editor without calling
+        // `Editor::close` leaves the timer firing `on_frame`. Unlike the
+        // cpu/iced raw-pointer handlers this can't use-after-free (the
+        // handler owns its own wgpu surface and an `EditorScale` clone),
+        // but it keeps rendering into a torn-down surface. Mirror
+        // `close`'s window teardown here; idempotent via
+        // `self.window.take()`. (Inlined rather than calling
+        // `Editor::close` because that impl requires `P: Sized` while
+        // this `Drop` must match the struct's `?Sized`.)
+        if let Some(mut window) = self.window.take() {
+            window.close();
+        }
+    }
+}
