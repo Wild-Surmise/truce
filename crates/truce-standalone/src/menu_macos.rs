@@ -33,7 +33,7 @@ use objc::declare::ClassDecl;
 use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
-use crate::audio::{DeviceCache, InputController, OutputController};
+use crate::audio::{ChannelRoute, DeviceCache, InputController, OutputController};
 use crate::vlog;
 
 /// Heap-allocated state the Objective-C class points at via ivar.
@@ -68,6 +68,7 @@ struct MenuState {
 pub fn install(
     app_name: &str,
     is_effect: bool,
+    channels: usize,
     input: &InputController,
     output: &OutputController,
 ) {
@@ -133,6 +134,45 @@ pub fn install(
         let output_dev_menu = make_menu("Output Device");
         let _: () = msg_send![output_dev_item, setSubmenu: output_dev_menu];
         let _: () = msg_send![plugin_menu, addItem: output_dev_item];
+
+        // Channel-routing submenus. Pointless on a mono device (nothing
+        // to choose), so only shown when the device has >= 2 channels.
+        // The channel count is fixed for the session, so these are
+        // populated once here; the select action updates the checkmark.
+        // Parent items need a target for the same anti-graying reason
+        // as the device submenus above.
+        if channels >= 2 {
+            let sep2: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+            let _: () = msg_send![plugin_menu, addItem: sep2];
+
+            if is_effect {
+                let in_ch_item = make_menu_item("Input Channels");
+                let _: () = msg_send![in_ch_item, setTarget: target];
+                let in_ch_menu = make_menu("Input Channels");
+                populate_channel_menu(
+                    in_ch_menu,
+                    target,
+                    channels,
+                    input.channel_route(),
+                    sel!(selectInputChannelsAction:),
+                );
+                let _: () = msg_send![in_ch_item, setSubmenu: in_ch_menu];
+                let _: () = msg_send![plugin_menu, addItem: in_ch_item];
+            }
+
+            let out_ch_item = make_menu_item("Output Channels");
+            let _: () = msg_send![out_ch_item, setTarget: target];
+            let out_ch_menu = make_menu("Output Channels");
+            populate_channel_menu(
+                out_ch_menu,
+                target,
+                channels,
+                output.channel_route(),
+                sel!(selectOutputChannelsAction:),
+            );
+            let _: () = msg_send![out_ch_item, setSubmenu: out_ch_menu];
+            let _: () = msg_send![plugin_menu, addItem: out_ch_item];
+        }
 
         // Stash pointers in MenuState so menu-open delegates can
         // address the right submenu.
@@ -272,6 +312,125 @@ unsafe fn populate_device_menu(
     }
 }
 
+/// Fill a channel-routing submenu: a "direct" default, then one item
+/// per stereo pair, then one per mono channel. Each item carries its
+/// [`ChannelRoute`] encoded in the `NSMenuItem` `tag`; the checkmark
+/// lands on the item matching `current`.
+unsafe fn populate_channel_menu(
+    menu: *mut Object,
+    target: *mut Object,
+    channels: usize,
+    current: ChannelRoute,
+    action: Sel,
+) {
+    unsafe {
+        let _: () = msg_send![menu, removeAllItems];
+        let current_tag = encoded_tag(current);
+
+        add_tagged_item(
+            menu,
+            target,
+            action,
+            "All channels (direct)",
+            encoded_tag(ChannelRoute::Direct),
+            current_tag,
+        );
+
+        // Stereo pairs (1 & 2, 3 & 4, ...). Only emit a pair when both
+        // of its channels exist.
+        if channels >= 2 {
+            let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+            let _: () = msg_send![menu, addItem: sep];
+            let mut base = 0;
+            while base + 1 < channels {
+                let label = format!("Channels {} & {}", base + 1, base + 2);
+                add_tagged_item(
+                    menu,
+                    target,
+                    action,
+                    &label,
+                    encoded_tag(ChannelRoute::Stereo { base }),
+                    current_tag,
+                );
+                base += 2;
+            }
+        }
+
+        // Mono channels (1, 2, 3, ...).
+        let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![menu, addItem: sep];
+        for c in 0..channels {
+            let label = format!("Channel {} (mono)", c + 1);
+            add_tagged_item(
+                menu,
+                target,
+                action,
+                &label,
+                encoded_tag(ChannelRoute::Mono { base: c }),
+                current_tag,
+            );
+        }
+    }
+}
+
+/// `ChannelRoute` packed into an `NSMenuItem` `tag` (`NSInteger` = i64).
+fn encoded_tag(route: ChannelRoute) -> i64 {
+    i64::try_from(route.encode()).unwrap_or(0)
+}
+
+/// Add one tagged, targeted menu item, checkmarked when its tag is the
+/// active one.
+unsafe fn add_tagged_item(
+    menu: *mut Object,
+    target: *mut Object,
+    action: Sel,
+    title: &str,
+    tag: i64,
+    current_tag: i64,
+) {
+    unsafe {
+        let t = ns_string(title);
+        let empty = ns_string("");
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: t
+            action: action
+            keyEquivalent: empty
+        ];
+        let _: () = msg_send![item, setTarget: target];
+        let _: () = msg_send![item, setTag: tag];
+        let on: BOOL = if tag == current_tag { YES } else { NO };
+        let _: () = msg_send![item, setState: i64::from(on)];
+        let _: () = msg_send![menu, addItem: item];
+    }
+}
+
+/// Move the checkmark in a channel submenu to the item whose tag is
+/// `selected_tag`. Skips separators (whose default tag is 0 and would
+/// otherwise collide with the "direct" item).
+unsafe fn update_channel_checkmarks(menu: *mut Object, selected_tag: i64) {
+    unsafe {
+        if menu.is_null() {
+            return;
+        }
+        let count: i64 = msg_send![menu, numberOfItems];
+        for i in 0..count {
+            let item: *mut Object = msg_send![menu, itemAtIndex: i];
+            if item.is_null() {
+                continue;
+            }
+            let is_sep: BOOL = msg_send![item, isSeparatorItem];
+            if is_sep == YES {
+                continue;
+            }
+            let tag: i64 = msg_send![item, tag];
+            let on: BOOL = if tag == selected_tag { YES } else { NO };
+            let _: () = msg_send![item, setState: i64::from(on)];
+        }
+    }
+}
+
 unsafe fn ns_string(s: &str) -> *mut Object {
     let bytes = s.as_bytes();
     let cls = class!(NSString);
@@ -320,7 +479,7 @@ const STATE_IVAR: &str = "_truce_menu_state";
 // address; hoisting them out loses access to the surrounding
 // `add_method` registration pattern. Hence the function-level
 // `items_after_statements` allow.
-#[allow(clippy::items_after_statements)]
+#[allow(clippy::items_after_statements, clippy::too_many_lines)]
 fn ensure_class() -> &'static Class {
     REGISTER_CLASS.call_once(|| unsafe {
         let superclass = class!(NSObject);
@@ -403,6 +562,44 @@ fn ensure_class() -> &'static Class {
         decl.add_method(
             sel!(selectOutputDeviceAction:),
             select_output_device_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Input channel routing chosen.
+        extern "C" fn select_input_channels_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                let route = ChannelRoute::decode(usize::try_from(tag).unwrap_or(0));
+                vlog!("input channels: {route:?}");
+                state.input.set_channel_route(route);
+                let menu: *mut Object = msg_send![sender, menu];
+                update_channel_checkmarks(menu, tag);
+            }
+        }
+        decl.add_method(
+            sel!(selectInputChannelsAction:),
+            select_input_channels_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Output channel routing chosen.
+        extern "C" fn select_output_channels_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                let route = ChannelRoute::decode(usize::try_from(tag).unwrap_or(0));
+                vlog!("output channels: {route:?}");
+                state.output.set_channel_route(route);
+                let menu: *mut Object = msg_send![sender, menu];
+                update_channel_checkmarks(menu, tag);
+            }
+        }
+        decl.add_method(
+            sel!(selectOutputChannelsAction:),
+            select_output_channels_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
         // -(void) menuWillOpen:(NSMenu *)menu - refresh state for

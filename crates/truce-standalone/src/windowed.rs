@@ -108,6 +108,8 @@ where
     let input_ctrl = audio_handles.input.clone();
     let output_ctrl = audio_handles.output.clone();
     let is_effect = audio_handles.is_effect;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let channels = audio_handles.channels;
     // Move the `--output-file` capture sink into the handler so the
     // Linux WillClose path (which bypasses Drop via `_exit(0)`) can
     // explicitly finalize it. On non-Linux the handler is dropped
@@ -144,7 +146,13 @@ where
         // (input is silent for instruments / analyzers without
         // input routing).
         #[cfg(target_os = "macos")]
-        crate::menu_macos::install(P::info().name, is_effect, &input_ctrl, &output_ctrl);
+        crate::menu_macos::install(
+            P::info().name,
+            is_effect,
+            channels,
+            &input_ctrl,
+            &output_ctrl,
+        );
 
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
@@ -157,6 +165,7 @@ where
                 h.hwnd,
                 P::info().name,
                 is_effect,
+                channels,
                 input_ctrl.clone(),
                 output_ctrl.clone(),
             );

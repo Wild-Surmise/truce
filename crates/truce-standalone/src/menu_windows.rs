@@ -44,11 +44,12 @@ use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWi
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateMenu, CreatePopupMenu, DeleteMenu, DrawMenuBar,
     GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU, MF_BYCOMMAND,
-    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_STRING, MF_UNCHECKED, SM_CYMENU, SWP_NOMOVE,
-    SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP, WM_NCDESTROY,
+    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
+    SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP,
+    WM_NCDESTROY,
 };
 
-use crate::audio::{self, InputController, OutputController};
+use crate::audio::{self, ChannelRoute, InputController, OutputController};
 use crate::vlog;
 
 /// Command ID for the mic-input toggle.
@@ -62,6 +63,15 @@ const MENU_CMD_INPUT_DEVICE_BASE: u16 = 0xC100;
 const MENU_CMD_INPUT_DEVICE_END: u16 = 0xC1FF;
 const MENU_CMD_OUTPUT_DEVICE_BASE: u16 = 0xC200;
 const MENU_CMD_OUTPUT_DEVICE_END: u16 = 0xC2FF;
+
+/// Channel-routing item ranges. The command ID carries the
+/// [`ChannelRoute`] directly: `cmd == base + route.encode()`, so a
+/// click decodes back to the route with no name lookup. `encode()`
+/// stays small (`<= 2 * channels`), well within 256 slots.
+const MENU_CMD_INPUT_CHANNELS_BASE: u16 = 0xC300;
+const MENU_CMD_INPUT_CHANNELS_END: u16 = 0xC3FF;
+const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
+const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
 
 /// Subclass cookie. Picked to be visually distinct in a debugger;
 /// any `usize` works as long as it's unique within the window.
@@ -80,6 +90,13 @@ struct MenuState {
     /// `null` for instrument plugins (input device picker not built).
     hmenu_input_devices: HMENU,
     hmenu_output_devices: HMENU,
+    /// Channel-routing submenus. `null` when the device exposes fewer
+    /// than two channels (nothing to pick) or, for input, on
+    /// instruments. Repopulated on `WM_INITMENUPOPUP`.
+    hmenu_input_channels: HMENU,
+    hmenu_output_channels: HMENU,
+    /// Device channel count, used to build the channel submenus.
+    channels: usize,
 }
 
 /// Install the native menu bar.
@@ -91,6 +108,7 @@ pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
     is_effect: bool,
+    channels: usize,
     input: InputController,
     output: OutputController,
 ) {
@@ -171,6 +189,33 @@ pub fn install(
             output_label.as_ptr(),
         );
 
+        // Channel-routing submenus. Only worth showing when the device
+        // has >= 2 channels. Empty at install; repopulated (with the
+        // current selection checked) on WM_INITMENUPOPUP.
+        let (input_ch_menu, output_ch_menu) = if channels >= 2 {
+            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+
+            let in_ch = if is_effect {
+                let m = CreatePopupMenu();
+                if !m.is_null() {
+                    let label = wide("Input Channels");
+                    AppendMenuW(plugin_menu, MF_POPUP, m as usize, label.as_ptr());
+                }
+                m
+            } else {
+                std::ptr::null_mut()
+            };
+
+            let out_ch = CreatePopupMenu();
+            if !out_ch.is_null() {
+                let label = wide("Output Channels");
+                AppendMenuW(plugin_menu, MF_POPUP, out_ch as usize, label.as_ptr());
+            }
+            (in_ch, out_ch)
+        } else {
+            (std::ptr::null_mut(), std::ptr::null_mut())
+        };
+
         // Attach the Audio popup to the menu bar.
         let plugin_label = wide("Audio");
         AppendMenuW(
@@ -196,6 +241,9 @@ pub fn install(
             has_mic_item: is_effect,
             hmenu_input_devices: input_dev_menu,
             hmenu_output_devices: output_dev_menu,
+            hmenu_input_channels: input_ch_menu,
+            hmenu_output_channels: output_ch_menu,
+            channels,
         }));
         SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, state as usize);
     }
@@ -232,7 +280,7 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
 // Why: `(wparam & 0xFFFF) as u16` is the canonical Win32 LOWORD shape -
 // the high bits of WPARAM are reserved/zero on WM_COMMAND, so the
 // truncation is the contract.
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 unsafe extern "system" fn subclass_proc(
     hwnd: HWND,
     msg: u32,
@@ -305,6 +353,28 @@ unsafe extern "system" fn subclass_proc(
                     }
                     return 0;
                 }
+
+                if !state.hmenu_input_channels.is_null()
+                    && (MENU_CMD_INPUT_CHANNELS_BASE..=MENU_CMD_INPUT_CHANNELS_END)
+                        .contains(&cmd_id)
+                {
+                    let route =
+                        ChannelRoute::decode(usize::from(cmd_id - MENU_CMD_INPUT_CHANNELS_BASE));
+                    vlog!("input channels: {route:?}");
+                    state.input.set_channel_route(route);
+                    return 0;
+                }
+
+                if !state.hmenu_output_channels.is_null()
+                    && (MENU_CMD_OUTPUT_CHANNELS_BASE..=MENU_CMD_OUTPUT_CHANNELS_END)
+                        .contains(&cmd_id)
+                {
+                    let route =
+                        ChannelRoute::decode(usize::from(cmd_id - MENU_CMD_OUTPUT_CHANNELS_BASE));
+                    vlog!("output channels: {route:?}");
+                    state.output.set_channel_route(route);
+                    return 0;
+                }
             }
             WM_INITMENUPOPUP => {
                 if state_ptr.is_null() {
@@ -330,6 +400,24 @@ unsafe extern "system" fn subclass_proc(
                         &names,
                         current.as_deref(),
                         MENU_CMD_OUTPUT_DEVICE_BASE,
+                    );
+                } else if !state.hmenu_input_channels.is_null()
+                    && popup == state.hmenu_input_channels
+                {
+                    repopulate_channel_menu(
+                        popup,
+                        state.channels,
+                        state.input.channel_route(),
+                        MENU_CMD_INPUT_CHANNELS_BASE,
+                    );
+                } else if !state.hmenu_output_channels.is_null()
+                    && popup == state.hmenu_output_channels
+                {
+                    repopulate_channel_menu(
+                        popup,
+                        state.channels,
+                        state.output.channel_route(),
+                        MENU_CMD_OUTPUT_CHANNELS_BASE,
                     );
                 } else if popup == state.hmenu_plugin {
                     if state.has_mic_item {
@@ -403,6 +491,70 @@ unsafe fn repopulate_device_menu(
             }
             AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
         }
+    }
+}
+
+/// Rebuild a channel-routing popup: a "direct" default, then one item
+/// per stereo pair, then one per mono channel. Each item's command ID
+/// is `cmd_base + route.encode()`; the item matching `current` gets
+/// `MF_CHECKED`.
+unsafe fn repopulate_channel_menu(
+    popup: HMENU,
+    channels: usize,
+    current: ChannelRoute,
+    cmd_base: u16,
+) {
+    unsafe {
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
+        }
+
+        let cur = current.encode();
+        append_channel_item(
+            popup,
+            cmd_base,
+            ChannelRoute::Direct,
+            "All channels (direct)",
+            cur,
+        );
+
+        if channels >= 2 {
+            AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+            let mut base = 0;
+            while base + 1 < channels {
+                let label = format!("Channels {} & {}", base + 1, base + 2);
+                append_channel_item(popup, cmd_base, ChannelRoute::Stereo { base }, &label, cur);
+                base += 2;
+            }
+        }
+
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+        for c in 0..channels {
+            let label = format!("Channel {} (mono)", c + 1);
+            append_channel_item(popup, cmd_base, ChannelRoute::Mono { base: c }, &label, cur);
+        }
+    }
+}
+
+/// Append one channel-routing item, checked when its encoded route is
+/// the active one.
+unsafe fn append_channel_item(
+    popup: HMENU,
+    cmd_base: u16,
+    route: ChannelRoute,
+    label: &str,
+    current_encoded: usize,
+) {
+    unsafe {
+        let encoded = route.encode();
+        let cmd = cmd_base.wrapping_add(u16::try_from(encoded).unwrap_or(0));
+        let mut flags = MF_STRING;
+        if encoded == current_encoded {
+            flags |= MF_CHECKED;
+        }
+        let text = wide(label);
+        AppendMenuW(popup, flags, cmd as usize, text.as_ptr());
     }
 }
 

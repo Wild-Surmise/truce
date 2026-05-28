@@ -22,6 +22,12 @@ pub struct Options {
     pub list_midi: bool,
     pub output_device: Option<String>,
     pub input_device: Option<String>,
+    /// Output channel routing spec (`direct`, a channel like `3`, or a
+    /// pair like `3-4`). Parsed into a `ChannelRoute` in `start_audio`;
+    /// on Linux (no native menu) this is the only way to pick channels.
+    pub output_channels: Option<String>,
+    /// Input channel routing spec; same grammar as `output_channels`.
+    pub input_channels: Option<String>,
     /// Whether the mic input is enabled at launch. `None` →
     /// privacy default (off). Set explicitly via `--input-enabled
     /// on|off`, the env var, or `[plugin.standalone].input_enabled`
@@ -73,6 +79,11 @@ OPTIONS:
   --list-midi               List MIDI input devices and exit
   --output <name>           Audio output device (substring match)
   --input <name>            Audio input device (effect plugins)
+  --output-channels <spec>  Route output to specific device channels:
+                            `direct` (all, default), a channel like `3`
+                            (mono), or a pair like `3-4` (stereo).
+  --input-channels <spec>   Route input from specific device channels;
+                            same grammar as --output-channels.
   --input-enabled <on|off>  Enable mic input at launch (default: off).
                             Press `I` in the window to toggle live.
   --output-enabled <on|off> Enable speaker output at launch (default: on).
@@ -163,6 +174,12 @@ pub fn parse() -> Result<Options, String> {
     let input_device = args
         .opt_value_from_str::<_, String>("--input")
         .map_err(|e| format!("--input: {e}"))?;
+    let output_channels = args
+        .opt_value_from_str::<_, String>("--output-channels")
+        .map_err(|e| format!("--output-channels: {e}"))?;
+    let input_channels = args
+        .opt_value_from_str::<_, String>("--input-channels")
+        .map_err(|e| format!("--input-channels: {e}"))?;
     let input_enabled = args
         .opt_value_from_str::<_, String>("--input-enabled")
         .map_err(|e| format!("--input-enabled: {e}"))?
@@ -213,6 +230,8 @@ pub fn parse() -> Result<Options, String> {
         list_midi,
         output_device: output_device.or_else(|| env("OUTPUT")),
         input_device: input_device.or_else(|| env("INPUT")),
+        output_channels: output_channels.or_else(|| env("OUTPUT_CHANNELS")),
+        input_channels: input_channels.or_else(|| env("INPUT_CHANNELS")),
         input_enabled: input_enabled.or_else(|| {
             env("INPUT_ENABLED")
                 .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
