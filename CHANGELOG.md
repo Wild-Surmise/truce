@@ -2,6 +2,12 @@
 
 Notable changes per release.
 
+## 0.49.14 (2026-05-28)
+
+- **Standalone: added MIDI device + channel selection** via a unified
+  Settings menu on macOS/Windows, or `--midi-input` / `--midi-channel`
+  (`omni` or `1`-`16`) on Linux.
+
 ## 0.49.13 (2026-05-28)
 
 - **VST2/AAX: extended the 0.49.9 `set_state` fix.** The same path that
