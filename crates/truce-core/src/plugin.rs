@@ -138,6 +138,20 @@ pub trait PluginRuntime: Send + 'static {
         Vec::new()
     }
 
+    /// Apply a factory preset through the atomic parameter layer.
+    ///
+    /// Format wrappers may call this while the audio thread is rendering.
+    /// Implementations must not touch the plugin object or DSP-owned mutable
+    /// state; write only through the supplied [`truce_params::Params`] handle
+    /// or use another lock-free handoff.
+    #[must_use]
+    fn load_factory_preset_params(_params: &dyn truce_params::Params, _preset_number: i32) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
     /// Apply a factory preset identified by its host-facing number.
     ///
     /// This is called from host/UI/state callbacks, not from the audio
