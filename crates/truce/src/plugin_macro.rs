@@ -374,6 +374,16 @@ macro_rules! __plugin_hot_reload {
                 self.inner.load_factory_preset(preset_number)
             }
 
+            fn load_factory_preset_params(
+                params: &dyn $crate::params::Params,
+                preset_number: i32,
+            ) -> bool
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::load_factory_preset_params(params, preset_number)
+            }
+
             fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {
                 self.inner.editor()
             }
@@ -406,6 +416,13 @@ macro_rules! __plugin_hot_reload {
 
             fn params_arc(&self) -> std::sync::Arc<$params> {
                 std::sync::Arc::clone(&self.inner.params)
+            }
+
+            fn load_factory_preset_params(
+                params: &dyn $crate::params::Params,
+                preset_number: i32,
+            ) -> bool {
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::load_factory_preset_params(params, preset_number)
             }
         }
     };

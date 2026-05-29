@@ -210,6 +210,8 @@ class TruceAUAudioUnit: AUAudioUnit {
             if preset.number >= 0 {
                 if applyFactoryPreset(number: Int32(preset.number), notifyHost: true) {
                     selectedFactoryPreset = matchingFactoryPreset(number: preset.number) ?? preset
+                } else {
+                    selectedFactoryPreset = nil
                 }
             } else {
                 selectedFactoryPreset = nil
@@ -266,7 +268,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         let rawCtx = rustCtx!
         let cb = callbacks.pointee
         _parameterTree?.implementorValueObserver = { [weak self] p, v in
-            guard self?.isSyncingToHost != true else { return }
+            guard let self = self, self.isSyncingToHost != true else { return }
+            self.selectedFactoryPreset = nil
             cb.param_set_value(rawCtx, UInt32(p.address), Double(v))
         }
         _parameterTree?.implementorValueProvider = { p in
@@ -592,6 +595,8 @@ class TruceAUAudioUnit: AUAudioUnit {
             if let presetNumber = presetNumber {
                 if applyFactoryPreset(number: Int32(presetNumber), notifyHost: false) {
                     selectedFactoryPreset = matchingFactoryPreset(number: presetNumber)
+                } else {
+                    selectedFactoryPreset = nil
                 }
             } else {
                 selectedFactoryPreset = nil

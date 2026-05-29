@@ -93,9 +93,21 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     #[must_use]
     fn factory_presets_static() -> Vec<FactoryPresetInfo>
     where
-        Self: Sized;
+        Self: Sized,
+    {
+        Vec::new()
+    }
     #[must_use]
-    fn load_factory_preset(&self, preset_number: i32) -> bool;
+    fn load_factory_preset_params(_params: &dyn truce_params::Params, _preset_number: i32) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+    #[must_use]
+    fn load_factory_preset(&self, _preset_number: i32) -> bool {
+        false
+    }
     fn state_changed(&mut self);
     fn latency(&self) -> u32;
     fn tail(&self) -> u32;
@@ -211,6 +223,21 @@ macro_rules! plugin_logic_leaf_trait {
                 false
             }
 
+            /// Apply a factory preset through the supplied atomic
+            /// parameter layer. This path is safe for format wrappers
+            /// to call while rendering may be in flight because it
+            /// does not form a reference to the plugin object.
+            #[must_use]
+            fn load_factory_preset_params(
+                _params: &dyn $crate::__plugin_logic_deps::Params,
+                _preset_number: i32,
+            ) -> bool
+            where
+                Self: Sized,
+            {
+                false
+            }
+
             /// Called on the audio thread immediately after
             /// [`Self::load_state`] returns. Invalidate or recompute any
             /// caches the next `process()` reads. Default: no-op.
@@ -256,6 +283,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::preset::FactoryPresetInfo;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::StateLoadError;
+    pub use truce_params::Params;
 }
 
 plugin_logic_leaf_trait! {
@@ -351,6 +379,16 @@ macro_rules! plugin_logic_bridge {
 
             fn load_factory_preset(&self, preset_number: i32) -> bool {
                 <Self as $leaf>::load_factory_preset(self, preset_number)
+            }
+
+            fn load_factory_preset_params(
+                params: &dyn truce_params::Params,
+                preset_number: i32,
+            ) -> bool
+            where
+                Self: Sized,
+            {
+                <Self as $leaf>::load_factory_preset_params(params, preset_number)
             }
 
             fn state_changed(&mut self) {

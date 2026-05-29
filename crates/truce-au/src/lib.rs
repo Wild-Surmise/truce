@@ -521,7 +521,10 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
 ) -> i32 {
     run_extern_callback_with::<P, i32>("au", "load_factory_preset", 0, || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        i32::from(inst.plugin.load_factory_preset(number))
+        i32::from(P::load_factory_preset_params(
+            inst.params_arc.as_ref(),
+            number,
+        ))
     })
 }
 
