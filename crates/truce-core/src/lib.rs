@@ -8,6 +8,7 @@ pub mod export;
 pub mod info;
 pub mod midi;
 pub mod plugin;
+pub mod preset;
 pub mod process;
 pub mod screenshot;
 pub mod state;
@@ -23,6 +24,7 @@ pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, Tr
 pub use export::PluginExport;
 pub use info::{PluginCategory, PluginInfo};
 pub use plugin::PluginRuntime;
+pub use preset::FactoryPresetInfo;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;
 
