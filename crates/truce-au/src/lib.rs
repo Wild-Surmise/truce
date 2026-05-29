@@ -765,7 +765,17 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     end_edit: Box::new(move |_id| {
                         let _ = ctx_for_end;
                     }),
-                    request_resize: Box::new(|_w, _h| false),
+                    request_resize: {
+                        let ctx_for_resize = ctx_raw;
+                        Box::new(move |w, h| {
+                            let inst = &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                            if let Some(ref mut editor) = inst.editor {
+                                editor.set_size(w, h)
+                            } else {
+                                false
+                            }
+                        })
+                    },
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
                         params_for_plain.get_plain(id).unwrap_or(0.0)

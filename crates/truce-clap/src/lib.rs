@@ -1910,7 +1910,28 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let _ = gui_changes3.push(GuiParamChange::GestureEnd(id));
                     request_flush3();
                 }),
-                request_resize: Box::new(|_w, _h| false),
+                request_resize: {
+                    let host_for_resize = SendPtr::new(data.host);
+                    Box::new(move |w, h| {
+                        let host_ptr = host_for_resize.as_ptr();
+                        if host_ptr.is_null() {
+                            return false;
+                        }
+                        let get_ext = match (*host_ptr).get_extension {
+                            Some(f) => f,
+                            None => return false,
+                        };
+                        let ext = get_ext(host_ptr, CLAP_EXT_GUI.as_ptr());
+                        if ext.is_null() {
+                            return false;
+                        }
+                        let gui_ext = &*(ext as *const clap_sys::ext::gui::clap_host_gui);
+                        match gui_ext.request_resize {
+                            Some(f) => f(host_ptr, w, h),
+                            None => false,
+                        }
+                    })
+                },
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                 get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
                 format_param: Box::new(move |id| {
@@ -2013,12 +2034,12 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
     height: u32,
 ) -> bool {
     unsafe {
-        let mut current_w: u32 = 0;
-        let mut current_h: u32 = 0;
-        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
-            return false;
+        let data = data_from_plugin::<P>(plugin);
+        if let Some(ref mut editor) = data.editor {
+            editor.set_size(width, height)
+        } else {
+            false
         }
-        width == current_w && height == current_h
     }
 }
 
@@ -2029,20 +2050,11 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
 /// the editor's reported size since the built-in renderer doesn't
 /// support arbitrary host-driven sizes today.
 unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
-    plugin: *const clap_plugin,
-    width: *mut u32,
-    height: *mut u32,
+    _plugin: *const clap_plugin,
+    _width: *mut u32,
+    _height: *mut u32,
 ) -> bool {
-    unsafe {
-        let mut current_w: u32 = 0;
-        let mut current_h: u32 = 0;
-        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
-            return false;
-        }
-        *width = current_w;
-        *height = current_h;
-        true
-    }
+    true
 }
 
 fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {

@@ -836,6 +836,22 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
     }
 }
 
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: u32,
+    h: u32,
+) {
+    unsafe {
+        if ctx.is_null() || w == 0 || h == 0 {
+            return;
+        }
+        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        if let Some(ref mut editor) = inst.editor {
+            editor.set_size(w, h);
+        }
+    }
+}
+
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
@@ -869,7 +885,12 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     end_edit: Box::new(move |id| {
                         ffi::truce_vst3_end_edit(ctx_raw.as_ptr().cast_mut(), id);
                     }),
-                    request_resize: Box::new(|_w, _h| false),
+                    request_resize: {
+                        let ctx_for_resize = SendPtr::new(ctx);
+                        Box::new(move |w, h| {
+                            ffi::truce_vst3_request_resize(ctx_for_resize.as_ptr().cast_mut(), w, h)
+                        })
+                    },
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
                         params_for_plain.get_plain(id).unwrap_or(0.0)
@@ -1072,6 +1093,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
         gui_set_content_scale: cb_gui_set_content_scale::<P>,
+        gui_set_size: cb_gui_set_size::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

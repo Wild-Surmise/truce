@@ -212,6 +212,7 @@ struct Vst3Callbacks {
     void (*gui_open)(void*, void*);
     void (*gui_close)(void*);
     void (*gui_set_content_scale)(void*, double);
+    void (*gui_set_size)(void*, uint32_t, uint32_t);
 };
 
 // ---------------------------------------------------------------------------
@@ -364,6 +365,7 @@ struct PClassInfo {
 // ---------------------------------------------------------------------------
 
 struct TruceComponentCOM; // forward declaration
+struct TrucePlugView;     // forward declaration
 class TruceComponent;     // forward declaration for ctx mapping
 
 // Global ctx→component mapping for extern "C" host-notification callbacks
@@ -381,10 +383,11 @@ public:
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
     void* deferredParent;     // stashed parent view if editor attached before state loaded
+    TrucePlugView* plugView;  // current IPlugView, for resize requests
 
     TruceComponent() : ctx(nullptr), sampleRate(44100), maxFrames(1024),
                        componentHandler(nullptr), inPerformEdit(false),
-                       stateLoaded(false), deferredParent(nullptr) {
+                       stateLoaded(false), deferredParent(nullptr), plugView(nullptr) {
         if (g_cb) {
             ctx = g_cb->create();
             if (ctx) {
@@ -1031,6 +1034,7 @@ struct TrucePlugView {
     int32_t refCount;
     void* ctx;              // Rust plugin context
     TruceComponent* comp;   // owning component (for state-loaded check)
+    void* frame;            // IPlugFrame* from setFrame, for resizeView
 };
 
 static TrucePlugView* pv_from_scale(void* s) {
@@ -1125,22 +1129,42 @@ static tresult pv_getSize(void* s, void* rect) {
 static tresult pv_stub_false(void*) { return kResultFalse; }
 static tresult pv_stub1(void*, float) { return kResultFalse; }
 static tresult pv_stub2(void*, char16, int16_t, int16_t) { return kResultFalse; }
-static tresult pv_stub3(void*, void*) { return kResultFalse; }
+static tresult pv_stub_void2(void*, void*) { return kResultFalse; }
+static tresult pv_setFrame(void* s, void* frame) {
+    auto* pv = (TrucePlugView*)s;
+    pv->frame = frame;
+    return kResultOk;
+}
 static tresult pv_stub4(void*, int8) { return kResultFalse; }
+static tresult pv_onSize(void* s, void* rect) {
+    auto* pv = (TrucePlugView*)s;
+    auto* r = (ViewRect*)rect;
+    if (g_cb && pv->ctx) {
+        uint32_t w = (uint32_t)(r->right - r->left);
+        uint32_t h = (uint32_t)(r->bottom - r->top);
+        g_cb->gui_set_size(pv->ctx, w, h);
+    }
+    return kResultOk;
+}
+static tresult pv_canResize(void*) { return kResultOk; }
+static tresult pv_checkSizeConstraint(void*, void* rect) {
+    (void)rect;
+    return kResultOk;
+}
 
 static IPlugViewVtbl g_plugview_vtbl = {
     pv_queryInterface, pv_addRef, pv_release,
     pv_isPlatformTypeSupported,
     pv_attached, pv_removed,
-    pv_stub1,      // onWheel
-    pv_stub2,      // onKeyDown
-    pv_stub2,      // onKeyUp
+    pv_stub1,                // onWheel
+    pv_stub2,                // onKeyDown
+    pv_stub2,                // onKeyUp
     pv_getSize,
-    pv_stub3,      // onSize
-    pv_stub4,      // onFocus
-    pv_stub3,      // setFrame
-    pv_stub_false, // canResize
-    pv_stub3,      // checkSizeConstraint
+    pv_onSize,               // onSize
+    pv_stub4,                // onFocus
+    pv_setFrame,             // setFrame
+    pv_canResize,            // canResize
+    pv_checkSizeConstraint,  // checkSizeConstraint
 };
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1288,7 @@ void* TruceComponent::createView(FIDString /*name*/) {
     pv->refCount = 1;
     pv->ctx = ctx;
     pv->comp = this;
+    plugView = pv;
     return pv;
 }
 
@@ -1686,6 +1711,18 @@ void truce_vst3_end_edit(void* ctx, uint32_t id) {
     if (!comp || !comp->componentHandler) return;
     auto endEdit = (tresult (*)(void*, uint32))(*(void***)comp->componentHandler)[5];
     endEdit(comp->componentHandler, id);
+}
+
+bool truce_vst3_request_resize(void* ctx, uint32_t w, uint32_t h) {
+    auto* comp = ctx_lookup(ctx);
+    if (!comp || !comp->plugView) return false;
+    auto* pv = (TrucePlugView*)comp->plugView;
+    if (!pv->frame) return false;
+    // IPlugFrame vtable: [queryInterface, addRef, release, resizeView]
+    // resizeView is index 3 in the vtable
+    ViewRect rect = { 0, 0, (int32)w, (int32)h };
+    auto resizeView = (tresult (*)(void*, void*, void*))(*(void***)pv->frame)[3];
+    return resizeView(pv->frame, pv, &rect) == kResultOk;
 }
 
 } // extern "C"
