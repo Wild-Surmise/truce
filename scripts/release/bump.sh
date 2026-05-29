@@ -20,6 +20,17 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# On Windows (WSL) the cargo on PATH is often cargo.exe. Prefer plain
+# cargo, fall back to cargo.exe, and fail loudly if neither is present.
+if command -v cargo.exe >/dev/null 2>&1; then
+    CARGO=cargo.exe
+elif command -v cargo >/dev/null 2>&1; then
+    CARGO=cargo
+else
+    echo "Error: cargo not found on PATH (looked for 'cargo' and 'cargo.exe')" >&2
+    exit 1
+fi
+
 EDIT_ONLY=0
 BUMP=""
 for arg in "$@"; do
@@ -105,8 +116,8 @@ sed_inplace "s/\"$CURRENT\"/\"$NEW\"/g" Cargo.toml
 
 # Refresh Cargo.lock ----------------------------------------------------------
 
-echo "→ refreshing Cargo.lock (cargo check --workspace)"
-cargo check --workspace
+echo "→ refreshing Cargo.lock ($CARGO check --workspace)"
+"$CARGO" check --workspace
 
 # Commit ----------------------------------------------------------------------
 
