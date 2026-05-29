@@ -165,6 +165,13 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         self.logic.load_factory_preset(preset_number)
     }
 
+    fn load_factory_preset_params(params: &dyn truce_params::Params, preset_number: i32) -> bool
+    where
+        Self: Sized,
+    {
+        L::load_factory_preset_params(params, preset_number)
+    }
+
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         Some(PluginLogicCore::editor(&self.logic))
     }
@@ -299,6 +306,16 @@ macro_rules! export_static {
 
             fn load_factory_preset(&self, preset_number: i32) -> bool {
                 self.inner.load_factory_preset(preset_number)
+            }
+
+            fn load_factory_preset_params(
+                params: &dyn $crate::__macro_deps::truce_params::Params,
+                preset_number: i32,
+            ) -> bool
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::load_factory_preset_params(params, preset_number)
             }
 
             fn editor(
