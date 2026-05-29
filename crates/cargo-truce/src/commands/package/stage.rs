@@ -401,7 +401,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
             <key>description</key>
             <string>{display_name}</string>
             <key>version</key>
-            <integer>65536</integer>
+            <integer>{au_component_version}</integer>
             <key>factoryFunction</key>
             <string>TruceAUFactory</string>
             <key>sandboxSafe</key>
@@ -422,6 +422,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
         au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
+        au_component_version = p.resolved_au_component_version("1.0"),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     codesign_bundle(

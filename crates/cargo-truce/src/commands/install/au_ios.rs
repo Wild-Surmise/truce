@@ -64,6 +64,17 @@ impl IosTarget {
     }
 }
 
+fn ios_app_bundle_id(vendor_id: &str, p: &PluginDef) -> String {
+    let suffix = p.bundle_id.replace('_', "-");
+    format!("{vendor_id}.{suffix}")
+}
+
+fn ios_appex_bundle_id(vendor_id: &str, p: &PluginDef) -> String {
+    p.ios_appex_bundle_id
+        .clone()
+        .unwrap_or_else(|| format!("{}.AUExt", ios_app_bundle_id(vendor_id, p)))
+}
+
 /// Build + install the iOS bundle for one plugin.
 ///
 /// For the simulator target this expects `xcrun simctl boot
@@ -129,8 +140,7 @@ fn install_one_inner(
     // `simctl launch` / `devicectl process launch` accept. Must match
     // the CFBundleIdentifier written into the .app's Info.plist
     // (constructed the same way inside build_bundle).
-    let suffix = p.bundle_id.replace('_', "-");
-    let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
+    let app_bundle_id = ios_app_bundle_id(&cfg.vendor.id, p);
 
     eprintln!(
         "==> Installing {} on {}...",
@@ -171,6 +181,11 @@ pub(crate) fn build_bundle(
         .into());
     }
     let min_ios = p.resolved_ios_minimum_os_version(&cfg.ios);
+    let workspace_version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
+        "0.0.0".to_string()
+    });
+    let plugin_version = p.resolved_version(&workspace_version);
     let target_triple = format!("arm64-apple-ios{min_ios}{}", target.swift_target_suffix());
 
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
@@ -180,9 +195,8 @@ pub(crate) fn build_bundle(
     // (e.g. `TEAM.com.acme.*`) matches the assembled full ID, not
     // the bare suffix. Underscores are illegal in iOS bundle
     // identifiers; hyphens are accepted.
-    let suffix = p.bundle_id.replace('_', "-");
-    let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
-    let appex_bundle_id = format!("{app_bundle_id}.AUExt");
+    let app_bundle_id = ios_app_bundle_id(&cfg.vendor.id, p);
+    let appex_bundle_id = ios_appex_bundle_id(&cfg.vendor.id, p);
     let app_name = &p.name;
     let app_file = p.file_stem();
     let dylib_stem = p.dylib_stem();
@@ -215,7 +229,7 @@ pub(crate) fn build_bundle(
     )?;
     fs_ctx::write(
         fw_dir.join("Info.plist"),
-        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, plugin_version, target),
     )?;
 
     let stage = out.join("build/stage");
@@ -242,6 +256,10 @@ pub(crate) fn build_bundle(
     let au_sub = p.resolved_fourcc();
     let au_mfr = &cfg.vendor.au_manufacturer;
     let au_tag = &p.au_tag;
+    let [ios_view_w, ios_view_h] = p.resolved_ios_view_size();
+    let ios_size_tag = format!("size:{{{ios_view_w},{ios_view_h}}}");
+    let mut extra_tags = vec!["resizable"];
+    extra_tags.push(ios_size_tag.as_str());
     let au_name = format!(
         "{vendor}: {plugin}",
         vendor = cfg.vendor.name,
@@ -255,7 +273,10 @@ pub(crate) fn build_bundle(
             au_sub,
             au_mfr,
             au_tag,
-            au_ver: "1",
+            extra_au_tags: &extra_tags,
+            short_version: plugin_version,
+            au_component_version: p.resolved_au_component_version(&workspace_version),
+            au_ver: plugin_version,
             min_os: &min_ios,
             supported_platform: target.supported_platform(),
             xcode_tokens: Some(crate::templates::au3::XcodeTokens {
@@ -453,6 +474,7 @@ pub(crate) fn build_bundle(
             app_name,
             &app_bundle_id,
             &min_ios,
+            plugin_version,
             target,
             &orientations_xml,
         ),
@@ -542,7 +564,7 @@ pub(crate) fn build_bundle(
         //      (`<prefix>.*`) that covers both bundle IDs - reuse
         //      it for the appex too.
         //   2. TRUCE_IOS_APPEX_PROVISIONING_PROFILE is set to a
-        //      separate profile bound to the `<bundle>.AUExt` ID.
+        //      separate profile bound to the resolved appex bundle ID.
         let appex_prof = appex_prof_env.as_ref().unwrap_or(&app_prof);
         fs_ctx::copy(&app_prof, app_dir.join("embedded.mobileprovision"))?;
         fs_ctx::copy(
@@ -701,8 +723,7 @@ pub(crate) fn build_xcframework(
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
     let min_ios = p.resolved_ios_minimum_os_version(&cfg.ios);
     // Same `{vendor.id}.{suffix}` construction as build_bundle.
-    let suffix = p.bundle_id.replace('_', "-");
-    let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
+    let app_bundle_id = ios_app_bundle_id(&cfg.vendor.id, p);
     let mut slices: Vec<PathBuf> = Vec::with_capacity(2);
     for target in [IosTarget::Device, IosTarget::Simulator] {
         eprintln!(
@@ -740,7 +761,13 @@ pub(crate) fn build_xcframework(
         )?;
         fs_ctx::write(
             slice_dir.join("Info.plist"),
-            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+            framework_info_plist(
+                &fw_name,
+                &app_bundle_id,
+                &min_ios,
+                p.resolved_version("1.0"),
+                target,
+            ),
         )?;
         slices.push(slice_dir);
     }
@@ -800,10 +827,11 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     // other formats: `<crate>-<version>-ios.ipa`.
     let dist_dir = truce_build::target_dir(root).join("dist");
     fs_ctx::create_dir_all(&dist_dir)?;
-    let version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+    let workspace_version = crate::read_workspace_version(root).unwrap_or_else(|e| {
         eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
         "0.0.0".to_string()
     });
+    let version = p.resolved_version(&workspace_version);
     let ipa_path = dist_dir.join(format!("{}-{}-ios.ipa", p.crate_name, version));
     // Pre-clean the dist artifact: `zip -r` appends to an existing
     // archive rather than replacing it, so leaving a stale .ipa in
@@ -1106,6 +1134,7 @@ fn framework_info_plist(
     fw_name: &str,
     bundle_id: &str,
     min_ios: &str,
+    version: &str,
     target: IosTarget,
 ) -> String {
     let platform = target.supported_platform();
@@ -1119,8 +1148,8 @@ fn framework_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{fw_name}</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>
 </dict>
@@ -1175,6 +1204,7 @@ fn app_info_plist(
     app_name: &str,
     bundle_id: &str,
     min_ios: &str,
+    version: &str,
     target: IosTarget,
     orientations_xml: &str,
 ) -> String {
@@ -1189,8 +1219,8 @@ fn app_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{app_name}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>

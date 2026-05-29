@@ -41,6 +41,13 @@ welcome_bmp = "static/truce-welcome.bmp"
 # parallel ships. When a field is absent the format falls back to
 # `name` above.
 #
+# Product version override:
+#
+#   version = "1.1.0"
+#             # Host-facing plugin metadata, generated AUv3 plists,
+#             # iOS app bundles, and per-plugin package artifact names.
+#             # Falls back to the workspace/package version if omitted.
+#
 #   clap_name = "..."
 #   vst3_name = "..."
 #   vst2_name = "..."
@@ -51,8 +58,18 @@ welcome_bmp = "static/truce-welcome.bmp"
 #
 # Per-plugin iOS overrides:
 #
+#   ios_appex_bundle_id     = "com.example.MyPlugin.MyPluginExtension"
+#                             # Full CFBundleIdentifier override for
+#                             # the AUv3 `.appex`. Defaults to
+#                             # `{vendor.id}.{bundle_id}.AUExt`.
 #   ios_icon_set            = ".appiconset directory"
 #   ios_minimum_os_version  = "16.0"
+#   ios_view_size           = [420, 720]
+#                             # Adds an AudioComponents tag
+#                             # `size:{420,720}` for iOS AUv3 hosts
+#                             # such as AUM that read a preferred
+#                             # first-open editor size from Info.plist.
+#                             # Defaults to [420, 720] for all iOS AUv3.
 #   ios_url                 = "https://example.com/this-plugin"
 #                             # iOS container "About" link-out;
 #                             # falls back to [vendor].url
@@ -344,4 +361,3 @@ ios_icon_set = "static/truce-minimal.appiconset"
 [[suite]]
 name = "Truce Examples"
 bundle_id = "truce-examples"
-

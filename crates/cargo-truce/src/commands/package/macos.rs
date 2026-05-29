@@ -756,6 +756,7 @@ struct PackageOpts<'a> {
 /// is the only caller.
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
     eprintln!("\nPackaging: {}", p.name);
+    let version = p.resolved_version(o.version);
 
     let staging = truce_build::target_dir(root)
         .join("package/macos/plugin")
@@ -836,7 +837,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &o.config.vendor.id,
         &p.bundle_id,
         o.formats,
-        o.version,
+        version,
         Some(&o.config.macos.packaging),
         o.effective_scope,
     );
@@ -919,10 +920,11 @@ fn run_productbuild(
     // and don't match the Linux tarball's slug. Keep the user-facing
     // bundle name + Info.plist `CFBundleName` etc. on `p.name` - only
     // the dist artifact's filename changes.
+    let version = p.resolved_version(o.version);
     let pkg_name = format!(
         "{}-{}-macos{}.pkg",
         p.crate_name,
-        o.version,
+        version,
         o.scope.dist_suffix()
     );
     let pkg_path = dist_dir.join(&pkg_name);
@@ -1034,7 +1036,7 @@ fn run_pkgbuild_for_format(
         "--identifier".to_string(),
         pkg_id,
         "--version".to_string(),
-        o.version.to_string(),
+        p.resolved_version(o.version).to_string(),
         // `preserve` records the staged files' actual ownership
         // (mahae:staff for a developer build) in the BOM instead of
         // synthesising root:wheel. Shove then writes the payload as

@@ -2,6 +2,24 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- Packaging: per-plugin `version = "x.y.z"` values in `truce.toml`
+  now flow into generated AUv3 plists, direct iOS app/appex bundles,
+  and per-plugin macOS/Windows/Linux package artifact names instead of
+  always using the workspace version or hardcoded plist defaults.
+- iOS AUv3: plugins can now override the extension bundle identifier
+  with `ios_appex_bundle_id = "com.example.Plugin.Extension"` while
+  preserving the existing `{vendor.id}.{bundle_id}.AUExt` default.
+- iOS AUv3: generated extension plists now include `resizable` and a
+  default `size:{420,720}` AudioComponents tag so hosts such as
+  GarageBand and AUM can expose/choose larger editor views. Plugins
+  can override the advertised first-open size with
+  `ios_view_size = [w, h]` in `truce.toml`.
+- iOS AUv3: the generated `AUAudioUnit` subclass now accepts all
+  proposed `AUAudioUnitViewConfiguration` entries, matching the
+  host-driven responsive editor path.
+
 ## 0.49.2 (2026-05-25)
 
 - Housekeeping: minor README updates and safety fixes.

@@ -178,6 +178,10 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var inputBusses: AUAudioUnitBusArray { _inputBusArray }
     override var outputBusses: AUAudioUnitBusArray { _outputBusArray }
+    override func supportedViewConfigurations(_ availableViewConfigurations: [AUAudioUnitViewConfiguration]) -> IndexSet {
+        IndexSet(integersIn: availableViewConfigurations.indices)
+    }
+
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }

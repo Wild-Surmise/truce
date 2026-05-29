@@ -793,7 +793,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
             <key>description</key>
             <string>{display_name}</string>
             <key>version</key>
-            <integer>65536</integer>
+            <integer>{au_component_version}</integer>
             <key>factoryFunction</key>
             <string>TruceAUFactory</string>
             <key>sandboxSafe</key>
@@ -814,6 +814,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
         au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
+        au_component_version = p.resolved_au_component_version("1.0"),
     );
     let plist_tmp = tmp_manifests()
         .join(format!("{}_au.plist", p.bundle_id))
