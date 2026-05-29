@@ -45,6 +45,7 @@
 #[doc(hidden)]
 pub mod __macro_deps {
     pub use truce_core;
+    pub use truce_params;
     // `truce_plugin` carries the `PluginLogicCore` blanket the
     // `export_plugin!` / `export_static!` macros need to name
     // (`<L as PluginLogicCore<Sample>>::supports_in_place()` etc.).
