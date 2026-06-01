@@ -2,6 +2,31 @@
 
 Notable changes per release.
 
+## 0.49.21
+
+- **`truce-egui`: int sliders now snap and show plain integers.**
+  `param_slider` adapts to `ParamRange::Discrete` (plain `min..=max`,
+  integer step, integer label) instead of the normalized [0, 1]
+  display.
+- **`truce-egui`: multi-channel meters render past 2 bars.** The
+  widget allocated a fixed 16 px width regardless of channel count, so
+  bars beyond ~3 were clipped. Width now grows with channel count.
+- **`truce-egui`: toggle height matches the selector** so a row mixing
+  them bottom-anchors labels on the same baseline.
+- **`truce-iced`: `param_dropdown` alias added** for `param_selector`,
+  matching the egui / CPU APIs.
+- **`truce-slint`: new `Dropdown` widget** (popup-style, wraps the
+  std-widgets `ComboBox`). Available via `import { Dropdown } from
+  "@truce"`.
+- **`truce-slint`: pinned std-widgets style to `fluent` on every host
+  OS.** The default picked Cupertino on macOS, whose `ComboBox`
+  rendered its chevron region with a persistent accent-blue square.
+- **`truce-slint`: `Toggle` height bumped 40 → 50** to align labels
+  with `Selector` / `Dropdown` in mixed rows.
+- **New examples: `truce-example-gui-zoo-egui` / `-iced` / `-slint`.**
+  Each mirrors the CPU `gui-zoo`'s param set so every renderer's
+  widget surface is exercised against the same shape.
+
 ## 0.49.20
 
 - **GUI: discrete params now snap during drag and wheel.** `IntParam` /
