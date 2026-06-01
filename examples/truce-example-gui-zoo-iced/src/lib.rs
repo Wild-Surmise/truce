@@ -1,8 +1,7 @@
 //! iced counterpart of `truce-example-gui-zoo`. Same param shapes
 //! (so every unit / range / discrete-snap path is exercised) but
 //! laid out through iced's containers instead of the built-in
-//! `GridLayout`. `truce-iced` aliases `param_dropdown` to
-//! `param_selector` today, so the zoo's selector row covers both.
+//! `GridLayout`.
 
 // Same iOS gate as `truce-example-gain-iced`: iced's `iced_winit`
 // dep doesn't build for iOS.
@@ -24,8 +23,8 @@ const HEADER_TEXT: iced::Color = iced::Color::from_rgb(0.75, 0.75, 0.80);
 
 use truce::prelude::*;
 use truce_iced::{
-    IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, param_selector,
-    param_slider, param_toggle, xy_pad,
+    IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, param_dropdown,
+    param_selector, param_slider, param_toggle, xy_pad,
 };
 
 use ZooParamsParamId as P;
@@ -36,6 +35,26 @@ pub enum Shape {
     Triangle,
     Square,
     Sawtooth,
+}
+
+#[derive(ParamEnum)]
+pub enum Mode {
+    #[name = "Mode A"]
+    A,
+    #[name = "Mode B"]
+    B,
+    #[name = "Mode C"]
+    C,
+    #[name = "Mode D"]
+    D,
+    #[name = "Mode E"]
+    E,
+    #[name = "Mode F"]
+    F,
+    #[name = "Mode G"]
+    G,
+    #[name = "Mode H"]
+    H,
 }
 
 #[derive(Params)]
@@ -77,6 +96,10 @@ pub struct ZooParams {
     // -- Selector --
     #[param(name = "Shape")]
     pub shape: EnumParam<Shape>,
+
+    // -- Dropdown --
+    #[param(name = "Mode")]
+    pub mode: EnumParam<Mode>,
 
     // -- Meters: single, stereo pair, 6-channel bus --
     #[meter]
@@ -171,6 +194,16 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .align_y(alignment::Vertical::Bottom)
             .into();
 
+        // `param_dropdown` is an alias for `param_selector` in
+        // `truce-iced`, so this renders identically to the selector
+        // above - the section demonstrates the API surface for
+        // plugin authors writing against the egui / CPU shape.
+        let dropdown_row: Element<'a, Message<ZooMsg>> = Row::new()
+            .push(param_dropdown(P::Mode, params).label("Mode").el())
+            .spacing(20.0)
+            .align_y(alignment::Vertical::Bottom)
+            .into();
+
         let meters_row: Element<'a, Message<ZooMsg>> = Row::new()
             .push(meter(&[P::MIn], params).size(16.0, 140.0).el())
             .push(meter(&[P::ML, P::MR], params).size(16.0, 140.0).el())
@@ -213,6 +246,8 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .push(sliders_row)
             .push(section_label("Toggles & Selector"))
             .push(toggles_row)
+            .push(section_label("Dropdown"))
+            .push(dropdown_row)
             .push(section_label("Meters"))
             .push(meters_row)
             .push(section_label("XY Pads"))
