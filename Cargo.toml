@@ -53,6 +53,7 @@ members = [
     "examples/truce-example-gui-zoo",
     "examples/truce-example-gui-zoo-egui",
     "examples/truce-example-gui-zoo-iced",
+    "examples/truce-example-gui-zoo-slint",
 ]
 
 [workspace.package]

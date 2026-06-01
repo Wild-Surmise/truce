@@ -52,6 +52,7 @@ const WIDGET_SOURCES: &[(&str, &str)] = &[
     ("knob.slint", include_str!("../ui/knob.slint")),
     ("meter.slint", include_str!("../ui/meter.slint")),
     ("selector.slint", include_str!("../ui/selector.slint")),
+    ("dropdown.slint", include_str!("../ui/dropdown.slint")),
     ("slider.slint", include_str!("../ui/slider.slint")),
     ("toggle.slint", include_str!("../ui/toggle.slint")),
     ("xy_pad.slint", include_str!("../ui/xy_pad.slint")),
@@ -86,9 +87,18 @@ pub fn compile(slint_entry: impl AsRef<Path>) -> Result<(), CompileError> {
     let mut library_paths = std::collections::HashMap::new();
     library_paths.insert(LIBRARY_NAME.to_string(), widgets_entry);
 
+    // Pin the std-widgets style. The default picks the host OS
+    // (Cupertino on macOS, Fluent on Linux / Windows), which made
+    // the macOS `ComboBox` render its chevron region with the
+    // `accent-background` colour - a permanent blue square that
+    // didn't match the rest of truce's widgets. Fluent's
+    // `ComboBox` colorizes its chevron with `text-secondary`
+    // (muted gray); pinning here keeps plugins visually
+    // cross-platform-consistent.
     let config = slint_build::CompilerConfiguration::new()
         .with_library_paths(library_paths)
-        .with_include_paths(vec![font_dir]);
+        .with_include_paths(vec![font_dir])
+        .with_style("fluent".to_string());
 
     slint_build::compile_with_config(slint_entry, config)
         .map_err(|e| CompileError::Slint(format!("{e}")))?;

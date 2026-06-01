@@ -84,6 +84,7 @@ env:
     truce-example-gui-zoo
     truce-example-gui-zoo-egui
     truce-example-gui-zoo-iced
+    truce-example-gui-zoo-slint
 
 jobs:
   linux:

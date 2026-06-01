@@ -1,0 +1,203 @@
+import { Knob, Meter, ParamSlider, Toggle, Selector, Dropdown, XYPad } from "@truce";
+import "JetBrainsMono-Regular.ttf";
+
+export component ZooUi inherits Window {
+    // --- Knobs (9 of them; each carries normalized value + formatted text) ---
+    in-out property <float> k-mix;
+    in property <string> k-mix-text;
+    callback k-mix-changed(float);
+
+    in-out property <float> k-gain;
+    in property <string> k-gain-text;
+    callback k-gain-changed(float);
+
+    in-out property <float> k-freq;
+    in property <string> k-freq-text;
+    callback k-freq-changed(float);
+
+    in-out property <float> k-q;
+    in property <string> k-q-text;
+    callback k-q-changed(float);
+
+    in-out property <float> k-phase;
+    in property <string> k-phase-text;
+    callback k-phase-changed(float);
+
+    in-out property <float> k-pitch;
+    in property <string> k-pitch-text;
+    callback k-pitch-changed(float);
+
+    in-out property <float> k-time;
+    in property <string> k-time-text;
+    callback k-time-changed(float);
+
+    in-out property <float> k-release;
+    in property <string> k-release-text;
+    callback k-release-changed(float);
+
+    in-out property <float> k-pan;
+    in property <string> k-pan-text;
+    callback k-pan-changed(float);
+
+    // --- Sliders ---
+    in-out property <float> s-float;
+    in property <string> s-float-text;
+    callback s-float-changed(float);
+
+    in-out property <float> s-int;
+    in property <string> s-int-text;
+    callback s-int-changed(float);
+
+    in-out property <float> s-wide;
+    in property <string> s-wide-text;
+    callback s-wide-changed(float);
+
+    // --- Toggles ---
+    in-out property <bool> t-on;
+    callback t-on-toggled(bool);
+
+    in-out property <bool> t-off;
+    callback t-off-toggled(bool);
+
+    // --- Selector (enum index) ---
+    in-out property <int> shape-index;
+    in property <int> shape-count: 4;
+    in property <string> shape-text;
+    callback shape-changed(int);
+
+    // --- Dropdown (enum index, popup-style) ---
+    in-out property <int> mode-index;
+    in property <[string]> mode-options: ["Mode A", "Mode B", "Mode C", "Mode D",
+        "Mode E", "Mode F", "Mode G", "Mode H"];
+    callback mode-changed(int);
+
+    // --- Meters (slint's Meter is hardcoded stereo) ---
+    in property <float> m-l;
+    in property <float> m-r;
+
+    // --- XY Pads (three sizes) ---
+    in-out property <float> xy-small-x;
+    in-out property <float> xy-small-y;
+    callback xy-small-changed-x(float);
+    callback xy-small-changed-y(float);
+
+    in-out property <float> xy-med-x;
+    in-out property <float> xy-med-y;
+    callback xy-med-changed-x(float);
+    callback xy-med-changed-y(float);
+
+    in-out property <float> xy-big-x;
+    in-out property <float> xy-big-y;
+    callback xy-big-changed-x(float);
+    callback xy-big-changed-y(float);
+
+    title: "GUI ZOO (slint)";
+    preferred-width: 700px;
+    preferred-height: 900px;
+    background: #1f1f24;
+    default-font-family: "JetBrains Mono";
+
+    VerticalLayout {
+        spacing: 0px;
+        alignment: start;
+
+        // Header band - 30px, matches the egui / iced zoos.
+        Rectangle {
+            height: 30px;
+            background: #14141a;
+
+            Text {
+                x: 10px;
+                y: (parent.height - self.preferred-height) / 2;
+                text: "GUI ZOO (slint)";
+                font-size: 14px;
+                font-weight: 700;
+                color: #bfbfc8;
+            }
+        }
+
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            spacing: 12px;
+
+            Text { text: "Knobs"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 10px;
+                Knob { label: "Mix";   value <=> root.k-mix;     value-text: root.k-mix-text;     changed(v) => { root.k-mix-changed(v); } }
+                Knob { label: "Gain";  value <=> root.k-gain;    value-text: root.k-gain-text;    changed(v) => { root.k-gain-changed(v); } }
+                Knob { label: "Freq";  value <=> root.k-freq;    value-text: root.k-freq-text;    changed(v) => { root.k-freq-changed(v); } }
+                Knob { label: "Q";     value <=> root.k-q;       value-text: root.k-q-text;       changed(v) => { root.k-q-changed(v); } }
+                Knob { label: "Phase"; value <=> root.k-phase;   value-text: root.k-phase-text;   changed(v) => { root.k-phase-changed(v); } }
+                Knob { label: "Pitch"; value <=> root.k-pitch;   value-text: root.k-pitch-text;   changed(v) => { root.k-pitch-changed(v); } }
+                Knob { label: "Time";  value <=> root.k-time;    value-text: root.k-time-text;    changed(v) => { root.k-time-changed(v); } }
+                Knob { label: "Rel";   value <=> root.k-release; value-text: root.k-release-text; changed(v) => { root.k-release-changed(v); } }
+                Knob { label: "Pan";   value <=> root.k-pan;     value-text: root.k-pan-text;     changed(v) => { root.k-pan-changed(v); } }
+            }
+
+            Text { text: "Sliders"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 20px;
+                ParamSlider { width: 160px; label: "Float"; value <=> root.s-float; value-text: root.s-float-text; changed(v) => { root.s-float-changed(v); } }
+                ParamSlider { width: 160px; label: "Int"; value <=> root.s-int; value-text: root.s-int-text; changed(v) => { root.s-int-changed(v); } }
+                ParamSlider { width: 220px; label: "Wide (dB)"; value <=> root.s-wide; value-text: root.s-wide-text; changed(v) => { root.s-wide-changed(v); } }
+            }
+
+            Text { text: "Toggles & Selector"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 20px;
+                Toggle { label: "On"; checked <=> root.t-on; toggled(v) => { root.t-on-toggled(v); } }
+                Toggle { label: "Off"; checked <=> root.t-off; toggled(v) => { root.t-off-toggled(v); } }
+                Selector { label: "Shape"; index <=> root.shape-index; count: root.shape-count; text: root.shape-text; changed(v) => { root.shape-changed(v); } }
+            }
+
+            Text { text: "Dropdown"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 20px;
+                Dropdown {
+                    label: "Mode";
+                    options: root.mode-options;
+                    index <=> root.mode-index;
+                    changed(v) => { root.mode-changed(v); }
+                }
+            }
+
+            Text { text: "Meter"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 20px;
+                Meter { height: 140px; level-left: root.m-l; level-right: root.m-r; }
+            }
+
+            Text { text: "XY Pads"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                spacing: 20px;
+                XYPad {
+                    width: 80px;
+                    label: "small";
+                    value-x <=> root.xy-small-x;
+                    value-y <=> root.xy-small-y;
+                    changed-x(v) => { root.xy-small-changed-x(v); }
+                    changed-y(v) => { root.xy-small-changed-y(v); }
+                }
+                XYPad {
+                    width: 130px;
+                    label: "med";
+                    value-x <=> root.xy-med-x;
+                    value-y <=> root.xy-med-y;
+                    changed-x(v) => { root.xy-med-changed-x(v); }
+                    changed-y(v) => { root.xy-med-changed-y(v); }
+                }
+                XYPad {
+                    width: 200px;
+                    label: "big";
+                    value-x <=> root.xy-big-x;
+                    value-y <=> root.xy-big-y;
+                    changed-x(v) => { root.xy-big-changed-x(v); }
+                    changed-y(v) => { root.xy-big-changed-y(v); }
+                }
+            }
+        }
+    }
+}
