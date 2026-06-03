@@ -28,25 +28,33 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
-# Intended substitution: route vizia_baseview's git baseview dep
-# through baseview-truce so vizia plugins pick up the AAX / Pro Tools
-# teardown fix every other GUI backend already gets.
+# Redirect vizia_baseview's hard-pinned baseview rev through the
+# truce-audio/baseview fork so vizia plugins inherit the AAX /
+# Pro Tools teardown fix every other GUI backend already gets.
 #
-# Currently inert: cargo's `[patch]` substitution looks the replacement
-# up by the *consumer's* requested package name. vizia asks for
-# `baseview` (`baseview = { git = "https://github.com/vizia/baseview.git" }`)
-# but baseview-truce is published with `[package].name = "baseview-truce"`
-# (only the `[lib].name` is `baseview`). cargo emits no diagnostic when
-# the rename mismatches a registry substitute - the patch is silently
-# ignored and vizia_baseview keeps linking the upstream baseview.
+# The fork has two branches: `master` is published to crates.io as
+# `baseview-truce` (the `[lib].name = "baseview"` workaround lets
+# direct consumers `use baseview::*`), and the branch pinned below
+# carries the same source but with `[package].name = "baseview"` so
+# cargo's `[patch]` package-name matching applies the substitution
+# (cargo refuses cross-name registry patches - only when the patched
+# package name matches the consumer's requested name does the
+# substitution land). The branch isn't published to crates.io
+# because that name is taken.
 #
-# Kept documented so the moment the rename problem is resolved (either
-# a vizia fork that depends on baseview-truce directly, or a
-# `truce-audio/baseview` branch published with `[package].name =
-# "baseview"`) the substitution can be tested by just deleting this
-# comment block.
+# Doesn't fix iOS. Neither vizia/baseview nor our fork carry a
+# `cfg(target_os = "ios")` `platform` module, so the
+# `truce-vizia → vizia → vizia_baseview → baseview` chain still
+# fails to link on iOS. truce-egui / truce-iced / truce-slint sidestep
+# this by gating their baseview dep on
+# `cfg(not(target_os = "ios"))` and providing iOS-specific editor
+# stubs that bypass baseview entirely; vizia can't because
+# vizia_baseview is unconditional inside vizia. iOS bake exclusions
+# for vizia stay in place (see `.github/workflows/bake-screenshots.yml`)
+# until either vizia upstream gates vizia_baseview on non-iOS targets
+# or baseview-truce grows a UIKit-backed iOS platform impl.
 [patch."https://github.com/vizia/baseview.git"]
-baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
+baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "baseview-truce-vizia" }
 
 [package]
 name = "truce-vizia"

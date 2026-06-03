@@ -376,15 +376,17 @@ jobs:
       # below. After this step, the `cargo build` inside each install is
       # a fast fingerprint-only no-op.
       #
-      # vizia plugins are *not* iterated here at all: they live in the
-      # truce-vizia sub-workspace (see crates/truce-vizia/Cargo.toml's
-      # header for the rationale - vizia's pinned baseview rev has no
-      # iOS `platform` impl and our `[patch]` is inert because of a
-      # registry/git rename mismatch). They don't ship to iOS either
-      # way, so the sub-workspace is omitted from the iOS bake until
-      # the patch is wired up by either a vizia fork that depends on
-      # baseview-truce directly, or a `truce-audio/baseview` branch
-      # published with `[package].name = "baseview"`.
+      # vizia plugins are *not* iterated here at all: they live in
+      # the truce-vizia sub-workspace and their transitive chain
+      # `truce-vizia → vizia → vizia_baseview → baseview` doesn't
+      # link on iOS (neither vizia/baseview nor our truce-audio fork
+      # carry a `cfg(target_os = "ios")` `platform` module).
+      # truce-egui / truce-iced / truce-slint sidestep this with a
+      # `cfg(not(target_os = "ios"))` gate on their baseview dep + an
+      # iOS-specific editor stub; vizia can't because vizia_baseview
+      # is unconditional inside the vizia crate itself. See
+      # `crates/truce-vizia/Cargo.toml`'s `[patch]` header for the
+      # full unblocking conditions.
       - name: Pre-build iOS plugin slices
         run: |
           set -euo pipefail
