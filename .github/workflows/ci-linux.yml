@@ -268,11 +268,34 @@ jobs:
             DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && break
             sleep 0.2
           done
-          DISPLAY=:99 xdpyinfo >/dev/null
-          # Sanity-check: glxinfo must list at least one FBConfig.
-          # If this fails, the validate step would panic in the same
-          # baseview path with a less actionable error.
-          DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B | head -10
+          if ! DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then
+            echo "::error::Xorg :99 never became ready"
+            echo "--- Xorg log tail ---"
+            sudo tail -100 /tmp/xorg-dummy.log || true
+            exit 1
+          fi
+          # Sanity-check: enumerate FBConfigs. If `glxinfo` can find
+          # them here, baseview's `glXChooseFBConfig` will too. If it
+          # can't, surface the diagnostic *now* with the Xorg log
+          # rather than letting the validate step panic with a
+          # less-actionable backtrace deep in baseview.
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          # libglvnd dispatches GLX to a vendor lib; pin Mesa so we
+          # don't accidentally land on `nvidia` or `dri`-flavoured
+          # vendor JSON the runner image may have left around.
+          export __GLX_VENDOR_LIBRARY_NAME=mesa
+          echo "--- glxinfo -B ---"
+          if ! glxinfo -B; then
+            echo "::error::glxinfo failed - Mesa GLX vendor not registered with Xorg :99"
+            echo "--- vendor JSON files ---"
+            ls -la /usr/share/glvnd/egl_vendor.d/ /usr/lib/x86_64-linux-gnu/GL/glx/*.json 2>/dev/null || true
+            echo "--- Xorg log tail ---"
+            sudo tail -100 /tmp/xorg-dummy.log
+            exit 1
+          fi
+          echo "--- FBConfigs (head) ---"
+          glxinfo | grep -A2 "GLX Visuals\|fbconfig" | head -30 || true
 
       - name: Install + validate (truce-vizia sub-workspace)
         env:
@@ -281,6 +304,12 @@ jobs:
           # behind the dummy driver to probe. Scoped to this step so
           # later non-GL steps don't get an LD_PRELOAD-style surprise.
           LIBGL_ALWAYS_SOFTWARE: '1'
+          # libglvnd picks the GLX vendor at runtime from JSON files
+          # under `/usr/share/glvnd/`; pinning it here matches the
+          # vendor we verified in the Xorg-setup step's `glxinfo`
+          # probe, so the validator process gets the same FBConfigs
+          # baseview's `glXChooseFBConfig` will be asking for.
+          __GLX_VENDOR_LIBRARY_NAME: mesa
         run: |
           set -e -o pipefail
           cd crates/truce-vizia
