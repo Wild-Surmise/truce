@@ -152,14 +152,75 @@ jobs:
             exit 1
           fi
 
-      # Sub-workspace install + validate + package smoke. Same shape
-      # as the parent-workspace gain pass above, but invoked from
-      # inside each sub-workspace so `cargo-truce.exe` reads its
-      # sibling `truce.toml`. The sub-workspaces aren't reachable
-      # from the parent's `cargo-truce` plugin list, so each gets
-      # its own install / validate / package round-trip. Package
-      # uses `--no-sign` because CI has no Authenticode cert; ISCC
-      # still produces the unsigned installer .exe.
+      - name: upload failing screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-screenshots-windows
+          path: target/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Sub-workspace install + validate + package round-trip for slint
+  # and vizia. Split out from `test` because skia-bindings + vizia
+  # compile times push the job toward the 30-minute GHA soft cap and
+  # the heavyweight dep stack shouldn't block the fast gate. Mirrors
+  # the bake-screenshots split.
+  sub-workspaces:
+    name: windows-latest (sub-workspaces)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-sub-workspaces
+          cache-bin: false
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.bin/pluginval
+          key: pluginval-windows-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p .bin/pluginval
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip
+          unzip -oq pluginval.zip -d .bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator.exe
+          key: clap-validator-windows-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        shell: bash
+        run: echo "$GITHUB_WORKSPACE/.bin/pluginval" >> "$GITHUB_PATH"
+
+      - name: Pre-flight — validators present
+        shell: bash
+        run: |
+          command -v clap-validator
+          command -v pluginval
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      # Package uses `--no-sign` because CI has no Authenticode cert;
+      # ISCC still produces the unsigned installer .exe.
       - name: Install + validate (truce-slint sub-workspace)
         shell: bash
         run: |
@@ -192,12 +253,3 @@ jobs:
           "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
           cd ../truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize
-
-      - name: upload failing screenshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failing-screenshots-windows
-          path: target/screenshots/
-          if-no-files-found: ignore
-          retention-days: 14

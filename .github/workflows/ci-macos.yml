@@ -143,16 +143,86 @@ jobs:
             exit 1
           fi
 
-      # Sub-workspace install + validate + package smoke. Same shape
-      # as the parent-workspace gain pass above, but invoked from
-      # inside each sub-workspace so `cargo-truce` reads its sibling
-      # `truce.toml`. The sub-workspaces aren't reachable from the
-      # parent's `cargo-truce` plugin list, so each gets its own
-      # install / validate / package round-trip. Package uses
-      # `--no-sign` (no PACE) + `--no-notarize` (skip Apple
-      # notarization) because CI has no Developer ID; Apple codesign
-      # still runs ad-hoc against the default `TRUCE_SIGNING_IDENTITY`
-      # of `-`.
+      - name: upload failing screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-screenshots-macos
+          path: target/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gui-window:
+    # Newest macOS on purpose: the baseview hitTest: crash was an AppKit
+    # isa-swizzling regression that only surfaced on a new OS. Tracking the
+    # latest image makes such OS-behaviour regressions fail here, pre-release.
+    name: gui hitTest (windowed, newest macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-gui-window
+          cache-bin: false
+      - name: windowed hitTest smoke
+        run: ./scripts/gui-window-test.sh
+
+  # Sub-workspace install + validate + package round-trip for slint
+  # and vizia. Split out from `test` because skia-bindings + vizia
+  # compile times push the job toward the 30-minute GHA soft cap and
+  # the heavyweight dep stack shouldn't block the fast gate.
+  # Mirrors the bake-screenshots split.
+  sub-workspaces:
+    name: macos-latest (sub-workspaces)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-sub-workspaces
+          cache-bin: false
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: /Applications/pluginval.app
+          key: pluginval-macos-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -oq /tmp/pluginval.zip -d /Applications/
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator
+          key: clap-validator-macos-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Pre-flight — validators present
+        run: |
+          command -v clap-validator
+          test -x /Applications/pluginval.app/Contents/MacOS/pluginval
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      # Package uses `--no-sign` (no PACE) + `--no-notarize` (skip
+      # Apple notarization) because CI has no Developer ID; Apple
+      # codesign still runs ad-hoc against the default
+      # `TRUCE_SIGNING_IDENTITY` of `-`.
       - name: Install + validate (truce-slint sub-workspace)
         run: |
           set -e -o pipefail
@@ -182,28 +252,3 @@ jobs:
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
           cd ../truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize
-
-      - name: upload failing screenshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failing-screenshots-macos
-          path: target/screenshots/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  gui-window:
-    # Newest macOS on purpose: the baseview hitTest: crash was an AppKit
-    # isa-swizzling regression that only surfaced on a new OS. Tracking the
-    # latest image makes such OS-behaviour regressions fail here, pre-release.
-    name: gui hitTest (windowed, newest macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: macos-gui-window
-          cache-bin: false
-      - name: windowed hitTest smoke
-        run: ./scripts/gui-window-test.sh
