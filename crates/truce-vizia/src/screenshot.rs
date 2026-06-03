@@ -33,13 +33,25 @@ pub(crate) fn render_with_state<P: Params + 'static>(
     stylesheets: &[&'static str],
     font: Option<&'static [u8]>,
 ) -> Option<(Vec<u8>, u32, u32)> {
-    // Headless renders pin DPI to 1.0: `EditorScale` only matters when
-    // there's a host-supplied factor, and screenshot baselines stay
-    // reproducible across Retina / non-Retina dev machines this way.
-    let dpi_factor: f32 = 1.0;
+    // Bake at `truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE` so
+    // vizia baselines match every other backend (egui / iced / slint
+    // all render at 2×). 1× rendering looked noticeably fuzzier on
+    // Retina hosts when set side-by-side with the other backends.
+    #[allow(clippy::cast_possible_truncation)]
+    let dpi_factor: f32 = truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE as f32;
     let (logical_w, logical_h) = size;
-    let phys_w = logical_w;
-    let phys_h = logical_h;
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    let phys_w = (logical_w as f32 * dpi_factor) as u32;
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    let phys_h = (logical_h as f32 * dpi_factor) as u32;
 
     // Match `vizia_baseview::ViziaWindow::new`: fresh `Context`, install
     // default classes, wrap in `BackendContext` for the window-level
