@@ -16,6 +16,10 @@ Notable changes per release.
   GarageBand and AUM can expose/choose larger editor views. Plugins
   can override the advertised first-open size with
   `ios_view_size = [w, h]` in `truce.toml`.
+- iOS AUv3: the generated Swift view controller now lays out the Rust
+  editor inside `view.safeAreaLayoutGuide.layoutFrame`, preventing
+  landscape hosts such as GarageBand from placing plugin UI under the
+  notch/camera unsafe area.
 - iOS AUv3: the generated `AUAudioUnit` subclass now accepts all
   proposed `AUAudioUnitViewConfiguration` entries, matching the
   host-driven responsive editor path.

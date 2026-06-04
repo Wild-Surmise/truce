@@ -250,7 +250,7 @@ pub(crate) fn build_bundle(
 
     eprintln!("==> [3/5] AUExt.appex (swiftc)");
     let appex_dir = out.join("build/AUExt.appex");
-    fs_ctx::create_dir_all(appex_dir.join("Frameworks"))?;
+    fs_ctx::create_dir_all(&appex_dir)?;
 
     let au_type = p.resolved_au_type();
     let au_sub = p.resolved_fourcc();
@@ -363,13 +363,6 @@ pub(crate) fn build_bundle(
     if !appex_status.success() {
         return Err(format!("swiftc appex exited {appex_status}").into());
     }
-    crate::copy_dir_recursive(
-        &fw_dir,
-        &appex_dir
-            .join("Frameworks")
-            .join(format!("{fw_name}.framework")),
-    )?;
-
     eprintln!("==> [4/5] {app_file}.app (swiftc)");
     let app_dir = out.join(format!("{app_file}.app"));
     fs_ctx::create_dir_all(app_dir.join("PlugIns"))?;
@@ -1159,9 +1152,14 @@ fn framework_info_plist(
 }
 
 /// Default orientation set when a plug-in doesn't declare its own.
-/// Matches the historical behaviour: portrait + both landscapes,
-/// no portrait-upside-down (audio apps don't generally use it).
-const DEFAULT_IOS_ORIENTATIONS: &[&str] = &["portrait", "landscape-left", "landscape-right"];
+/// App Store validation requires all four iPad orientations when the
+/// container app supports iPad multitasking.
+const DEFAULT_IOS_ORIENTATIONS: &[&str] = &[
+    "portrait",
+    "portrait-upside-down",
+    "landscape-left",
+    "landscape-right",
+];
 
 /// Convert the TOML-friendly orientation token into the
 /// `UIInterfaceOrientation*` constant iOS expects in the

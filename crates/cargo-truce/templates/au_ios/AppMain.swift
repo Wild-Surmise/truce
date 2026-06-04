@@ -100,6 +100,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// without re-doing the gui_open work. Nil until the editor
     /// is open.
     var editorContainer: UIView?
+    /// True while the Rust editor is attached to `editorContainer`.
+    /// The standalone app closes the editor as soon as UIKit says
+    /// the app is no longer active, because the iOS egui backend's
+    /// CADisplayLink otherwise keeps submitting Metal command
+    /// buffers during the foreground -> background transition.
+    var editorOpened = false
     /// Natural pixel size the editor reported via `gui_get_size`.
     /// The scale-to-fit math divides the available host bounds by
     /// this to compute the uniform scale factor.
@@ -517,8 +523,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 container.widthAnchor.constraint(equalToConstant: sz.width),
                 container.heightAnchor.constraint(equalToConstant: sz.height),
             ])
-            cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
-            log.info("editor: gui_open(\(w)x\(h)) into UIView")
             // Keep references for `applyEditorScale`. We leave the
             // fixed-size constraints in place even when scale-to-
             // fit is active - the transform shrinks the rasterised
@@ -527,6 +531,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             // CPU backend bakes into its tiny-skia Pixmap size).
             self.editorContainer = container
             self.editorNaturalSize = sz
+            self.openEditorIfNeeded()
+            log.info("editor: gui_open(\(w)x\(h)) into UIView")
 
             // After layout settles (one main-queue hop), publish the
             // editor's physical-pixel frame so `cargo truce screenshot
@@ -568,6 +574,36 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             self.writeFrameJson(x: 0, y: 0, w: 0, h: 0, scale: s, safeTopPx: safeTopPx)
         }
         return true
+    }
+
+    func applicationWillResignActive(_ application: UIApplication) {
+        self.closeEditorIfNeeded()
+    }
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        self.openEditorIfNeeded()
+    }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        self.closeEditorIfNeeded()
+    }
+
+    func openEditorIfNeeded() {
+        guard !self.editorOpened,
+              let cb = g_callbacks,
+              let ctx = self.inProcessCtx,
+              let container = self.editorContainer else { return }
+        cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
+        self.editorOpened = true
+        self.applyEditorScale()
+    }
+
+    func closeEditorIfNeeded() {
+        guard self.editorOpened,
+              let cb = g_callbacks,
+              let ctx = self.inProcessCtx else { return }
+        cb.pointee.gui_close(ctx)
+        self.editorOpened = false
     }
 
     /// Single source of truth for the `_truce_editor_frame.json`

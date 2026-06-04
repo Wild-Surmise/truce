@@ -795,8 +795,10 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private func layoutGUI() {
         guard let container = guiContainer, guiPtSize.width > 0 else { return }
         #if os(iOS)
-        let hostW = self.view.bounds.width
-        let hostH = self.view.bounds.height
+        let safeFrame = self.view.safeAreaLayoutGuide.layoutFrame
+        let layoutFrame = safeFrame.width > 0 && safeFrame.height > 0 ? safeFrame : self.view.bounds
+        let hostW = layoutFrame.width
+        let hostH = layoutFrame.height
         guard hostW > 0, hostH > 0 else { return }
 
         var w = UInt32(max(1, hostW.rounded()))
@@ -813,7 +815,10 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
             }
         }
 
-        container.frame = NSRect(origin: .zero, size: guiPtSize)
+        container.frame = NSRect(x: layoutFrame.minX,
+                                 y: layoutFrame.minY,
+                                 width: guiPtSize.width,
+                                 height: guiPtSize.height)
         #else
         let hostW = self.view.bounds.width
         let hostH = self.view.bounds.height
