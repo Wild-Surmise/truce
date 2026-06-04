@@ -36,6 +36,16 @@ jobs:
           key: windows-latest
           cache-bin: false
 
+      # See `sub-workspaces` job for the rationale - both `test` and
+      # `sub-workspaces` build skia-bindings on Windows and trip the
+      # same VS-bundled-clang-19 + arm_neon.h regression. LLVM 17 is
+      # the youngest libclang that parses the header cleanly.
+      - name: Install LLVM 17 (skia-bindings + bindgen compat)
+        shell: pwsh
+        run: |
+          choco install llvm --version=17.0.6 --no-progress -y --force
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -215,6 +225,22 @@ jobs:
         run: |
           command -v clap-validator
           command -v pluginval
+
+      # `skia-bindings` (transitively pulled by both slint and vizia
+      # sub-workspaces) builds C++ wrappers via bindgen → libclang.
+      # The `windows-latest` image bundles VS 2022's clang 19, whose
+      # `arm_neon.h` references intrinsics LLVM 19 hasn't shipped
+      # yet (`__builtin_neon___a64_vcvtq_low_bf16_f32`,
+      # `__builtin_neon_vcmla_f64`, …). On an x86_64 host the header
+      # gets parsed regardless of target and bindgen panics with
+      # `ClangDiagnostic`. Sidestep by installing LLVM 17 from
+      # chocolatey and pointing `LIBCLANG_PATH` at it for the
+      # subsequent skia-bindings builds.
+      - name: Install LLVM 17 (skia-bindings + bindgen compat)
+        shell: pwsh
+        run: |
+          choco install llvm --version=17.0.6 --no-progress -y --force
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
