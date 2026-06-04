@@ -87,8 +87,8 @@ directories are system-wide).
 ## Examples
 
 Smaller example plugins ship in-tree to cover the basics — gain,
-EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
-showing the egui / iced / Slint backends. See
+EQ, synth, transpose, arpeggio, tremolo, plus four gain variants
+showing the egui / iced / Slint / Vizia backends. See
 [truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
 table with screenshots.
 
@@ -184,8 +184,8 @@ platform contract; every other format is unviable there.
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
-- **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, or raw window handle
-- **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
+- **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia (desktop only, no Windows ARM64), or raw window handle
+- **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, package; `doctor` reports environment health
 - **`cargo truce package`** — signed distributable installers on both platforms (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
