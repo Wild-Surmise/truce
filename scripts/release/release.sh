@@ -141,6 +141,49 @@ DRIFT="$(awk -v want="$WS_VERSION" '
     }
 ' Cargo.toml)"
 
+# Sub-workspaces have their own [package] manifests with
+# `truce-* = { version = "...", path = "..." }` entries pointing back
+# into the main workspace. They're not in [workspace.dependencies] so
+# the awk above misses them; sweep each sub-workspace manifest here.
+#
+# `crates/truce-vizia/Cargo.toml` is intentionally NOT in this list:
+# truce-vizia isn't published (vizia upstream hasn't tagged a release
+# with the `baseview` feature, so crates.io rejects the git-only dep).
+# See `scripts/release/topo.py`'s `SUB_WORKSPACES` for the longer
+# explanation. bump.sh still keeps that manifest's version in sync;
+# the release-time drift gate just doesn't fail loud about it.
+for sub_manifest in \
+    crates/truce-slint/Cargo.toml \
+    crates/truce-slint/build/Cargo.toml; do
+    sub_drift="$(awk -v want="$WS_VERSION" -v file="$sub_manifest" '
+        /^\[package\]/ {
+            if (match($0, /^version *= *"[^"]*"/)) {
+                v = substr($0, RSTART, RLENGTH)
+                sub(/^version *= *"/, "", v)
+                sub(/"$/, "", v)
+                if (v != want) printf "  %s [package].version = \"%s\"\n", file, v
+            }
+        }
+        /^version *= *"/ && !/path *=/ && /^version/ {
+            v = $0
+            sub(/^version *= *"/, "", v)
+            sub(/".*$/, "", v)
+            if (v != want) printf "  %s version = \"%s\"\n", file, v
+        }
+        /^truce[a-z-]* *= *\{/ && /version *=/ && /path *=/ {
+            if (match($0, /version *= *"[^"]*"/)) {
+                v = substr($0, RSTART, RLENGTH)
+                sub(/^version *= *"/, "", v)
+                sub(/"$/, "", v)
+                name = $0
+                sub(/ *=.*/, "", name)
+                if (v != want) printf "  %s %s = \"%s\"\n", file, name, v
+            }
+        }
+    ' "$sub_manifest")"
+    DRIFT="${DRIFT}${sub_drift}"
+done
+
 if [[ -n "$DRIFT" ]]; then
     echo "Error: workspace dependency version drift vs $WS_VERSION:" >&2
     echo "$DRIFT" >&2
@@ -203,10 +246,17 @@ printf '%s\n' "$ORDER" | sed 's/^/  /'
 # ---------------------------------------------------------------------------
 
 publish_one() {
-    # Run `cargo publish -p <crate>`, retrying on rate-limit errors
-    # with exponential backoff. Returns non-zero on a non-rate-limit
-    # failure or after MAX_RETRY_ATTEMPTS rate-limit retries.
+    # Run `cargo publish -p <crate>` from `<workspace_dir>`, retrying
+    # on rate-limit errors with exponential backoff. `<workspace_dir>`
+    # is `.` for main-workspace crates and the sub-workspace path
+    # (e.g. `crates/truce-slint`) for slint / vizia. The `cd` ensures
+    # `cargo publish` picks up the right `[workspace]` context and
+    # Cargo.lock - the sub-workspaces are independent and the main
+    # `cargo publish -p <crate>` from the repo root doesn't see them.
+    # Returns non-zero on a non-rate-limit failure or after
+    # MAX_RETRY_ATTEMPTS rate-limit retries.
     local crate="$1"
+    local workspace_dir="$2"
     local log delay attempts
     log="$(mktemp -t truce-publish.XXXXXX)"
     delay="$RATE_LIMIT_INITIAL_DELAY"
@@ -215,7 +265,9 @@ publish_one() {
     while (( attempts < MAX_RETRY_ATTEMPTS )); do
         attempts=$((attempts + 1))
         # pipefail (set above) propagates cargo's exit through tee.
-        if "$CARGO" publish -p "$crate" 2>&1 | tee "$log"; then
+        # The subshell scopes the cd so the parent loop's cwd stays
+        # at the repo root.
+        if ( cd "$workspace_dir" && "$CARGO" publish -p "$crate" ) 2>&1 | tee "$log"; then
             rm -f "$log"
             return 0
         fi
@@ -245,10 +297,19 @@ publish_one() {
 echo
 echo "→ publishing crates"
 
-while IFS= read -r crate; do
+while IFS=$'\t' read -r crate workspace_dir; do
     [[ -z "$crate" ]] && continue
+    # Defensive: older topo.py emitted just the crate name. Treat a
+    # missing second column as `.` (main workspace) so a stale
+    # checkout doesn't silently no-op.
+    workspace_dir="${workspace_dir:-.}"
+
     echo
-    echo "→ $crate $WS_VERSION"
+    if [[ "$workspace_dir" == "." ]]; then
+        echo "→ $crate $WS_VERSION"
+    else
+        echo "→ $crate $WS_VERSION (from $workspace_dir)"
+    fi
 
     if is_published_on_crates_io "$crate" "$WS_VERSION"; then
         echo "  already on crates.io at $WS_VERSION; skipping"
@@ -261,7 +322,7 @@ while IFS= read -r crate; do
         echo "  (NEW crate — first publish; rate-limit retries enabled)"
     fi
 
-    publish_one "$crate"
+    publish_one "$crate" "$workspace_dir"
 
     echo "  sleeping ${INDEX_PROP_DELAY}s for index propagation"
     sleep "$INDEX_PROP_DELAY"
