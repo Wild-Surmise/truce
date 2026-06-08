@@ -91,6 +91,50 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     }
 }
 
+/// Configure the most recently attached child NSView to follow parent resizes.
+///
+/// baseview's macOS backend creates a child NSView under the host-provided
+/// parent view. Plugin formats resize the parent; the child must resize with it
+/// so the renderer and AppKit view hierarchy stay in one coordinate system.
+#[cfg(target_os = "macos")]
+pub fn configure_parented_child_view(parent: &RawWindowHandle) {
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_view_ptr = match parent {
+        RawWindowHandle::AppKit(ptr) => *ptr,
+        _ => return,
+    };
+
+    if ns_view_ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        let ns_view = ns_view_ptr.cast::<objc::runtime::Object>();
+        let subviews: *mut objc::runtime::Object = msg_send![ns_view, subviews];
+        if subviews.is_null() {
+            return;
+        }
+
+        let count: usize = msg_send![subviews, count];
+        if count == 0 {
+            return;
+        }
+
+        let child: *mut objc::runtime::Object = msg_send![subviews, objectAtIndex: count - 1];
+        if child.is_null() {
+            return;
+        }
+
+        // NSViewWidthSizable | NSViewHeightSizable.
+        let mask: usize = 2 | 16;
+        let _: () = msg_send![child, setAutoresizingMask: mask];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn configure_parented_child_view(_parent: &RawWindowHandle) {}
+
 #[cfg(target_os = "windows")]
 #[must_use]
 pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {

@@ -50,6 +50,13 @@ pub struct AuParamDescriptor {
     pub group: *const c_char,
 }
 
+/// Host-visible factory preset descriptor.
+#[repr(C)]
+pub struct AuFactoryPresetDescriptor {
+    pub number: i32,
+    pub name: *const c_char,
+}
+
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
 pub struct AuCallbacks {
@@ -115,6 +122,11 @@ pub struct AuCallbacks {
     /// Free a buffer returned by `state_save`.
     pub state_free: unsafe extern "C" fn(data: *mut u8, len: u32),
 
+    /// Apply a host-selected factory preset. Returns 1 on success, 0
+    /// when the preset number is unknown or the plugin has no factory
+    /// preset support.
+    pub factory_preset_load: unsafe extern "C" fn(ctx: *mut c_void, number: i32) -> i32,
+
     /// Number of *encodable* plugin → host MIDI events queued by the
     /// last `process()` call. Unsupported event types (MIDI 2.0,
     /// `ParamChange`, Transport) are filtered out so the shim can
@@ -145,6 +157,8 @@ pub struct AuCallbacks {
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
+    pub gui_adjust_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32,
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32) -> i32,
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
 }
@@ -223,6 +237,8 @@ unsafe extern "C" {
         callbacks: *const AuCallbacks,
         param_descriptors: *const AuParamDescriptor,
         num_params: u32,
+        factory_preset_descriptors: *const AuFactoryPresetDescriptor,
+        num_factory_presets: u32,
     );
 
 }

@@ -50,6 +50,7 @@ fn main() {
             .collect()
     };
     let view_factory_name = format!("TruceAUCocoaViewProxy_{sanitized}");
+    let view_class_name = format!("TruceAUCocoaEditorView_{sanitized}");
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
@@ -77,6 +78,7 @@ fn main() {
     }
     if is_macos {
         build.define("TRUCE_AU_VIEW_FACTORY_NAME", view_factory_name.as_str());
+        build.define("TRUCE_AU_VIEW_CLASS_NAME", view_class_name.as_str());
     }
 
     build.compile("au_shim");
@@ -96,6 +98,8 @@ fn main() {
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_callbacks");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_param_descriptors");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_params");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_factory_preset_descriptors");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_factory_presets");
 
     if is_macos {
         // AU v2 factory + v2 cocoa-view class-name lookup. Both
@@ -116,5 +120,6 @@ fn main() {
         // AppKit lives only on macOS; iOS uses UIKit (linked from
         // the Swift extension binary, not the Rust framework).
         println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
     }
 }

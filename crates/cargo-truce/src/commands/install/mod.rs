@@ -17,10 +17,8 @@ use crate::{
 // same cfg-gate to keep the non-macOS build clean.
 #[cfg(target_os = "macos")]
 use crate::{run_sudo, tmp_lv2};
-// CLAP / VST3 / VST2 read the cdylib from `release_lib` on non-macOS
-// targets only; on macOS those formats consume the bundle-bin produced
-// by the `clang -bundle` link step, so `release_lib` is unused there.
-#[cfg(not(target_os = "macos"))]
+// CLAP / VST3 / VST2 read the cdylib from `release_lib` on non-macOS.
+// AU v2 uses it on macOS too so `--debug` installs the debug cdylib.
 use crate::release_lib;
 // Plist scratch (VST3 / VST2 / AU) only happens on macOS - gate the
 // import so Windows / Linux builds don't see it as unused.
@@ -743,8 +741,7 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
 
 #[cfg(target_os = "macos")]
 fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
-    let dylib =
-        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+    let dylib = release_lib(root, &format!("{}_au", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -796,7 +793,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
             <key>description</key>
             <string>{display_name}</string>
             <key>version</key>
-            <integer>65536</integer>
+            <integer>{au_component_version}</integer>
             <key>factoryFunction</key>
             <string>TruceAUFactory</string>
             <key>sandboxSafe</key>
@@ -817,6 +814,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
         au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
+        au_component_version = p.resolved_au_component_version("1.0"),
     );
     let plist_tmp = tmp_manifests()
         .join(format!("{}_au.plist", p.bundle_id))

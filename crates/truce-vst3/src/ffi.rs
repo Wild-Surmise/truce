@@ -152,6 +152,7 @@ pub struct Vst3Callbacks {
     ),
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    pub gui_can_resize: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
@@ -161,7 +162,9 @@ pub struct Vst3Callbacks {
     /// reporting on Windows/Linux) and forward it to the editor.
     pub gui_set_content_scale: unsafe extern "C" fn(ctx: *mut c_void, scale: f64),
     /// Host-driven resize via IPlugView::onSize. Calls Editor::set_size.
-    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32) -> i32,
+    /// Host size-negotiation via IPlugView::checkSizeConstraint.
+    pub gui_adjust_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32,
 }
 
 unsafe extern "C" {

@@ -9,7 +9,10 @@
 //! can be translated into MIDI note events and `SPACE` / `S` /
 //! `Z` / `X` hotkeys drive transport / state / octave-shift.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use crossbeam_queue::ArrayQueue;
 
@@ -19,7 +22,9 @@ use keyboard_types::{Code, KeyState, Modifiers};
 use raw_window_handle::HasRawDisplayHandle;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, ResizeConstraints,
+};
 use truce_core::events::EventBody;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -92,6 +97,10 @@ where
         return;
     };
     let (lw, lh) = editor.size();
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    let can_resize = editor.can_resize();
+    let resize_constraints = editor.resize_constraints();
+    let resize_request = Arc::new(AtomicU64::new(0));
 
     let window_opts = WindowOpenOptions {
         title: P::info().name.to_string(),
@@ -155,6 +164,11 @@ where
             &midi_ctrl,
         );
 
+        #[cfg(target_os = "macos")]
+        if can_resize {
+            crate::windowed_macos::enable_resize(window, resize_constraints);
+        }
+
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
         // the parent so the editor child keeps its requested size.
@@ -171,31 +185,38 @@ where
                 output_ctrl.clone(),
                 midi_ctrl.clone(),
             );
-            // Plugin editors don't resize, so maximizing / dragging
-            // only stretches the child surface. Lock the window to a
-            // fixed-size, close-only frame - the Linux size-locking
-            // equivalent is `windowed_x11::pin_size` below.
-            crate::windowed_windows::lock_window(h.hwnd);
+            if !can_resize {
+                // Fixed-size plugin editors only stretch their child
+                // surface if the parent frame is dragged. Resizable
+                // editors own size changes through `request_resize`.
+                crate::windowed_windows::lock_window(h.hwnd);
+            }
             // Title-bar / taskbar icon from the icon embedded in the
             // packaged .exe (no-op in un-packaged dev builds).
             crate::windowed_windows::set_window_icon(h.hwnd);
         }
 
-        // Linux: plugin editors don't currently support resize, but
-        // X11 window managers happily let the user drag the outer
-        // baseview frame. Pin min == max size hints so resize grips
-        // disappear. Must run after the window is mapped (above) and
-        // before the editor sizes its child to the parent.
+        // Linux: fixed-size plugin editors don't support arbitrary
+        // parent-frame resize. Pin min == max size hints so resize
+        // grips disappear. Must run after the window is mapped
+        // (above) and before the editor sizes its child to the parent.
         #[cfg(target_os = "linux")]
-        if let RwhHandle::Xlib(h) = window.raw_window_handle() {
+        if !can_resize && let RwhHandle::Xlib(h) = window.raw_window_handle() {
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
-        let ctx = synthesize_editor_context::<P>(&plugin, &transport);
+        let ctx = synthesize_editor_context::<P>(
+            &plugin,
+            &transport,
+            Arc::clone(&resize_request),
+            resize_constraints,
+        );
         editor.open(truce_parent, ctx);
 
         StandaloneHandler {
-            _editor: editor,
+            editor,
+            resize_request,
+            window_size: (lw, lh),
             plugin,
             pending,
             transport,
@@ -218,7 +239,9 @@ struct StandaloneHandler<P: PluginExport + 'static>
 where
     P::Params: 'static,
 {
-    _editor: Box<dyn Editor>,
+    editor: Box<dyn Editor>,
+    resize_request: Arc<AtomicU64>,
+    window_size: (u32, u32),
     plugin: Arc<Mutex<P>>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     transport: Transport,
@@ -248,12 +271,42 @@ where
     _capture: Option<crate::playback::CaptureSink>,
 }
 
+#[inline]
+fn pack_size(size: (u32, u32)) -> u64 {
+    (u64::from(size.0) << 32) | u64::from(size.1)
+}
+
+#[allow(clippy::cast_possible_truncation)]
+#[inline]
+fn unpack_size(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
+}
+
 impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
 where
     P::Params: 'static,
 {
-    fn on_frame(&mut self, _window: &mut Window) {
-        // Editor drives its own frame loop inside its child window.
+    fn on_frame(&mut self, window: &mut Window) {
+        #[cfg(target_os = "macos")]
+        if self.editor.can_resize()
+            && let Some(size) = crate::windowed_macos::content_size(window)
+            && size != self.window_size
+        {
+            if let Some(size) = self.editor.adjust_size(size.0, size.1)
+                && self.editor.set_size(size.0, size.1)
+            {
+                self.window_size = size;
+            }
+        }
+
+        let requested = unpack_size(self.resize_request.swap(0, Ordering::Relaxed));
+        if requested.0 > 0 && requested.1 > 0 && self.editor.set_size(requested.0, requested.1) {
+            self.window_size = requested;
+            window.resize(baseview::Size::new(
+                f64::from(requested.0),
+                f64::from(requested.1),
+            ));
+        }
     }
 
     // The Linux `_exit` extern lives inline with its single caller
@@ -304,6 +357,29 @@ where
         }
 
         match event {
+            Event::Window(baseview::WindowEvent::Resized(info)) => {
+                let pw = info.physical_size().width;
+                let ph = info.physical_size().height;
+                #[allow(clippy::cast_possible_truncation)]
+                let scale = info.scale() as f32;
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    clippy::cast_precision_loss
+                )]
+                let logical_size = (
+                    (pw as f32 / scale).round() as u32,
+                    (ph as f32 / scale).round() as u32,
+                );
+                if self.editor.can_resize() {
+                    let size = self
+                        .editor
+                        .adjust_size(logical_size.0, logical_size.1)
+                        .unwrap_or(logical_size);
+                    self.editor.set_size(size.0, size.1);
+                }
+                EventStatus::Ignored
+            }
             Event::Keyboard(kb) => self.handle_keyboard(&kb),
             _ => EventStatus::Ignored,
         }
@@ -512,6 +588,8 @@ fn is_mod_pressed(mods: Modifiers) -> bool {
 fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
     transport: &Transport,
+    resize_request: Arc<AtomicU64>,
+    resize_constraints: ResizeConstraints,
 ) -> PluginContext
 where
     P::Params: 'static,
@@ -534,6 +612,7 @@ where
     let plugin_meter = Arc::clone(plugin);
     let plugin_save = Arc::clone(plugin);
     let plugin_load = Arc::clone(plugin);
+    let resize_request_write = resize_request;
 
     PluginContext::from_closures(
         ClosureBridge {
@@ -542,7 +621,13 @@ where
                 params_write.set_normalized(id, norm);
             }),
             end_edit: Box::new(|_id| {}),
-            request_resize: Box::new(|_w, _h| false),
+            request_resize: Box::new(move |w, h| {
+                if !resize_constraints.contains(w, h) {
+                    return false;
+                }
+                resize_request_write.store(pack_size((w, h)), Ordering::Relaxed);
+                true
+            }),
             get_param: Box::new(move |id| params_read.get_normalized(id).unwrap_or(0.0)),
             get_param_plain: Box::new(move |id| params_plain.get_plain(id).unwrap_or(0.0)),
             format_param: Box::new(move |id| {

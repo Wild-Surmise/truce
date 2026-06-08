@@ -151,6 +151,10 @@ static TruceAUv2 *au_ctx_map_lookup(void *ctx) {
     return NULL;
 }
 
+int32_t truce_au_v2_is_context_alive(void *ctx) {
+    return au_ctx_map_lookup(ctx) != NULL;
+}
+
 /* Build the AudioUnitEvent the gesture / value-change helpers all share. */
 static void fill_param_event(AudioUnitEvent *event, AudioUnit unit,
                              uint32_t param_id, AudioUnitEventType type) {
@@ -284,6 +288,7 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
 static OSStatus au_v2_close(void *self_) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (inst->rustCtx && g_callbacks) {
+        g_callbacks->gui_close(inst->rustCtx);
         au_ctx_map_unregister(inst->rustCtx);
         g_callbacks->destroy(inst->rustCtx);
         inst->rustCtx = NULL;

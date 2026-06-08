@@ -59,6 +59,19 @@ cargo truce install --aax        # AAX (requires AAX SDK)
 cargo truce validate             # auval + pluginval + clap-validator on installed plugins
 ```
 
+iOS AUv3 bundles advertise host resizing by default. The generated
+AudioComponents metadata includes `resizable` plus `size:{420,720}`
+unless a plugin overrides `ios_view_size = [w, h]` in `truce.toml`;
+the Swift AU wrapper also accepts all host-proposed view
+configurations.
+Use `ios_appex_bundle_id = "com.example.Plugin.Extension"` when an
+iOS product needs a stable App Store / provisioning identifier for the
+AUv3 extension instead of the default `{vendor.id}.{bundle_id}.AUExt`.
+Per-plugin `version = "x.y.z"` entries in `truce.toml` are used for
+host plugin metadata, generated AUv3 plists, iOS app bundles, and
+per-plugin package artifact names. If omitted, cargo-truce falls back
+to the workspace/package version.
+
 Build without installing:
 
 ```sh
@@ -241,4 +254,3 @@ end-user-app authors and internal-SDK use are unaffected.
 
 See [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md) for the precise
 boundary, the exemption criteria, and the request procedure.
-

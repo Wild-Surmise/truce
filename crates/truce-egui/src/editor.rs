@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle, ResizeConstraints};
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
@@ -81,6 +81,7 @@ impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
 pub struct EguiEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
+    resize_constraints: ResizeConstraints,
     /// Pending logical size shared with the baseview handler. Packed as
     /// `(width << 32) | height`. `set_size` writes here; the handler's
     /// `on_frame` checks for divergence from its own cached size and
@@ -127,6 +128,7 @@ impl<P: Params + 'static> EguiEditor<P> {
         Self {
             params,
             size,
+            resize_constraints: ResizeConstraints::fixed(size.0, size.1),
             pending_size: Arc::new(AtomicU64::new(pack_size(size))),
             ui: Arc::new(Mutex::new(Box::new(ui_fn))),
             visuals: None,
@@ -142,6 +144,7 @@ impl<P: Params + 'static> EguiEditor<P> {
         Self {
             params,
             size,
+            resize_constraints: ResizeConstraints::fixed(size.0, size.1),
             pending_size: Arc::new(AtomicU64::new(pack_size(size))),
             ui: Arc::new(Mutex::new(Box::new(ui))),
             visuals: None,
@@ -205,6 +208,26 @@ impl<P: Params + 'static> EguiEditor<P> {
         self.font = Some(font_data);
         self
     }
+
+    /// Set the supported logical editor-size range. Mirrors JUCE's
+    /// `AudioProcessorEditor::setResizeLimits`: if min and max differ,
+    /// format wrappers report the editor as host-resizable and use the
+    /// limits to clamp host/user resize requests.
+    #[must_use]
+    pub fn with_resize_limits(
+        mut self,
+        min_width: u32,
+        min_height: u32,
+        max_width: u32,
+        max_height: u32,
+    ) -> Self {
+        self.resize_constraints =
+            ResizeConstraints::new(min_width, min_height, max_width, max_height);
+        self.size = self.resize_constraints.clamp(self.size.0, self.size.1);
+        self.pending_size
+            .store(pack_size(self.size), Ordering::Relaxed);
+        self
+    }
 }
 
 #[inline]
@@ -246,6 +269,16 @@ struct EguiWindowHandler<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
+    fn input_zoom(&self) -> f32 {
+        self.egui_ctx.zoom_factor().max(0.01)
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn pointer_pos(&self, position: baseview::Point) -> egui::Pos2 {
+        let zoom = self.input_zoom();
+        egui::pos2(position.x as f32 / zoom, position.y as f32 / zoom)
+    }
+
     // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
     // Editor sizes are bounded by display dimensions, well below 2^23.
     #[allow(clippy::cast_precision_loss)]
@@ -265,14 +298,19 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             renderer.resize(phys_w, phys_h);
         }
 
+        crate::set_actual_window_size(&self.egui_ctx, self.size);
+
         let ppp = self.last_applied_scale;
-        let (lw, lh) = self.size; // logical points
+        let (lw, lh) = self.size; // host-window logical points
+        let zoom = self.egui_ctx.zoom_factor().max(0.01);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let layout_size = egui::vec2(
+            (lw as f32 / zoom).round().max(1.0),
+            (lh as f32 / zoom).round().max(1.0),
+        );
 
         let mut raw_input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(lw as f32, lh as f32),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, layout_size)),
             time: Some(self.start_time.elapsed().as_secs_f64()),
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),
@@ -307,6 +345,9 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        #[cfg(target_os = "macos")]
+        let _ = window;
+
         // Pick up host-driven `set_size` requests since the last frame.
         // baseview's macOS `Window::resize` doesn't synthesise a
         // `Resized` event, so the wgpu surface has to be reconfigured
@@ -318,6 +359,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             let scale = self.scale.get();
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
+            // On macOS plugin hosts own the parent NSView. Resizing the
+            // baseview child from Rust can throw an Objective-C exception
+            // through Rust during AppKit/ViewBridge layout. The child NSView
+            // is configured to autoresize with its parent instead.
+            #[cfg(not(target_os = "macos"))]
             window.resize(baseview::Size::new(
                 f64::from(pending.0),
                 f64::from(pending.1),
@@ -354,11 +400,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         modifiers,
                     } => {
                         self.modifiers = convert_kb_modifiers(modifiers);
-                        // baseview reports cursor in f64 logical points;
-                        // egui uses f32. Window dimensions never reach
-                        // 2^23 - the narrowing is invisible.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let pos = egui::pos2(position.x as f32, position.y as f32);
+                        // baseview reports cursor positions in host-window
+                        // points. egui is laid out in design points
+                        // (`window_size / zoom`), so pointer input needs the
+                        // same inverse-zoom transform as the screen rect.
+                        let pos = self.pointer_pos(position);
                         self.last_cursor_pos = pos;
                         self.pending_events.push(egui::Event::PointerMoved(pos));
                         EventStatus::Captured
@@ -404,9 +450,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
                             baseview::ScrollDelta::Pixels { x, y } => (x, y),
                         };
+                        let zoom = self.input_zoom();
+                        let delta = egui::vec2(dx / zoom, dy / zoom);
                         self.pending_events.push(egui::Event::MouseWheel {
                             unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(dx, dy),
+                            delta,
                             // baseview doesn't tell us touch / inertial phase;
                             // `Move` is egui's "unknown" recommendation.
                             phase: egui::TouchPhase::Move,
@@ -477,6 +525,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         (ph as f32 / scale).round() as u32,
                     );
                     self.size = logical_size;
+                    self.pending_size
+                        .store(pack_size(logical_size), Ordering::Relaxed);
                     // Write through to the shared scale so the editor's
                     // next `set_scale_factor` and any sibling reader
                     // see the OS-reported value, and update
@@ -694,6 +744,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 }
             },
         );
+        crate::platform::configure_parented_child_view(&parent);
 
         self.window = Some(window);
     }
@@ -709,7 +760,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn set_size(&mut self, width: u32, height: u32) -> bool {
-        if width == 0 || height == 0 {
+        if !self.resize_constraints.contains(width, height) {
             return false;
         }
         self.size = (width, height);
@@ -724,8 +775,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         true
     }
 
-    fn can_resize(&self) -> bool {
-        true
+    fn resize_constraints(&self) -> ResizeConstraints {
+        self.resize_constraints
     }
 
     fn set_scale_factor(&mut self, factor: f64) {

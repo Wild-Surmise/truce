@@ -325,6 +325,42 @@ unsafe fn data_from_plugin<P: PluginExport>(
     unsafe { &mut *(*plugin).plugin_data.cast::<ClapPluginData<P>>() }
 }
 
+#[cfg(target_os = "macos")]
+fn logical_to_host_size(width: u32, height: u32, _scale: f64) -> (u32, u32) {
+    (width, height)
+}
+
+#[cfg(target_os = "macos")]
+fn host_to_logical_size(width: u32, height: u32, _scale: f64) -> (u32, u32) {
+    (width, height)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn logical_to_host_size(width: u32, height: u32, scale: f64) -> (u32, u32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (
+        (f64::from(width) * scale).round().max(1.0) as u32,
+        (f64::from(height) * scale).round().max(1.0) as u32,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn host_to_logical_size(width: u32, height: u32, scale: f64) -> (u32, u32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (
+        (f64::from(width) / scale).round().max(1.0) as u32,
+        (f64::from(height) / scale).round().max(1.0) as u32,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Plugin callbacks
 //
@@ -1764,18 +1800,7 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                // Round-to-nearest, not truncate - `(w * scale) as u32`
-                // would round 199.9 → 199, drifting one pixel on
-                // fractional scales. Matches VST3 / AAX / the
-                // `to_physical_px` helper used elsewhere. Logical
-                // pixel sizes are bounded by `u32::MAX / scale`; in
-                // practice no editor exceeds 16384 logical pixels, so
-                // the `f64 → u32` truncation/sign casts are safe.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                {
-                    *width = (f64::from(w) * data.host_scale).round() as u32;
-                    *height = (f64::from(h) * data.host_scale).round() as u32;
-                }
+                (*width, *height) = logical_to_host_size(w, h, data.host_scale);
             }
             return true;
         }
@@ -1912,11 +1937,21 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 request_resize: {
                     let host_for_resize = SendPtr::new(data.host);
+                    let plugin_for_resize = SendPtr::new(plugin);
                     Box::new(move |w, h| {
                         let host_ptr = host_for_resize.as_ptr();
                         if host_ptr.is_null() {
                             return false;
                         }
+                        let data = data_from_plugin::<P>(plugin_for_resize.as_ptr());
+                        let Some(ref editor) = data.editor else {
+                            return false;
+                        };
+                        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(w, h) else {
+                            return false;
+                        };
+                        let (host_w, host_h) =
+                            logical_to_host_size(adjusted_w, adjusted_h, data.host_scale);
                         let get_ext = match (*host_ptr).get_extension {
                             Some(f) => f,
                             None => return false,
@@ -1926,10 +1961,14 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                             return false;
                         }
                         let gui_ext = &*(ext as *const clap_sys::ext::gui::clap_host_gui);
-                        match gui_ext.request_resize {
-                            Some(f) => f(host_ptr, w, h),
+                        let accepted = match gui_ext.request_resize {
+                            Some(f) => f(host_ptr, host_w, host_h),
                             None => false,
+                        };
+                        if accepted && let Some(ref mut editor) = data.editor {
+                            let _ = editor.set_size(adjusted_w, adjusted_h);
                         }
+                        accepted
                     })
                 },
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
@@ -2036,7 +2075,14 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         if let Some(ref mut editor) = data.editor {
-            editor.set_size(width, height)
+            let (logical_w, logical_h) = host_to_logical_size(width, height, data.host_scale);
+            let Some((adjusted_w, adjusted_h)) = editor.adjust_size(logical_w, logical_h) else {
+                return false;
+            };
+            if (adjusted_w, adjusted_h) != (logical_w, logical_h) {
+                return false;
+            }
+            editor.set_size(logical_w, logical_h)
         } else {
             false
         }
@@ -2050,11 +2096,25 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
 /// the editor's reported size since the built-in renderer doesn't
 /// support arbitrary host-driven sizes today.
 unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
-    _plugin: *const clap_plugin,
-    _width: *mut u32,
-    _height: *mut u32,
+    plugin: *const clap_plugin,
+    width: *mut u32,
+    height: *mut u32,
 ) -> bool {
-    true
+    unsafe {
+        if width.is_null() || height.is_null() {
+            return false;
+        }
+        let data = data_from_plugin::<P>(plugin);
+        let Some(ref editor) = data.editor else {
+            return false;
+        };
+        let (logical_w, logical_h) = host_to_logical_size(*width, *height, data.host_scale);
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(logical_w, logical_h) else {
+            return false;
+        };
+        (*width, *height) = logical_to_host_size(adjusted_w, adjusted_h, data.host_scale);
+        true
+    }
 }
 
 fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {

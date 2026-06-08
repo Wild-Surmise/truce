@@ -43,8 +43,8 @@ use truce_core::wrapper::{
 use truce_params::{ParamFlags, Params};
 
 use ffi::{
-    AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor,
-    AuTransportSnapshot,
+    AuCallbacks, AuFactoryPresetDescriptor, AuMidi2Event, AuMidiEvent, AuParamDescriptor,
+    AuPluginDescriptor, AuTransportSnapshot,
 };
 
 // ---------------------------------------------------------------------------
@@ -515,6 +515,19 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
     }
 }
 
+unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    number: i32,
+) -> i32 {
+    run_extern_callback_with::<P, i32>("au", "load_factory_preset", 0, || unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        i32::from(P::load_factory_preset_params(
+            inst.params_arc.as_ref(),
+            number,
+        ))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
@@ -684,6 +697,48 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     }
 }
 
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: u32,
+    h: u32,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() || w == 0 || h == 0 {
+            return 0;
+        }
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let Some(ref mut editor) = inst.editor else {
+            return 0;
+        };
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(w, h) else {
+            return 0;
+        };
+        i32::from(editor.set_size(adjusted_w, adjusted_h))
+    }
+}
+
+unsafe extern "C" fn cb_gui_adjust_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: *mut u32,
+    h: *mut u32,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() || w.is_null() || h.is_null() {
+            return 0;
+        }
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let Some(ref editor) = inst.editor else {
+            return 0;
+        };
+        let Some((adjusted_w, adjusted_h)) = editor.adjust_size(*w, *h) else {
+            return 0;
+        };
+        *w = adjusted_w;
+        *h = adjusted_h;
+        1
+    }
+}
+
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
@@ -767,10 +822,32 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     }),
                     request_resize: {
                         let ctx_for_resize = ctx_raw;
+                        #[cfg(target_os = "macos")]
+                        let parent_for_resize = SendPtr::new(parent.cast_const());
                         Box::new(move |w, h| {
-                            let inst = &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                            let inst =
+                                &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
                             if let Some(ref mut editor) = inst.editor {
-                                editor.set_size(w, h)
+                                let Some((w, h)) = editor.adjust_size(w, h) else {
+                                    return false;
+                                };
+                                let old_size = editor.size();
+                                if !editor.set_size(w, h) {
+                                    return false;
+                                }
+                                #[cfg(target_os = "macos")]
+                                {
+                                    if truce_au_v2_resize_editor_view(
+                                        parent_for_resize.as_ptr().cast_mut(),
+                                        w,
+                                        h,
+                                    ) == 0
+                                    {
+                                        let _ = editor.set_size(old_size.0, old_size.1);
+                                        return false;
+                                    }
+                                }
+                                true
                             } else {
                                 false
                             }
@@ -859,6 +936,11 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    fn truce_au_v2_resize_editor_view(
+        parent: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -903,7 +985,10 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // `Self::create().params().param_infos()` walk inside the trait
     // default - see `PluginExport::param_infos_static`.
     let param_infos = P::param_infos_static();
+    let factory_preset_infos = P::factory_presets_static();
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
+    let mut factory_preset_descs: Vec<AuFactoryPresetDescriptor> =
+        Vec::with_capacity(factory_preset_infos.len());
 
     for pi in &param_infos {
         let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
@@ -916,6 +1001,14 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
+        });
+    }
+
+    for preset in &factory_preset_infos {
+        let name = CString::new(preset.name).unwrap_or_default();
+        factory_preset_descs.push(AuFactoryPresetDescriptor {
+            number: preset.number,
+            name: name.into_raw(),
         });
     }
 
@@ -958,17 +1051,21 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
+        factory_preset_load: cb_factory_preset_load::<P>,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
         output_sysex_count: cb_output_sysex_count::<P>,
         output_sysex_at: cb_output_sysex_at::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
+        gui_adjust_size: cb_gui_adjust_size::<P>,
+        gui_set_size: cb_gui_set_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
     }));
 
     let param_descs = param_descs.leak();
+    let factory_preset_descs = factory_preset_descs.leak();
 
     unsafe {
         ffi::truce_au_register(
@@ -976,6 +1073,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
             len_u32(param_descs.len()),
+            factory_preset_descs.as_ptr(),
+            len_u32(factory_preset_descs.len()),
         );
     }
 }

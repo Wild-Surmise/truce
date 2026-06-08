@@ -81,6 +81,54 @@ pub enum RawWindowHandle {
 }
 
 /// Plugin GUI editor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResizeConstraints {
+    pub min_width: u32,
+    pub min_height: u32,
+    pub max_width: u32,
+    pub max_height: u32,
+}
+
+impl ResizeConstraints {
+    #[must_use]
+    pub fn new(min_width: u32, min_height: u32, max_width: u32, max_height: u32) -> Self {
+        let min_width = min_width.max(1);
+        let min_height = min_height.max(1);
+        Self {
+            min_width,
+            min_height,
+            max_width: max_width.max(min_width),
+            max_height: max_height.max(min_height),
+        }
+    }
+
+    #[must_use]
+    pub fn fixed(width: u32, height: u32) -> Self {
+        Self::new(width, height, width, height)
+    }
+
+    #[must_use]
+    pub fn clamp(self, width: u32, height: u32) -> (u32, u32) {
+        (
+            width.clamp(self.min_width, self.max_width),
+            height.clamp(self.min_height, self.max_height),
+        )
+    }
+
+    #[must_use]
+    pub fn contains(self, width: u32, height: u32) -> bool {
+        width >= self.min_width
+            && width <= self.max_width
+            && height >= self.min_height
+            && height <= self.max_height
+    }
+
+    #[must_use]
+    pub fn is_resizable(self) -> bool {
+        self.min_width != self.max_width || self.min_height != self.max_height
+    }
+}
+
 pub trait Editor: Send {
     /// Initial window size in logical points.
     ///
@@ -102,9 +150,30 @@ pub trait Editor: Send {
         false
     }
 
+    /// Legal logical editor-size range. Format wrappers use this to
+    /// answer host size-negotiation callbacks before calling
+    /// [`Self::set_size`].
+    fn resize_constraints(&self) -> ResizeConstraints {
+        let (w, h) = self.size();
+        ResizeConstraints::fixed(w, h)
+    }
+
+    /// Clamp a host/user requested size to the nearest supported size.
+    ///
+    /// Returning `None` means the requested size is invalid and cannot
+    /// be adjusted. The default mirrors JUCE's constrainer model:
+    /// legal non-zero dimensions are clamped to the editor's limits.
+    fn adjust_size(&self, width: u32, height: u32) -> Option<(u32, u32)> {
+        if width == 0 || height == 0 {
+            None
+        } else {
+            Some(self.resize_constraints().clamp(width, height))
+        }
+    }
+
     /// Whether the plugin supports resizing.
     fn can_resize(&self) -> bool {
-        false
+        self.resize_constraints().is_resizable()
     }
 
     /// Host notifies the editor of a new content scale factor.

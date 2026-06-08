@@ -32,6 +32,9 @@ pub mod au3 {
         pub au_sub: &'a str,
         pub au_mfr: &'a str,
         pub au_tag: &'a str,
+        pub extra_au_tags: &'a [&'a str],
+        pub short_version: &'a str,
+        pub au_component_version: u32,
         pub au_ver: &'a str,
         pub min_os: &'a str,
         pub supported_platform: &'a str,
@@ -56,12 +59,22 @@ pub mod au3 {
     /// was renamed to `MIN_OS` (or vice versa) before they ship as a
     /// literal token in the bundle.
     pub fn render_appex_info_plist(values: &AppexPlistValues<'_>) -> String {
+        let extra_tags = values
+            .extra_au_tags
+            .iter()
+            .map(|tag| format!("                        <string>{tag}</string>"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let au_component_version = values.au_component_version.to_string();
         let mut subs: Vec<(&str, &str)> = vec![
             ("AUNAME", values.au_name),
             ("AUTYPE", values.au_type),
             ("AUSUB", values.au_sub),
             ("AUMFR", values.au_mfr),
             ("AUTAG", values.au_tag),
+            ("EXTRA_AU_TAGS", &extra_tags),
+            ("SHORTVER", values.short_version),
+            ("AUCOMPVER", &au_component_version),
             ("AUVER", values.au_ver),
             ("MINIOS", values.min_os),
             ("SUPPORTEDPLAT", values.supported_platform),
@@ -99,6 +112,9 @@ pub mod au3 {
                 au_sub: "Trem",
                 au_mfr: "Acme",
                 au_tag: "Effect",
+                extra_au_tags: &[],
+                short_version: "1.0.0",
+                au_component_version: 65_536,
                 au_ver: "1",
                 min_os: "13.0",
                 supported_platform: "MacOSX",
@@ -113,6 +129,9 @@ pub mod au3 {
                 au_sub: "Trem",
                 au_mfr: "Acme",
                 au_tag: "Effect",
+                extra_au_tags: &["resizable", "size:{420,720}"],
+                short_version: "1.1.0",
+                au_component_version: 65_792,
                 au_ver: "1",
                 min_os: "15.0",
                 supported_platform: "iPhoneOS",
@@ -147,6 +166,8 @@ pub mod au3 {
             assert!(plist.contains("<string>iPhoneOS</string>"));
             assert!(plist.contains("<string>15.0</string>"));
             assert!(plist.contains("com.acme.tremolo.AUExt"));
+            assert!(plist.contains("<string>resizable</string>"));
+            assert!(plist.contains("<string>size:{420,720}</string>"));
             assert!(!plist.contains("$(PRODUCT_BUNDLE_IDENTIFIER)"));
             assert!(!plist.contains("$(EXECUTABLE_NAME)"));
         }

@@ -21,6 +21,8 @@ use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 
+pub(crate) const DEFAULT_IOS_VIEW_SIZE: [u32; 2] = [420, 720];
+
 #[derive(Deserialize)]
 pub(crate) struct Config {
     #[serde(default)]
@@ -200,6 +202,11 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_app_group: Option<String>,
+    /// Full CFBundleIdentifier override for the iOS AUv3 `.appex`.
+    /// Absent → `{vendor.id}.{bundle_id}.AUExt`.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_appex_bundle_id: Option<String>,
     /// Per-plugin iOS app icon (`.appiconset` directory, path relative
     /// to workspace root). Copied into the container app's resources
     /// at install / package time. Absent → the container ships with
@@ -213,6 +220,13 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_minimum_os_version: Option<String>,
+    /// Initial AUv3 view size advertised to iOS hosts through the
+    /// AudioComponents `size:{w,h}` tag. Hosts such as AUM use this
+    /// as the first-open editor size before normal view resizing
+    /// takes over. Absent → [`DEFAULT_IOS_VIEW_SIZE`].
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_view_size: Option<[u32; 2]>,
     /// Per-plugin URL the iOS container's "About" sheet links to
     /// (the link-out icon in the top-right opens this in Safari).
     /// Falls back to `[vendor].url`, then to <https://truce.audio/>.
@@ -257,6 +271,14 @@ impl std::ops::Deref for PluginDef {
 }
 
 impl PluginDef {
+    pub(crate) fn resolved_version<'a>(&'a self, workspace_version: &'a str) -> &'a str {
+        self.version.as_deref().unwrap_or(workspace_version)
+    }
+
+    pub(crate) fn resolved_au_component_version(&self, workspace_version: &str) -> u32 {
+        au_component_version(self.resolved_version(workspace_version))
+    }
+
     pub(crate) fn resolved_fourcc(&self) -> &str {
         self.fourcc
             .as_deref()
@@ -292,6 +314,11 @@ impl PluginDef {
             .clone()
             .or_else(|| ios.minimum_os_version.clone())
             .unwrap_or_else(|| "16.0".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn resolved_ios_view_size(&self) -> [u32; 2] {
+        self.ios_view_size.unwrap_or(DEFAULT_IOS_VIEW_SIZE)
     }
 
     /// Resolved iOS App Group identifier. `None` → no group entitlement
@@ -343,6 +370,26 @@ impl PluginDef {
     pub(crate) fn dylib_stem(&self) -> String {
         self.crate_name.replace('-', "_")
     }
+}
+
+fn au_component_version(version: &str) -> u32 {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(1)
+        .min(0xffff);
+    let minor = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(0xff);
+    let patch = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(0xff);
+    (major << 16) | (minor << 8) | patch
 }
 
 fn default_au_tag() -> String {
@@ -629,8 +676,10 @@ mod suite_tests {
             windows_icon: None,
             macos_icon: None,
             ios_app_group: None,
+            ios_appex_bundle_id: None,
             ios_icon_set: None,
             ios_minimum_os_version: None,
+            ios_view_size: None,
             ios_url: None,
             ios_orientations: None,
             ios_scale_editor_to_fit: true,

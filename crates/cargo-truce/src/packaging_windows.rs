@@ -258,8 +258,16 @@ pub(crate) fn cmd_package(
             continue;
         }
 
+        let plugin_version = p.resolved_version(&version);
         let iss = render_iss(
-            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope,
+            &config,
+            p,
+            &formats,
+            &archs,
+            &staging,
+            plugin_version,
+            &dist_dir,
+            scope,
         );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
@@ -268,7 +276,7 @@ pub(crate) fn cmd_package(
         let installer = dist_dir.join(format!(
             "{}-{}-windows{}.exe",
             p.crate_name,
-            version,
+            plugin_version,
             scope.dist_suffix()
         ));
         if !installer.exists() {

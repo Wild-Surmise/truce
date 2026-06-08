@@ -129,6 +129,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     private var _parameterTree: AUParameterTree?
     private var _sampleRate: Double = 44100.0
     private var _maxFrames: UInt32 = 1024
+    private var selectedFactoryPreset: AUAudioUnitPreset?
 
     override init(componentDescription: AudioComponentDescription,
                   options: AudioComponentInstantiationOptions = []) throws {
@@ -177,9 +178,50 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var inputBusses: AUAudioUnitBusArray { _inputBusArray }
     override var outputBusses: AUAudioUnitBusArray { _outputBusArray }
+    override func supportedViewConfigurations(_ availableViewConfigurations: [AUAudioUnitViewConfiguration]) -> IndexSet {
+        IndexSet(integersIn: availableViewConfigurations.indices)
+    }
+
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }
+    }
+
+    override var factoryPresets: [AUAudioUnitPreset]? {
+        guard g_num_factory_presets > 0,
+              let descriptors = g_factory_preset_descriptors else { return nil }
+        var presets: [AUAudioUnitPreset] = []
+        presets.reserveCapacity(Int(g_num_factory_presets))
+        for i in 0..<g_num_factory_presets {
+            let desc = descriptors.advanced(by: Int(i)).pointee
+            let preset = AUAudioUnitPreset()
+            preset.number = Int(desc.number)
+            preset.name = String(cString: desc.name)
+            presets.append(preset)
+        }
+        return presets
+    }
+
+    override var currentPreset: AUAudioUnitPreset? {
+        get {
+            selectedFactoryPreset
+        }
+        set {
+            guard let preset = newValue else {
+                selectedFactoryPreset = nil
+                return
+            }
+
+            if preset.number >= 0 {
+                if applyFactoryPreset(number: Int32(preset.number), notifyHost: true) {
+                    selectedFactoryPreset = matchingFactoryPreset(number: preset.number) ?? preset
+                } else {
+                    selectedFactoryPreset = nil
+                }
+            } else {
+                selectedFactoryPreset = nil
+            }
+        }
     }
 
     /// MIDI output ports exposed to the host. `aumi` (MIDI Processor)
@@ -231,7 +273,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         let rawCtx = rustCtx!
         let cb = callbacks.pointee
         _parameterTree?.implementorValueObserver = { [weak self] p, v in
-            guard self?.isSyncingToHost != true else { return }
+            guard let self = self, self.isSyncingToHost != true else { return }
+            self.selectedFactoryPreset = nil
             cb.param_set_value(rawCtx, UInt32(p.address), Double(v))
         }
         _parameterTree?.implementorValueProvider = { p in
@@ -242,6 +285,39 @@ class TruceAUAudioUnit: AUAudioUnit {
             var buf = [CChar](repeating: 0, count: 128)
             let len = cb.param_format_value(rawCtx, UInt32(p.address), Double(val), &buf, 128)
             return len > 0 ? String(cString: buf) : String(format: "%.2f", val)
+        }
+    }
+
+    private func matchingFactoryPreset(number: Int) -> AUAudioUnitPreset? {
+        factoryPresets?.first { $0.number == number }
+    }
+
+    private func intFromStateValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
+    }
+
+    private func applyFactoryPreset(number: Int32, notifyHost: Bool) -> Bool {
+        guard let ctx = rustCtx, let cb = g_callbacks else { return false }
+        let applied = cb.pointee.factory_preset_load(ctx, number)
+        guard applied != 0 else { return false }
+        refreshParameterTreeFromRust(notifyHost: notifyHost)
+        return true
+    }
+
+    private func refreshParameterTreeFromRust(notifyHost: Bool) {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              let tree = _parameterTree else { return }
+        isSyncingToHost = true
+        defer { isSyncingToHost = false }
+        for param in tree.allParameters {
+            let rustVal = AUValue(cb.pointee.param_get_value(ctx, UInt32(param.address)))
+            if notifyHost {
+                param.setValue(rustVal, originator: nil)
+            } else {
+                param.value = rustVal
+            }
         }
     }
 
@@ -499,19 +575,36 @@ class TruceAUAudioUnit: AUAudioUnit {
                 state["truce_state"] = Data(bytes: data, count: Int(len))
                 cb.pointee.state_free(data, len)
             }
+            if let preset = selectedFactoryPreset {
+                state["truce_factory_preset"] = preset.number
+            }
             return state
         }
         set {
             super.fullState = newValue
-            guard let blob = newValue?["truce_state"] as? Data,
-                  let ctx = rustCtx, let cb = g_callbacks else { return }
-            blob.withUnsafeBytes { ptr in
-                cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
-            }
-            if let tree = _parameterTree {
-                for param in tree.allParameters {
-                    param.value = AUValue(g_callbacks!.pointee.param_get_value(ctx, UInt32(param.address)))
+            let presetNumber = intFromStateValue(newValue?["truce_factory_preset"])
+            if let blob = newValue?["truce_state"] as? Data,
+               let ctx = rustCtx, let cb = g_callbacks {
+                blob.withUnsafeBytes { ptr in
+                    cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
                 }
+                refreshParameterTreeFromRust(notifyHost: false)
+                if let presetNumber = presetNumber {
+                    selectedFactoryPreset = matchingFactoryPreset(number: presetNumber)
+                } else {
+                    selectedFactoryPreset = nil
+                }
+                return
+            }
+
+            if let presetNumber = presetNumber {
+                if applyFactoryPreset(number: Int32(presetNumber), notifyHost: false) {
+                    selectedFactoryPreset = matchingFactoryPreset(number: presetNumber)
+                } else {
+                    selectedFactoryPreset = nil
+                }
+            } else {
+                selectedFactoryPreset = nil
             }
         }
     }
@@ -656,8 +749,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         self.view.addSubview(container)
         guiContainer = container
         self.preferredContentSize = guiPtSize
-        // Center the GUI in the host's view (which may be oversized)
-        centerGUI()
+        layoutGUI()
         guiSetUp = true
 
         // Sync Rust param values → AUParameterTree at ~30fps.
@@ -673,7 +765,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        centerGUI()
+        layoutGUI()
     }
     #else
     override func viewDidDisappear(_ animated: Bool) {
@@ -683,7 +775,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        centerGUI()
+        layoutGUI()
     }
     #endif
 
@@ -700,14 +792,41 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guiSetUp = false
     }
 
-    private func centerGUI() {
+    private func layoutGUI() {
         guard let container = guiContainer, guiPtSize.width > 0 else { return }
+        #if os(iOS)
+        let safeFrame = self.view.safeAreaLayoutGuide.layoutFrame
+        let layoutFrame = safeFrame.width > 0 && safeFrame.height > 0 ? safeFrame : self.view.bounds
+        let hostW = layoutFrame.width
+        let hostH = layoutFrame.height
+        guard hostW > 0, hostH > 0 else { return }
+
+        var w = UInt32(max(1, hostW.rounded()))
+        var h = UInt32(max(1, hostH.rounded()))
+        if let ctx = myCtx, let cb = g_callbacks,
+           cb.pointee.gui_adjust_size(ctx, &w, &h) != 0 {
+            let next = NSSize(width: CGFloat(w), height: CGFloat(h))
+            if abs(next.width - guiPtSize.width) > 0.5 ||
+               abs(next.height - guiPtSize.height) > 0.5 {
+                if cb.pointee.gui_set_size(ctx, w, h) != 0 {
+                    guiPtSize = next
+                    self.preferredContentSize = next
+                }
+            }
+        }
+
+        container.frame = NSRect(x: layoutFrame.minX,
+                                 y: layoutFrame.minY,
+                                 width: guiPtSize.width,
+                                 height: guiPtSize.height)
+        #else
         let hostW = self.view.bounds.width
         let hostH = self.view.bounds.height
         let x = max(0, (hostW - guiPtSize.width) / 2)
         let y = max(0, (hostH - guiPtSize.height) / 2)
         container.frame = NSRect(x: x, y: y,
                                  width: guiPtSize.width, height: guiPtSize.height)
+        #endif
     }
 
     // MARK: - Parameter sync (GUI ↔ host)

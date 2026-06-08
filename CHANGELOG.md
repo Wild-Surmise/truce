@@ -2,70 +2,29 @@
 
 Notable changes per release.
 
-## 0.49.15
+## Unreleased
 
-- **`truce-gui`: fixed a dropdown popup positioning bug.** The popup
-  no longer mis-anchors relative to its trigger widget.
+- Packaging: per-plugin `version = "x.y.z"` values in `truce.toml`
+  now flow into generated AUv3 plists, direct iOS app/appex bundles,
+  and per-plugin macOS/Windows/Linux package artifact names instead of
+  always using the workspace version or hardcoded plist defaults.
+- iOS AUv3: plugins can now override the extension bundle identifier
+  with `ios_appex_bundle_id = "com.example.Plugin.Extension"` while
+  preserving the existing `{vendor.id}.{bundle_id}.AUExt` default.
+- iOS AUv3: generated extension plists now include `resizable` and a
+  default `size:{420,720}` AudioComponents tag so hosts such as
+  GarageBand and AUM can expose/choose larger editor views. Plugins
+  can override the advertised first-open size with
+  `ios_view_size = [w, h]` in `truce.toml`.
+- iOS AUv3: the generated Swift view controller now lays out the Rust
+  editor inside `view.safeAreaLayoutGuide.layoutFrame`, preventing
+  landscape hosts such as GarageBand from placing plugin UI under the
+  notch/camera unsafe area.
+- iOS AUv3: the generated `AUAudioUnit` subclass now accepts all
+  proposed `AUAudioUnitViewConfiguration` entries, matching the
+  host-driven responsive editor path.
 
-## 0.49.14
-
-- **Standalone: added MIDI device + channel selection** via a unified
-  Settings menu on macOS/Windows, or `--midi-input` / `--midi-channel`
-  (`omni` or `1`-`16`) on Linux.
-
-## 0.49.13
-
-- **VST2/AAX: extended the 0.49.9 `set_state` fix.** The same path that
-  dropped GUI-edited custom state in CLAP/VST3/AU was present in VST2
-  and AAX; they now route editor bytes to `load_state` like the others.
-  (LV2 is unaffected: its UI is out-of-process and never touches
-  `set_state` directly.)
-
-## 0.49.12
-
-- **`truce-slint`: fixed a panic on HiDPI displays after a resize event.**
-  The render buffer kept the pre-resize physical extents while slint's
-  window adopted the new ones, so the next frame tripped slint's
-  buffer-too-small check.
-
-## 0.49.11
-
-- **Standalone: fixed the macOS device menu** — the Input/Output Device
-  submenus were grayed out and unopenable.
-- **Standalone: added input/output channel selection** (mono channel or
-  stereo pair) via the macOS/Windows menus or `--input-channels` /
-  `--output-channels` (the CLI is the picker on Linux).
-
-## 0.49.10
-
-- **Fixed a use-after-free crash when a host closes the editor without
-  calling `close()`** (seen in Ableton with several plugins loaded). The
-  macOS frame timer kept firing against the freed editor; every editor
-  backend now cancels its window on drop.
-- **Fixed meters not updating in the built-in (CPU) editor.** The
-  repaint gate only watched parameter changes, so a moving meter stayed
-  frozen until an unrelated repaint (e.g. dragging a knob) fired; the
-  editor now repaints when a meter value moves.
-
-## 0.49.9
-
-- **Fixed `#[derive(State)]` custom state not persisting when edited
-  from the GUI.** The CLAP, VST3, and AU editor `set_state` paths
-  silently dropped GUI edits; they now reach `load_state` correctly.
-
-## 0.49.6
-
-- **`truce-standalone`: the `gui` feature no longer pulls `truce-gpu`.**
-  Standalone builds compile the GPU backend only when the plugin opts in
-  via `truce-gui = { …, features = ["gpu"] }`.
-
-## 0.49.4
-
-- **Fixed a macOS stack-overflow crash in the built-in (CPU) GUI /
-  standalone path.** Moving the cursor over a freshly-opened editor
-  window aborted the process. Fixed in `baseview-truce 0.1.1-truce.4`.
-
-## 0.49.2
+## 0.49.2 (2026-05-25)
 
 - Housekeeping: minor README updates and safety fixes.
 - Standalone: Disable window resizing on Windows for now (mirrors

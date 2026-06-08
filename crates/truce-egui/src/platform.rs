@@ -6,6 +6,6 @@
 //! (`ParentWindow`, `create_wgpu_surface`) gate to non-iOS.
 
 #[cfg(not(target_os = "ios"))]
-pub use truce_gui::platform::{ParentWindow, create_wgpu_surface};
+pub use truce_gui::platform::{ParentWindow, configure_parented_child_view, create_wgpu_surface};
 
 pub use truce_gui::platform::query_backing_scale;

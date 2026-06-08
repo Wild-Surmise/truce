@@ -12,9 +12,23 @@ pub struct EguiRenderer {
     egui_rpass: egui_wgpu::Renderer,
     width: u32,
     height: u32,
+    max_texture_dimension_2d: u32,
 }
 
 impl EguiRenderer {
+    fn clamp_surface_size(width: u32, height: u32, max_texture_dimension_2d: u32) -> (u32, u32) {
+        let max = max_texture_dimension_2d.max(1);
+        let clamped = (width.min(max), height.min(max));
+        #[cfg(debug_assertions)]
+        if clamped != (width, height) {
+            eprintln!(
+                "truce-egui: clamped surface size from {width}x{height} to {}x{} (max texture dimension {max})",
+                clamped.0, clamped.1
+            );
+        }
+        clamped
+    }
+
     /// Create from a baseview `Window` by bridging its rwh 0.5 handle
     /// to wgpu's rwh 0.6 via `SurfaceTargetUnsafe::RawHandle`.
     ///
@@ -43,10 +57,12 @@ impl EguiRenderer {
         }))
         .ok()?;
 
+        let required_limits = adapter.limits();
+        let max_texture_dimension_2d = required_limits.max_texture_dimension_2d;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("truce-egui"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits,
             experimental_features: wgpu::ExperimentalFeatures::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
@@ -61,6 +77,7 @@ impl EguiRenderer {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        let (width, height) = Self::clamp_surface_size(width, height, max_texture_dimension_2d);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -87,6 +104,7 @@ impl EguiRenderer {
             egui_rpass,
             width,
             height,
+            max_texture_dimension_2d,
         })
     }
 
@@ -133,6 +151,7 @@ impl EguiRenderer {
             // reported limits so we never artificially cap below
             // what the device can do.
             let required_limits = adapter.limits();
+            let max_texture_dimension_2d = required_limits.max_texture_dimension_2d;
             let (device, queue) =
                 pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("truce-egui-aax"),
@@ -161,6 +180,7 @@ impl EguiRenderer {
                 .copied()
                 .unwrap_or(wgpu::CompositeAlphaMode::Auto);
 
+            let (width, height) = Self::clamp_surface_size(width, height, max_texture_dimension_2d);
             let surface_config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: surface_format,
@@ -187,6 +207,7 @@ impl EguiRenderer {
                 egui_rpass,
                 width,
                 height,
+                max_texture_dimension_2d,
             })
         }
     }
@@ -282,6 +303,8 @@ impl EguiRenderer {
         if width == 0 || height == 0 {
             return;
         }
+        let (width, height) =
+            Self::clamp_surface_size(width, height, self.max_texture_dimension_2d);
         self.width = width;
         self.height = height;
         self.surface_config.width = width;
