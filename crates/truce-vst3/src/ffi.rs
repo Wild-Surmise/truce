@@ -160,6 +160,8 @@ pub struct Vst3Callbacks {
     /// can remember the host scale (used for physical-pixel size
     /// reporting on Windows/Linux) and forward it to the editor.
     pub gui_set_content_scale: unsafe extern "C" fn(ctx: *mut c_void, scale: f64),
+    /// Host-driven resize via IPlugView::onSize. Calls Editor::set_size.
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
 }
 
 unsafe extern "C" {
@@ -182,4 +184,7 @@ unsafe extern "C" {
 
     /// Notify host: end editing a parameter (mouse-up).
     pub fn truce_vst3_end_edit(ctx: *mut std::ffi::c_void, id: u32);
+
+    /// Request the host to resize the editor window via IPlugFrame::resizeView.
+    pub fn truce_vst3_request_resize(ctx: *mut std::ffi::c_void, w: u32, h: u32) -> bool;
 }
