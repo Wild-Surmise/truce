@@ -22,6 +22,12 @@ pub struct Options {
     pub list_midi: bool,
     pub output_device: Option<String>,
     pub input_device: Option<String>,
+    /// Output channel routing spec (`direct`, a channel like `3`, or a
+    /// pair like `3-4`). Parsed into a `ChannelRoute` in `start_audio`;
+    /// on Linux (no native menu) this is the only way to pick channels.
+    pub output_channels: Option<String>,
+    /// Input channel routing spec; same grammar as `output_channels`.
+    pub input_channels: Option<String>,
     /// Whether the mic input is enabled at launch. `None` →
     /// privacy default (off). Set explicitly via `--input-enabled
     /// on|off`, the env var, or `[plugin.standalone].input_enabled`
@@ -36,6 +42,10 @@ pub struct Options {
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub midi_input: Option<String>,
+    /// MIDI channel filter spec (`omni`/`all`, or `1`-`16`). Parsed
+    /// into a `MidiChannel` when the MIDI thread starts; on Linux (no
+    /// native menu) this is the only way to pick a channel.
+    pub midi_channel: Option<String>,
     pub bpm: Option<f64>,
     pub state_path: Option<PathBuf>,
     /// Print status chatter (device picks, toggles, save / load
@@ -73,6 +83,11 @@ OPTIONS:
   --list-midi               List MIDI input devices and exit
   --output <name>           Audio output device (substring match)
   --input <name>            Audio input device (effect plugins)
+  --output-channels <spec>  Route output to specific device channels:
+                            `direct` (all, default), a channel like `3`
+                            (mono), or a pair like `3-4` (stereo).
+  --input-channels <spec>   Route input from specific device channels;
+                            same grammar as --output-channels.
   --input-enabled <on|off>  Enable mic input at launch (default: off).
                             Press `I` in the window to toggle live.
   --output-enabled <on|off> Enable speaker output at launch (default: on).
@@ -80,6 +95,8 @@ OPTIONS:
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
   --midi-input <name>       MIDI input device (substring match)
+  --midi-channel <spec>     MIDI channel filter: `omni` (all, default)
+                            or a channel `1`-`16`.
   --bpm <n>                 Transport BPM (default 120)
   --state <path>            Load plugin state from this file on launch
   -v, --verbose             Print status chatter (device picks, toggles,
@@ -163,6 +180,12 @@ pub fn parse() -> Result<Options, String> {
     let input_device = args
         .opt_value_from_str::<_, String>("--input")
         .map_err(|e| format!("--input: {e}"))?;
+    let output_channels = args
+        .opt_value_from_str::<_, String>("--output-channels")
+        .map_err(|e| format!("--output-channels: {e}"))?;
+    let input_channels = args
+        .opt_value_from_str::<_, String>("--input-channels")
+        .map_err(|e| format!("--input-channels: {e}"))?;
     let input_enabled = args
         .opt_value_from_str::<_, String>("--input-enabled")
         .map_err(|e| format!("--input-enabled: {e}"))?
@@ -182,6 +205,9 @@ pub fn parse() -> Result<Options, String> {
     let midi_input = args
         .opt_value_from_str::<_, String>("--midi-input")
         .map_err(|e| format!("--midi-input: {e}"))?;
+    let midi_channel = args
+        .opt_value_from_str::<_, String>("--midi-channel")
+        .map_err(|e| format!("--midi-channel: {e}"))?;
     let bpm = args
         .opt_value_from_str::<_, f64>("--bpm")
         .map_err(|e| format!("--bpm: {e}"))?;
@@ -213,6 +239,8 @@ pub fn parse() -> Result<Options, String> {
         list_midi,
         output_device: output_device.or_else(|| env("OUTPUT")),
         input_device: input_device.or_else(|| env("INPUT")),
+        output_channels: output_channels.or_else(|| env("OUTPUT_CHANNELS")),
+        input_channels: input_channels.or_else(|| env("INPUT_CHANNELS")),
         input_enabled: input_enabled.or_else(|| {
             env("INPUT_ENABLED")
                 .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
@@ -224,6 +252,7 @@ pub fn parse() -> Result<Options, String> {
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
+        midi_channel: midi_channel.or_else(|| env("MIDI_CHANNEL")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
         verbose: verbose

@@ -11,11 +11,27 @@
 # Invoked by release.sh; runnable standalone for debugging the order.
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 
+
+def cargo_bin():
+    # Honor an explicit CARGO from the caller (release.sh). Otherwise
+    # prefer cargo.exe — on Windows (WSL) both cargo.exe and cargo can
+    # be on PATH — and fall back to cargo.
+    explicit = os.environ.get("CARGO")
+    if explicit:
+        return explicit
+    for cand in ("cargo.exe", "cargo"):
+        if shutil.which(cand):
+            return cand
+    return "cargo"
+
+
 meta = json.loads(subprocess.check_output(
-    ["cargo", "metadata", "--format-version", "1", "--no-deps"]))
+    [cargo_bin(), "metadata", "--format-version", "1", "--no-deps"]))
 
 ws_members = set(meta["workspace_members"])
 pkgs = [

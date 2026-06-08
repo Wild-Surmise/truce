@@ -43,6 +43,18 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# On Windows (WSL) the cargo on PATH is often cargo.exe. Prefer cargo.exe
+# (WSL can have both on PATH), fall back to cargo, and fail loudly if
+# neither is present.
+if command -v cargo.exe >/dev/null 2>&1; then
+    CARGO=cargo.exe
+elif command -v cargo >/dev/null 2>&1; then
+    CARGO=cargo
+else
+    echo "Error: cargo not found on PATH (looked for 'cargo' and 'cargo.exe')" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
@@ -175,7 +187,7 @@ fi
 echo
 echo "→ computing publish order from cargo metadata"
 
-ORDER="$(python3 scripts/release/topo.py)"
+ORDER="$(CARGO="$CARGO" python3 scripts/release/topo.py)"
 
 if [[ -z "$ORDER" ]]; then
     echo "Error: no publishable crates found under crates/" >&2
@@ -203,7 +215,7 @@ publish_one() {
     while (( attempts < MAX_RETRY_ATTEMPTS )); do
         attempts=$((attempts + 1))
         # pipefail (set above) propagates cargo's exit through tee.
-        if cargo publish -p "$crate" 2>&1 | tee "$log"; then
+        if "$CARGO" publish -p "$crate" 2>&1 | tee "$log"; then
             rm -f "$log"
             return 0
         fi

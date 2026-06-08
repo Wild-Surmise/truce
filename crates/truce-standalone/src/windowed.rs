@@ -33,7 +33,7 @@ use truce_params::Params;
 use crate::audio::{self, InputController, MidiEvent, OutputController};
 use crate::cli::Options;
 use crate::keyboard;
-use crate::midi::MidiInputThread;
+use crate::midi::{MidiController, MidiInputThread};
 use crate::transport::Transport;
 use crate::vlog;
 
@@ -75,7 +75,7 @@ where
     // - it loads BEFORE `snap_smoothers` so the editor + first audio
     // block see the restored values, not defaults ramping toward them.
 
-    let midi_thread = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
+    let (midi_thread, midi_ctrl) = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
 
     let editor: Option<Box<dyn Editor>> = {
         // Recover from a poisoned plugin mutex (audio thread panicked
@@ -117,6 +117,8 @@ where
     let input_ctrl = audio_handles.input.clone();
     let output_ctrl = audio_handles.output.clone();
     let is_effect = audio_handles.is_effect;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let channels = audio_handles.channels;
     // Move the `--output-file` capture sink into the handler so the
     // Linux WillClose path (which bypasses Drop via `_exit(0)`) can
     // explicitly finalize it. On non-Linux the handler is dropped
@@ -153,7 +155,14 @@ where
         // (input is silent for instruments / analyzers without
         // input routing).
         #[cfg(target_os = "macos")]
-        crate::menu_macos::install(P::info().name, is_effect, &input_ctrl, &output_ctrl);
+        crate::menu_macos::install(
+            P::info().name,
+            is_effect,
+            channels,
+            &input_ctrl,
+            &output_ctrl,
+            &midi_ctrl,
+        );
 
         #[cfg(target_os = "macos")]
         if can_resize {
@@ -171,8 +180,10 @@ where
                 h.hwnd,
                 P::info().name,
                 is_effect,
+                channels,
                 input_ctrl.clone(),
                 output_ctrl.clone(),
+                midi_ctrl.clone(),
             );
             if !can_resize {
                 // Fixed-size plugin editors only stretch their child
@@ -214,6 +225,7 @@ where
             is_effect,
             octave_offset: 0,
             _midi_thread: midi_thread,
+            _midi_ctrl: midi_ctrl,
             #[cfg(feature = "playback")]
             _capture: capture,
         }
@@ -245,7 +257,11 @@ where
     octave_offset: i8,
     /// Keeps the MIDI hot-plug thread alive for the lifetime of the
     /// window; dropped when the window closes.
-    _midi_thread: Option<MidiInputThread>,
+    _midi_thread: MidiInputThread,
+    /// MIDI device / channel control handle. The menu holds its own
+    /// clone; kept here too so it lives for the window's lifetime
+    /// (and stays a live binding on platforms with no native menu).
+    _midi_ctrl: MidiController,
     /// `--output-file` capture sink, owned by the handler so the
     /// Linux `WillClose` path can finalize it before `_exit(0)`. On
     /// non-Linux the handler's Drop runs naturally and

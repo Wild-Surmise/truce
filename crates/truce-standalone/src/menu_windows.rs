@@ -1,7 +1,7 @@
 //! Windows native menu bar for the standalone host.
 //!
-//! Builds a Win32 `HMENU` with one top-level "Audio" popup
-//! containing:
+//! Builds a Win32 `HMENU` with one top-level "Settings" popup
+//! carrying both the audio and MIDI controls:
 //!
 //! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
 //!   effect plugins only)
@@ -9,6 +9,10 @@
 //! - **Input Device** submenu - repopulated from cpal on each open
 //!   (effect plugins only)
 //! - **Output Device** submenu - same for outputs
+//! - **Input / Output Channels** submenus - channel routing (when the
+//!   device exposes >= 2 channels)
+//! - **MIDI Input** submenu - lists MIDI ports (repopulated on open)
+//! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
 //! back to `InputController` / `OutputController` through a
@@ -25,7 +29,7 @@
 //!   keeps the size it asked for.
 //! - There's no auto-populated "App" menu like Cocoa's. The
 //!   window's `[X]` close button covers Quit; we ship just the
-//!   Audio menu.
+//!   Settings menu.
 //! - Cocoa's `Cmd+I` accelerator is wired by the menu item itself.
 //!   Win32 needs a separate `HACCEL` table + `TranslateAccelerator`
 //!   in the message loop, which baseview doesn't expose. The menu
@@ -44,11 +48,13 @@ use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWi
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateMenu, CreatePopupMenu, DeleteMenu, DrawMenuBar,
     GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU, MF_BYCOMMAND,
-    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_STRING, MF_UNCHECKED, SM_CYMENU, SWP_NOMOVE,
-    SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP, WM_NCDESTROY,
+    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
+    SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP,
+    WM_NCDESTROY,
 };
 
-use crate::audio::{self, InputController, OutputController};
+use crate::audio::{self, ChannelRoute, InputController, OutputController};
+use crate::midi::{self, MidiChannel, MidiController};
 use crate::vlog;
 
 /// Command ID for the mic-input toggle.
@@ -62,6 +68,27 @@ const MENU_CMD_INPUT_DEVICE_BASE: u16 = 0xC100;
 const MENU_CMD_INPUT_DEVICE_END: u16 = 0xC1FF;
 const MENU_CMD_OUTPUT_DEVICE_BASE: u16 = 0xC200;
 const MENU_CMD_OUTPUT_DEVICE_END: u16 = 0xC2FF;
+
+/// Channel-routing item ranges. The command ID carries the
+/// [`ChannelRoute`] directly: `cmd == base + route.encode()`, so a
+/// click decodes back to the route with no name lookup. `encode()`
+/// stays small (`<= 2 * channels`), well within 256 slots.
+const MENU_CMD_INPUT_CHANNELS_BASE: u16 = 0xC300;
+const MENU_CMD_INPUT_CHANNELS_END: u16 = 0xC3FF;
+const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
+const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
+
+/// MIDI-input device items. `MENU_CMD_MIDI_NONE` disconnects; the
+/// `[BASE, END]` range holds one ID per port (name recovered via
+/// `GetMenuStringW`, like the audio device menus).
+const MENU_CMD_MIDI_NONE: u16 = 0xC500;
+const MENU_CMD_MIDI_INPUT_BASE: u16 = 0xC501;
+const MENU_CMD_MIDI_INPUT_END: u16 = 0xC5FF;
+
+/// MIDI channel items: `cmd == base + MidiChannel::encode()` (Omni
+/// encodes to 0xFF, channels to 0-15).
+const MENU_CMD_MIDI_CHANNEL_BASE: u16 = 0xC600;
+const MENU_CMD_MIDI_CHANNEL_END: u16 = 0xC6FF;
 
 /// Subclass cookie. Picked to be visually distinct in a debugger;
 /// any `usize` works as long as it's unique within the window.
@@ -80,6 +107,18 @@ struct MenuState {
     /// `null` for instrument plugins (input device picker not built).
     hmenu_input_devices: HMENU,
     hmenu_output_devices: HMENU,
+    /// Channel-routing submenus. `null` when the device exposes fewer
+    /// than two channels (nothing to pick) or, for input, on
+    /// instruments. Repopulated on `WM_INITMENUPOPUP`.
+    hmenu_input_channels: HMENU,
+    hmenu_output_channels: HMENU,
+    /// Device channel count, used to build the channel submenus.
+    channels: usize,
+    /// MIDI device / channel control + its submenus, repopulated on
+    /// `WM_INITMENUPOPUP`.
+    midi: MidiController,
+    hmenu_midi_input: HMENU,
+    hmenu_midi_channel: HMENU,
 }
 
 /// Install the native menu bar.
@@ -91,8 +130,10 @@ pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
     is_effect: bool,
+    channels: usize,
     input: InputController,
     output: OutputController,
+    midi: MidiController,
 ) {
     if hwnd.is_null() {
         return;
@@ -171,8 +212,59 @@ pub fn install(
             output_label.as_ptr(),
         );
 
-        // Attach the Audio popup to the menu bar.
-        let plugin_label = wide("Audio");
+        // Channel-routing submenus. Only worth showing when the device
+        // has >= 2 channels. Empty at install; repopulated (with the
+        // current selection checked) on WM_INITMENUPOPUP.
+        let (input_ch_menu, output_ch_menu) = if channels >= 2 {
+            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+
+            let in_ch = if is_effect {
+                let m = CreatePopupMenu();
+                if !m.is_null() {
+                    let label = wide("Input Channels");
+                    AppendMenuW(plugin_menu, MF_POPUP, m as usize, label.as_ptr());
+                }
+                m
+            } else {
+                std::ptr::null_mut()
+            };
+
+            let out_ch = CreatePopupMenu();
+            if !out_ch.is_null() {
+                let label = wide("Output Channels");
+                AppendMenuW(plugin_menu, MF_POPUP, out_ch as usize, label.as_ptr());
+            }
+            (in_ch, out_ch)
+        } else {
+            (std::ptr::null_mut(), std::ptr::null_mut())
+        };
+
+        // MIDI section, appended into the same Settings popup behind a
+        // separator: input device + channel filter. Submenus are empty
+        // here; repopulated on open. Built for every plugin (any can
+        // receive MIDI).
+        let midi_input_menu = CreatePopupMenu();
+        let midi_channel_menu = CreatePopupMenu();
+        if !midi_input_menu.is_null() && !midi_channel_menu.is_null() {
+            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+            let in_label = wide("MIDI Input");
+            AppendMenuW(
+                plugin_menu,
+                MF_POPUP,
+                midi_input_menu as usize,
+                in_label.as_ptr(),
+            );
+            let ch_label = wide("MIDI Channel");
+            AppendMenuW(
+                plugin_menu,
+                MF_POPUP,
+                midi_channel_menu as usize,
+                ch_label.as_ptr(),
+            );
+        }
+
+        // Attach the Settings popup (audio + MIDI) to the menu bar.
+        let plugin_label = wide("Settings");
         AppendMenuW(
             menu_bar,
             MF_POPUP,
@@ -196,6 +288,12 @@ pub fn install(
             has_mic_item: is_effect,
             hmenu_input_devices: input_dev_menu,
             hmenu_output_devices: output_dev_menu,
+            hmenu_input_channels: input_ch_menu,
+            hmenu_output_channels: output_ch_menu,
+            channels,
+            midi,
+            hmenu_midi_input: midi_input_menu,
+            hmenu_midi_channel: midi_channel_menu,
         }));
         SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, state as usize);
     }
@@ -232,7 +330,7 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
 // Why: `(wparam & 0xFFFF) as u16` is the canonical Win32 LOWORD shape -
 // the high bits of WPARAM are reserved/zero on WM_COMMAND, so the
 // truncation is the contract.
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 unsafe extern "system" fn subclass_proc(
     hwnd: HWND,
     msg: u32,
@@ -305,6 +403,49 @@ unsafe extern "system" fn subclass_proc(
                     }
                     return 0;
                 }
+
+                if !state.hmenu_input_channels.is_null()
+                    && (MENU_CMD_INPUT_CHANNELS_BASE..=MENU_CMD_INPUT_CHANNELS_END)
+                        .contains(&cmd_id)
+                {
+                    let route =
+                        ChannelRoute::decode(usize::from(cmd_id - MENU_CMD_INPUT_CHANNELS_BASE));
+                    vlog!("input channels: {route:?}");
+                    state.input.set_channel_route(route);
+                    return 0;
+                }
+
+                if !state.hmenu_output_channels.is_null()
+                    && (MENU_CMD_OUTPUT_CHANNELS_BASE..=MENU_CMD_OUTPUT_CHANNELS_END)
+                        .contains(&cmd_id)
+                {
+                    let route =
+                        ChannelRoute::decode(usize::from(cmd_id - MENU_CMD_OUTPUT_CHANNELS_BASE));
+                    vlog!("output channels: {route:?}");
+                    state.output.set_channel_route(route);
+                    return 0;
+                }
+
+                if cmd_id == MENU_CMD_MIDI_NONE {
+                    vlog!("midi input: none");
+                    state.midi.set_device(None);
+                    return 0;
+                }
+
+                if (MENU_CMD_MIDI_INPUT_BASE..=MENU_CMD_MIDI_INPUT_END).contains(&cmd_id) {
+                    if let Some(name) = get_menu_string(state.hmenu_midi_input, u32::from(cmd_id)) {
+                        vlog!("midi input: {name}");
+                        state.midi.set_device(Some(name));
+                    }
+                    return 0;
+                }
+
+                if (MENU_CMD_MIDI_CHANNEL_BASE..=MENU_CMD_MIDI_CHANNEL_END).contains(&cmd_id) {
+                    let channel = MidiChannel::decode((cmd_id - MENU_CMD_MIDI_CHANNEL_BASE) as u8);
+                    vlog!("midi channel: {channel:?}");
+                    state.midi.set_channel(channel);
+                    return 0;
+                }
             }
             WM_INITMENUPOPUP => {
                 if state_ptr.is_null() {
@@ -331,6 +472,30 @@ unsafe extern "system" fn subclass_proc(
                         current.as_deref(),
                         MENU_CMD_OUTPUT_DEVICE_BASE,
                     );
+                } else if !state.hmenu_input_channels.is_null()
+                    && popup == state.hmenu_input_channels
+                {
+                    repopulate_channel_menu(
+                        popup,
+                        state.channels,
+                        state.input.channel_route(),
+                        MENU_CMD_INPUT_CHANNELS_BASE,
+                    );
+                } else if !state.hmenu_output_channels.is_null()
+                    && popup == state.hmenu_output_channels
+                {
+                    repopulate_channel_menu(
+                        popup,
+                        state.channels,
+                        state.output.channel_route(),
+                        MENU_CMD_OUTPUT_CHANNELS_BASE,
+                    );
+                } else if !state.hmenu_midi_input.is_null() && popup == state.hmenu_midi_input {
+                    let names = midi::list_midi_devices();
+                    let current = state.midi.current_name();
+                    repopulate_midi_input_menu(popup, &names, current.as_deref());
+                } else if !state.hmenu_midi_channel.is_null() && popup == state.hmenu_midi_channel {
+                    repopulate_midi_channel_menu(popup, state.midi.channel());
                 } else if popup == state.hmenu_plugin {
                     if state.has_mic_item {
                         let on = state.input.is_enabled();
@@ -403,6 +568,155 @@ unsafe fn repopulate_device_menu(
             }
             AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
         }
+    }
+}
+
+/// Rebuild a channel-routing popup: a "direct" default, then one item
+/// per stereo pair, then one per mono channel. Each item's command ID
+/// is `cmd_base + route.encode()`; the item matching `current` gets
+/// `MF_CHECKED`.
+unsafe fn repopulate_channel_menu(
+    popup: HMENU,
+    channels: usize,
+    current: ChannelRoute,
+    cmd_base: u16,
+) {
+    unsafe {
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
+        }
+
+        let cur = current.encode();
+        append_channel_item(
+            popup,
+            cmd_base,
+            ChannelRoute::Direct,
+            "All channels (direct)",
+            cur,
+        );
+
+        if channels >= 2 {
+            AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+            let mut base = 0;
+            while base + 1 < channels {
+                let label = format!("Channels {} & {}", base + 1, base + 2);
+                append_channel_item(popup, cmd_base, ChannelRoute::Stereo { base }, &label, cur);
+                base += 2;
+            }
+        }
+
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+        for c in 0..channels {
+            let label = format!("Channel {} (mono)", c + 1);
+            append_channel_item(popup, cmd_base, ChannelRoute::Mono { base: c }, &label, cur);
+        }
+    }
+}
+
+/// Append one channel-routing item, checked when its encoded route is
+/// the active one.
+unsafe fn append_channel_item(
+    popup: HMENU,
+    cmd_base: u16,
+    route: ChannelRoute,
+    label: &str,
+    current_encoded: usize,
+) {
+    unsafe {
+        let encoded = route.encode();
+        let cmd = cmd_base.wrapping_add(u16::try_from(encoded).unwrap_or(0));
+        let mut flags = MF_STRING;
+        if encoded == current_encoded {
+            flags |= MF_CHECKED;
+        }
+        let text = wide(label);
+        AppendMenuW(popup, flags, cmd as usize, text.as_ptr());
+    }
+}
+
+/// Rebuild the MIDI-input popup: a "None" row (disconnect) then one
+/// row per port. The active device (or "None") is checked. Device rows
+/// fire IDs in `[MENU_CMD_MIDI_INPUT_BASE, ..)`; their names are
+/// recovered with `GetMenuStringW`, like the audio device menus.
+// Why: `i as u16` for the command ID - the loop breaks at `i >= 254`
+// so the cast is bounded well below `u16::MAX`.
+#[allow(clippy::cast_possible_truncation)]
+unsafe fn repopulate_midi_input_menu(popup: HMENU, devices: &[String], current: Option<&str>) {
+    unsafe {
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
+        }
+
+        let mut none_flags = MF_STRING;
+        if current.is_none() {
+            none_flags |= MF_CHECKED;
+        }
+        let none = wide("None");
+        AppendMenuW(
+            popup,
+            none_flags,
+            MENU_CMD_MIDI_NONE as usize,
+            none.as_ptr(),
+        );
+
+        if devices.is_empty() {
+            return;
+        }
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+        for (i, name) in devices.iter().enumerate() {
+            // Keep IDs inside the reserved range.
+            if MENU_CMD_MIDI_INPUT_BASE as usize + i > MENU_CMD_MIDI_INPUT_END as usize {
+                break;
+            }
+            let mut flags = MF_STRING;
+            if current.is_some_and(|c| c == name.as_str()) {
+                flags |= MF_CHECKED;
+            }
+            let text = wide(name);
+            let cmd_id = MENU_CMD_MIDI_INPUT_BASE + i as u16;
+            AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
+        }
+    }
+}
+
+/// Rebuild the MIDI-channel popup: an "Omni" row then channels 1-16,
+/// each firing `MENU_CMD_MIDI_CHANNEL_BASE + MidiChannel::encode()`.
+/// The active channel is checked.
+unsafe fn repopulate_midi_channel_menu(popup: HMENU, current: MidiChannel) {
+    unsafe {
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
+        }
+
+        let cur = current.encode();
+        append_midi_channel_item(popup, MidiChannel::Omni, "Omni (all channels)", cur);
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
+        for n in 0..16u8 {
+            let label = format!("Channel {}", n + 1);
+            append_midi_channel_item(popup, MidiChannel::Channel(n), &label, cur);
+        }
+    }
+}
+
+/// Append one MIDI-channel item, checked when it's the active channel.
+unsafe fn append_midi_channel_item(
+    popup: HMENU,
+    channel: MidiChannel,
+    label: &str,
+    current_encoded: u8,
+) {
+    unsafe {
+        let encoded = channel.encode();
+        let cmd = MENU_CMD_MIDI_CHANNEL_BASE.wrapping_add(u16::from(encoded));
+        let mut flags = MF_STRING;
+        if encoded == current_encoded {
+            flags |= MF_CHECKED;
+        }
+        let text = wide(label);
+        AppendMenuW(popup, flags, cmd as usize, text.as_ptr());
     }
 }
 

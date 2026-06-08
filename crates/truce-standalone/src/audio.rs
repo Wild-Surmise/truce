@@ -17,7 +17,7 @@
 //!   audio callback keeps running unchanged.
 
 use crossbeam_queue::ArrayQueue;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -97,6 +97,81 @@ pub struct AudioHandles<P: PluginExport> {
 }
 
 // ---------------------------------------------------------------------------
+// Channel routing
+// ---------------------------------------------------------------------------
+
+/// How the plugin's channels map onto the audio device's channels.
+///
+/// Stored encoded in an `AtomicUsize` on each controller (so the menu
+/// can update it lock-free) and decoded in the audio callback. The
+/// default, `Direct`, is the historical 1:1 mapping and is what every
+/// non-multichannel-aware caller gets.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChannelRoute {
+    /// Plugin channel N ↔ device channel N, across every channel.
+    /// Preserves multichannel plugins; for a stereo plugin on a
+    /// 4-out interface this is the same as `Stereo { base: 0 }`.
+    Direct,
+    /// Plugin channels 0 and 1 ↔ device channels `base` and `base+1`.
+    /// Other device outputs are silenced; other device inputs ignored.
+    Stereo { base: usize },
+    /// A single device channel `base`. On output the plugin's first
+    /// two channels fold down (sum) into it; on input it feeds both
+    /// plugin input channels.
+    Mono { base: usize },
+}
+
+impl ChannelRoute {
+    /// Pack into the `usize` the controllers store. `Direct` is 0 so a
+    /// freshly-zeroed atomic decodes to the default mapping.
+    #[must_use]
+    pub fn encode(self) -> usize {
+        match self {
+            ChannelRoute::Direct => 0,
+            ChannelRoute::Stereo { base } => 1 + base * 2,
+            ChannelRoute::Mono { base } => 2 + base * 2,
+        }
+    }
+
+    /// Parse a CLI / env spec into a route. Channel numbers are
+    /// 1-based (matching the menu labels): `direct` / `all` →
+    /// [`Self::Direct`], `N` → [`Self::Mono`] on channel N, `N-M` →
+    /// [`Self::Stereo`] pair starting at N (requires `M == N + 1`).
+    /// Returns `None` for anything malformed.
+    #[must_use]
+    pub fn parse(spec: &str) -> Option<Self> {
+        let s = spec.trim().to_ascii_lowercase();
+        if s == "direct" || s == "all" {
+            return Some(ChannelRoute::Direct);
+        }
+        if let Some((a, b)) = s.split_once('-') {
+            let a: usize = a.trim().parse().ok()?;
+            let b: usize = b.trim().parse().ok()?;
+            if a >= 1 && b == a + 1 {
+                return Some(ChannelRoute::Stereo { base: a - 1 });
+            }
+            return None;
+        }
+        let c: usize = s.parse().ok()?;
+        (c >= 1).then(|| ChannelRoute::Mono { base: c - 1 })
+    }
+
+    /// Inverse of [`Self::encode`].
+    #[must_use]
+    pub fn decode(v: usize) -> Self {
+        if v == 0 {
+            return ChannelRoute::Direct;
+        }
+        let k = v - 1;
+        if k.is_multiple_of(2) {
+            ChannelRoute::Stereo { base: k / 2 }
+        } else {
+            ChannelRoute::Mono { base: (k - 1) / 2 }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // InputController
 // ---------------------------------------------------------------------------
 
@@ -121,6 +196,12 @@ pub struct InputController {
     /// open so the menu can render a checkmark on the active
     /// device. `None` = default device or no device available.
     current_name: Arc<Mutex<Option<String>>>,
+    /// How device input channels map onto the plugin's input bus,
+    /// encoded per [`ChannelRoute`]. Read by the output callback when
+    /// summing the input ring into the plugin bus; lets a stereo
+    /// plugin pull from device inputs 3-4, or a mono source feed both
+    /// plugin inputs. Shared with the callback.
+    channel_route: Arc<AtomicUsize>,
 }
 
 enum InputCmd {
@@ -157,6 +238,18 @@ impl InputController {
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
     }
+
+    /// Choose how device input channels feed the plugin's input bus.
+    /// Takes effect on the next audio block.
+    pub fn set_channel_route(&self, route: ChannelRoute) {
+        self.channel_route.store(route.encode(), Ordering::Relaxed);
+    }
+
+    /// The current input channel routing.
+    #[must_use]
+    pub fn channel_route(&self) -> ChannelRoute {
+        ChannelRoute::decode(self.channel_route.load(Ordering::Relaxed))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +266,12 @@ pub struct OutputController {
     pub enabled: Arc<AtomicBool>,
     cmd_tx: mpsc::Sender<OutputCmd>,
     current_name: Arc<Mutex<Option<String>>>,
+    /// How the plugin's output bus maps onto device output channels,
+    /// encoded per [`ChannelRoute`]. Read by the output callback when
+    /// writing the plugin bus into the device buffer; lets a stereo
+    /// plugin drive device outputs 3-4, or fold down to a mono output.
+    /// Shared with the callback.
+    channel_route: Arc<AtomicUsize>,
 }
 
 enum OutputCmd {
@@ -207,6 +306,18 @@ impl OutputController {
     #[must_use]
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Choose how the plugin's output bus maps onto device output
+    /// channels. Takes effect on the next audio block.
+    pub fn set_channel_route(&self, route: ChannelRoute) {
+        self.channel_route.store(route.encode(), Ordering::Relaxed);
+    }
+
+    /// The current output channel routing.
+    #[must_use]
+    pub fn channel_route(&self) -> ChannelRoute {
+        ChannelRoute::decode(self.channel_route.load(Ordering::Relaxed))
     }
 }
 
@@ -278,6 +389,111 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
     (default_name, names)
 }
 
+/// Background-refreshed cache of cpal device names.
+///
+/// `CoreAudio` enumeration is slow - hundreds of milliseconds with a
+/// few devices connected - and the macOS menu used to run it
+/// synchronously on the main thread every time a device submenu
+/// opened, which made the submenu visibly lag. The menu now reads
+/// cached names (instant) and fires an off-thread refresh so the
+/// *next* open reflects hot-plugged or removed devices. Cloneable;
+/// all clones share one cache.
+#[derive(Clone)]
+pub struct DeviceCache {
+    inner: Arc<Mutex<DeviceNames>>,
+    refreshing: Arc<AtomicBool>,
+}
+
+impl Default for DeviceCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Default)]
+struct DeviceNames {
+    outputs: Vec<String>,
+    inputs: Vec<String>,
+    /// False until the first enumeration lands. Distinguishes "not
+    /// warmed yet" from "warmed and genuinely empty" so a machine with
+    /// no inputs doesn't re-enumerate on every read.
+    warmed: bool,
+}
+
+impl DeviceCache {
+    /// Create the cache and warm it on a background thread.
+    #[must_use]
+    pub fn new() -> Self {
+        let cache = Self {
+            inner: Arc::new(Mutex::new(DeviceNames::default())),
+            refreshing: Arc::new(AtomicBool::new(false)),
+        };
+        cache.refresh_async();
+        cache
+    }
+
+    /// Cached output device names. Blocks once on a cold read (a menu
+    /// opened before the warm-up finished) so the list is never
+    /// spuriously empty.
+    #[must_use]
+    pub fn outputs(&self) -> Vec<String> {
+        self.ensure_warm();
+        self.inner
+            .lock()
+            .map(|g| g.outputs.clone())
+            .unwrap_or_default()
+    }
+
+    /// Cached input device names. Same cold-read guarantee as
+    /// [`Self::outputs`].
+    #[must_use]
+    pub fn inputs(&self) -> Vec<String> {
+        self.ensure_warm();
+        self.inner
+            .lock()
+            .map(|g| g.inputs.clone())
+            .unwrap_or_default()
+    }
+
+    fn ensure_warm(&self) {
+        // Check (and release the lock) before the slow enumeration so
+        // we never hold the mutex across a CoreAudio round-trip.
+        match self.inner.lock() {
+            Ok(g) if g.warmed => return,
+            Ok(_) => {}
+            Err(_) => return,
+        }
+        let (_, outputs) = enumerate_devices(true);
+        let (_, inputs) = enumerate_devices(false);
+        if let Ok(mut names) = self.inner.lock() {
+            names.outputs = outputs;
+            names.inputs = inputs;
+            names.warmed = true;
+        }
+    }
+
+    /// Re-enumerate both device lists on a background thread, storing
+    /// the result for the next read. No-op while a refresh is already
+    /// in flight, so rapid menu reopens don't pile up threads.
+    pub fn refresh_async(&self) {
+        if self.refreshing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let inner = Arc::clone(&self.inner);
+        let refreshing = Arc::clone(&self.refreshing);
+        std::thread::spawn(move || {
+            let (_, outputs) = enumerate_devices(true);
+            let (_, inputs) = enumerate_devices(false);
+            if let Ok(mut names) = inner.lock() {
+                names.outputs = outputs;
+                names.inputs = inputs;
+                names.warmed = true;
+            }
+            refreshing.store(false, Ordering::Release);
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // start_audio
 // ---------------------------------------------------------------------------
@@ -291,6 +507,7 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
 /// Returns an error if the requested input/output device can't be
 /// found (or no default exists), the device's default stream config
 /// can't be queried, or any of the cpal stream-build calls fail.
+#[allow(clippy::too_many_lines)]
 pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, BoxErr> {
     let audio_host = cpal::default_host();
 
@@ -354,6 +571,15 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let input_ring = input_setup.ring;
     let input_enabled = input_setup.enabled;
     let input_controller = input_setup.controller;
+    if let Some(spec) = opts.input_channels.as_deref() {
+        match ChannelRoute::parse(spec) {
+            Some(route) => input_controller.set_channel_route(route),
+            None => eprintln!(
+                "--input-channels: ignoring invalid '{spec}' \
+                 (expected 'direct', a channel like '3', or a pair like '3-4')"
+            ),
+        }
+    }
 
     let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);
 
@@ -381,11 +607,26 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // can flip the launch state.
     let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
 
+    let output_channel_route = Arc::new(AtomicUsize::new(0));
     let output_controller = OutputController {
         enabled: Arc::clone(&output_enabled),
         cmd_tx: output_cmd_tx,
         current_name: Arc::clone(&output_current_name),
+        channel_route: Arc::clone(&output_channel_route),
     };
+    // Apply `--output-channels` (and its env var) once at launch. The
+    // native menus override this live; on Linux (no menu) the CLI is
+    // the only way to pick channels. Input is applied below, once its
+    // controller exists.
+    if let Some(spec) = opts.output_channels.as_deref() {
+        match ChannelRoute::parse(spec) {
+            Some(route) => output_controller.set_channel_route(route),
+            None => eprintln!(
+                "--output-channels: ignoring invalid '{spec}' \
+                 (expected 'direct', a channel like '3', or a pair like '3-4')"
+            ),
+        }
+    }
 
     // Decode `--input-file` (if set) once at startup against the
     // resolved device sample-rate / channel-count. Hard error on
@@ -436,6 +677,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         output_enabled: Arc::clone(&output_enabled),
         transport: transport.clone(),
         current_name: Arc::clone(&output_current_name),
+        input_channel_route: Arc::clone(&input_controller.channel_route),
+        output_channel_route: Arc::clone(&output_channel_route),
         #[cfg(feature = "playback")]
         playback: playback.clone(),
         #[cfg(feature = "playback")]
@@ -540,6 +783,7 @@ fn setup_input_pipeline(
         has_device: has_input_device,
         cmd_tx: input_cmd_tx,
         current_name: Arc::clone(&input_current_name),
+        channel_route: Arc::new(AtomicUsize::new(0)),
     };
 
     if is_effect {
@@ -613,6 +857,12 @@ struct OutputResources<P: PluginExport> {
     output_enabled: Arc<AtomicBool>,
     transport: Transport,
     current_name: Arc<Mutex<Option<String>>>,
+    /// Input channel routing (encoded [`ChannelRoute`]). Shared with
+    /// `InputController` (menu writes it).
+    input_channel_route: Arc<AtomicUsize>,
+    /// Output channel routing (encoded [`ChannelRoute`]). Shared with
+    /// `OutputController` (menu writes it).
+    output_channel_route: Arc<AtomicUsize>,
     /// Optional `.wav` playback source (gated on the `playback`
     /// feature). When present, summed into the input bus alongside
     /// the mic ring - see the matrix in `cli.rs::HELP`.
@@ -708,6 +958,8 @@ fn open_output_stream<P: PluginExport>(
     let ring_a = Arc::clone(&res.input_ring);
     let enabled_a = Arc::clone(&res.input_enabled);
     let out_enabled_a = Arc::clone(&res.output_enabled);
+    let in_route_a = Arc::clone(&res.input_channel_route);
+    let out_route_a = Arc::clone(&res.output_channel_route);
     let transport_a = res.transport.clone();
     #[cfg(feature = "playback")]
     let playback_a = res.playback.clone();
@@ -751,6 +1003,8 @@ fn open_output_stream<P: PluginExport>(
                         &ring_a,
                         &enabled_a,
                         &out_enabled_a,
+                        &in_route_a,
+                        &out_route_a,
                         &transport_a,
                         &mut channel_bufs,
                         &mut input_bufs,
@@ -1013,7 +1267,7 @@ impl BufferSizeMax for cpal::StreamConfig {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn audio_callback<P: PluginExport>(
     data: &mut [f32],
     channels: usize,
@@ -1024,6 +1278,8 @@ fn audio_callback<P: PluginExport>(
     input_ring: &Arc<Mutex<Vec<f32>>>,
     input_enabled: &Arc<AtomicBool>,
     output_enabled: &Arc<AtomicBool>,
+    input_channel_route: &Arc<AtomicUsize>,
+    output_channel_route: &Arc<AtomicUsize>,
     transport: &Transport,
     channel_bufs: &mut Vec<Vec<f32>>,
     input_bufs: &mut Vec<Vec<f32>>,
@@ -1071,12 +1327,43 @@ fn audio_callback<P: PluginExport>(
         if input_enabled.load(Ordering::Relaxed)
             && let Ok(mut ring) = input_ring.try_lock()
         {
+            // Map device input channels onto the plugin's input bus per
+            // the selected route. `Direct` is the 1:1 default; `Stereo`
+            // pulls a chosen device pair into plugin in 0/1; `Mono`
+            // feeds one device channel into both plugin inputs. Bounds
+            // checks keep an out-of-range base (e.g. after a device
+            // swap to fewer channels) from indexing past the frame.
+            let route = ChannelRoute::decode(input_channel_route.load(Ordering::Relaxed));
+            let n_buf = channel_bufs.len();
             let needed = num_frames * channels;
             let available = ring.len().min(needed);
             for i in 0..available / channels {
-                for ch in 0..channels {
-                    if i < num_frames {
-                        channel_bufs[ch][i] += ring[i * channels + ch];
+                if i >= num_frames {
+                    break;
+                }
+                let frame = &ring[i * channels..i * channels + channels];
+                match route {
+                    ChannelRoute::Direct => {
+                        for ch in 0..channels {
+                            channel_bufs[ch][i] += frame[ch];
+                        }
+                    }
+                    ChannelRoute::Stereo { base } => {
+                        if base < channels {
+                            channel_bufs[0][i] += frame[base];
+                        }
+                        if n_buf > 1 && base + 1 < channels {
+                            channel_bufs[1][i] += frame[base + 1];
+                        }
+                    }
+                    ChannelRoute::Mono { base } => {
+                        if base < channels {
+                            let s = frame[base];
+                            channel_bufs[0][i] += s;
+                            if n_buf > 1 {
+                                channel_bufs[1][i] += s;
+                            }
+                        }
                     }
                 }
             }
@@ -1185,10 +1472,95 @@ fn audio_callback<P: PluginExport>(
         return;
     }
 
-    for frame in 0..num_frames {
-        for ch in 0..channels {
-            let ch_idx = ch.min(channel_bufs.len() - 1);
-            data[frame * channels + ch] = channel_bufs[ch_idx][frame];
+    // Map the plugin's output bus onto device output channels per the
+    // selected route. `Direct` is the 1:1 default; `Stereo` drives a
+    // chosen device pair (other channels silent); `Mono` folds the
+    // plugin's first two channels down into one device channel. The
+    // non-Direct modes clear the buffer first since they only write
+    // the selected channels.
+    let route = ChannelRoute::decode(output_channel_route.load(Ordering::Relaxed));
+    let n_buf = channel_bufs.len();
+    match route {
+        ChannelRoute::Direct => {
+            for frame in 0..num_frames {
+                for ch in 0..channels {
+                    let ch_idx = ch.min(n_buf - 1);
+                    data[frame * channels + ch] = channel_bufs[ch_idx][frame];
+                }
+            }
         }
+        ChannelRoute::Stereo { base } => {
+            data.fill(0.0);
+            for frame in 0..num_frames {
+                if base < channels {
+                    data[frame * channels + base] = channel_bufs[0][frame];
+                }
+                if n_buf > 1 && base + 1 < channels {
+                    data[frame * channels + base + 1] = channel_bufs[1][frame];
+                }
+            }
+        }
+        ChannelRoute::Mono { base } => {
+            data.fill(0.0);
+            if base < channels {
+                for frame in 0..num_frames {
+                    let mut v = channel_bufs[0][frame];
+                    if n_buf > 1 {
+                        v += channel_bufs[1][frame];
+                    }
+                    data[frame * channels + base] = v;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChannelRoute;
+
+    #[test]
+    fn encode_decode_roundtrips() {
+        let cases = [
+            ChannelRoute::Direct,
+            ChannelRoute::Stereo { base: 0 },
+            ChannelRoute::Stereo { base: 2 },
+            ChannelRoute::Mono { base: 0 },
+            ChannelRoute::Mono { base: 3 },
+        ];
+        for route in cases {
+            assert_eq!(ChannelRoute::decode(route.encode()), route);
+        }
+    }
+
+    #[test]
+    fn direct_encodes_to_zero() {
+        // A freshly-zeroed atomic must decode to the default mapping.
+        assert_eq!(ChannelRoute::Direct.encode(), 0);
+        assert_eq!(ChannelRoute::decode(0), ChannelRoute::Direct);
+    }
+
+    #[test]
+    fn parse_specs() {
+        assert_eq!(ChannelRoute::parse("direct"), Some(ChannelRoute::Direct));
+        assert_eq!(ChannelRoute::parse(" ALL "), Some(ChannelRoute::Direct));
+        // 1-based in the spec, 0-based base internally.
+        assert_eq!(
+            ChannelRoute::parse("1"),
+            Some(ChannelRoute::Mono { base: 0 })
+        );
+        assert_eq!(
+            ChannelRoute::parse("3"),
+            Some(ChannelRoute::Mono { base: 2 })
+        );
+        assert_eq!(
+            ChannelRoute::parse("3-4"),
+            Some(ChannelRoute::Stereo { base: 2 })
+        );
+        // Non-adjacent / reversed / zero / garbage are rejected.
+        assert_eq!(ChannelRoute::parse("3-5"), None);
+        assert_eq!(ChannelRoute::parse("4-3"), None);
+        assert_eq!(ChannelRoute::parse("0"), None);
+        assert_eq!(ChannelRoute::parse("x"), None);
     }
 }
