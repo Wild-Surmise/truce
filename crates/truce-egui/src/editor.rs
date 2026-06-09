@@ -486,11 +486,18 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         modifiers,
                     } => {
                         self.modifiers = convert_kb_modifiers(modifiers);
-                        // baseview reports cursor in f64 logical points;
-                        // egui uses f32. Window dimensions never reach
-                        // 2^23 - the narrowing is invisible.
+                        // baseview reports cursor in f64 host-window logical
+                        // points; egui uses f32. egui is laid out in design
+                        // points (`window_size / zoom`, see run_frame), so
+                        // pointer input needs the same inverse-zoom transform
+                        // as the screen rect - otherwise hit-testing is off by
+                        // the zoom factor once the UI is scaled. Window
+                        // dimensions never reach 2^23 - the narrowing is
+                        // invisible.
+                        let zoom = self.egui_ctx.zoom_factor().max(0.01);
                         #[allow(clippy::cast_possible_truncation)]
-                        let pos = egui::pos2(position.x as f32, position.y as f32);
+                        let pos =
+                            egui::pos2(position.x as f32 / zoom, position.y as f32 / zoom);
                         self.last_cursor_pos = pos;
                         self.pending_events.push(egui::Event::PointerMoved(pos));
                         EventStatus::Captured
@@ -536,9 +543,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
                             baseview::ScrollDelta::Pixels { x, y } => (x, y),
                         };
+                        // Same inverse-zoom transform as pointer position.
+                        let zoom = self.egui_ctx.zoom_factor().max(0.01);
                         self.pending_events.push(egui::Event::MouseWheel {
                             unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(dx, dy),
+                            delta: egui::vec2(dx / zoom, dy / zoom),
                             // baseview doesn't tell us touch / inertial phase;
                             // `Move` is egui's "unknown" recommendation.
                             phase: egui::TouchPhase::Move,
