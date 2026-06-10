@@ -1971,7 +1971,24 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 request_resize: Box::new({
                     let host_ptr = SendPtr::new(data.host);
                     let host_scale_for_resize = data.host_scale;
+                    // Capture the host's plugin pointer (Copy) and re-derive
+                    // the data inside the closure - mirrors the AU wrapper's
+                    // `ctx_raw` pattern and avoids reborrowing `data`, which
+                    // the bridge is itself stored into.
+                    let plugin_for_resize = SendPtr::new(plugin);
                     move |lw, lh| {
+                        // Update the editor directly so it rescales even when
+                        // the host's `gui_set_size` callback is gated off
+                        // (resizable=false / corner-drag disabled). The size
+                        // menu is the source of truth: set the editor, then ask
+                        // the host to resize the window to match.
+                        // SAFETY: `plugin_for_resize` is the host's plugin
+                        // pointer, valid for the plugin's lifetime; re-derives
+                        // the data on the GUI thread.
+                        let data = data_from_plugin::<P>(plugin_for_resize.as_ptr());
+                        if let Some(editor) = data.editor.as_mut() {
+                            editor.set_size(lw, lh);
+                        }
                         // Host expects physical points; editor speaks
                         // logical. Same scale-up the wrappers use for
                         // `gui_get_size`.
@@ -2046,47 +2063,35 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         // backends whose `editor.set_size` doesn't actually apply,
         // e.g. vizia: Reaper falls back to a default plugin-window
         // size and our child sits in the corner of all that extra
-        // space). Re-anchor the child to the parent's top with a
-        // fully-fixed autoresize mask (`0`) - the parent grows the
-        // empty space below/right of the child rather than dragging
-        // the child along. We re-pin per-frame from the editor
-        // (`reanchor_to_superview_top` in `on_frame`) since
-        // baseview's `setFrameSize:` notifications during embed can
-        // override the origin we set here.
+        // space). Make the child fill the parent and track its size
+        // (width + height sizable) so it stays flush at the top-left and
+        // grows/shrinks with every host-driven parent resize - the menu's
+        // `request_resize` resizes the parent, and the editor fills it.
+        // A fixed-size top-anchor goes stale the moment the editor's own
+        // size changes (the resizable case).
         #[cfg(target_os = "macos")]
-        anchor_child_to_top(parent_ptr);
+        fill_child_to_parent(parent_ptr);
         true
     }
 }
 
-/// Move every direct subview of `parent` so its top edge sits at
-/// the parent's top in unflipped Cocoa coordinates (where
-/// `origin.y = 0` is the bottom edge). Pinning is via the
-/// autoresize mask `NSViewMinYMargin | NSViewMaxXMargin`, which
-/// keeps the gap between child-bottom and parent-bottom flexible
-/// (so a taller parent grows the empty space below the child, not
-/// above it) and the gap between child-right and parent-right
-/// flexible (so a wider parent grows the empty space to the right
-/// of the child). The child stays at its built size; `AppKit` just
-/// repositions it as the parent resizes.
-///
-/// Mirrors `truce-lv2`'s `anchor_child_to_top` (the non-resizable
-/// arm of `anchor_child_for_resize`). No `objc` dep needed in
-/// truce-clap until the autoresize-mask install path comes back -
-/// we use a local `class!`-free `msg_send!` via `objc2_app_kit`
-/// types instead.
+/// Make every direct subview of `parent` fill the parent's bounds and
+/// track its size via the autoresize mask `NSViewWidthSizable |
+/// NSViewHeightSizable`. AppKit's coordinate system is unflipped, so a
+/// child left at its built size sits at the parent's bottom-left and
+/// leaves empty space above it once the host opens/resizes the window
+/// larger (REAPER's CLAP pane). Filling the parent keeps the editor flush
+/// at the top-left and resizing with it, so the size menu's
+/// `request_resize` (which resizes the parent) is reflected with no stale
+/// anchor - the editor's `ZoomFromBase` scaling then fits the content to
+/// the filled view.
 #[cfg(target_os = "macos")]
-unsafe fn anchor_child_to_top(parent: *mut c_void) {
+unsafe fn fill_child_to_parent(parent: *mut c_void) {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
-    // `MinYMargin | MaxXMargin`: bottom margin and right margin
-    // elastic, view size + top/left margins fixed. As the parent
-    // resizes, AppKit grows the empty space below/right of the
-    // child rather than dragging the child along. Per-frame
-    // `reanchor_to_superview_top` (from `on_frame`) catches any
-    // host-driven setFrame that bypasses autoresize.
-    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
-    const NSVIEW_MAX_X_MARGIN: u64 = 4;
+    // Cocoa autoresizing-mask bit flags: width + height follow the parent.
+    const NSVIEW_WIDTH_SIZABLE: u64 = 2;
+    const NSVIEW_HEIGHT_SIZABLE: u64 = 16;
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct NsPoint {
@@ -2120,14 +2125,13 @@ unsafe fn anchor_child_to_top(parent: *mut c_void) {
         if child.is_null() {
             continue;
         }
-        let child_frame: NsRect = msg_send![child, frame];
-        let new_origin = NsPoint {
-            x: child_frame.origin.x,
-            y: parent_frame.size.height - child_frame.size.height,
+        let fill = NsRect {
+            origin: NsPoint { x: 0.0, y: 0.0 },
+            size: parent_frame.size,
         };
-        let _: () = msg_send![child, setFrameOrigin: new_origin];
+        let _: () = msg_send![child, setFrame: fill];
         let _: () =
-            msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
+            msg_send![child, setAutoresizingMask: NSVIEW_WIDTH_SIZABLE | NSVIEW_HEIGHT_SIZABLE];
     }
 }
 

@@ -1026,18 +1026,24 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         ffi::truce_vst3_end_edit(ctx_raw.as_ptr().cast_mut(), id);
                     }),
                     request_resize: Box::new(move |w, h| {
-                        // SAFETY: `ctx_raw` is the live
-                        // `Vst3Instance` pointer the shim holds in
-                        // its ctx -> TruceComponent table. The
-                        // closure runs on the GUI thread, same as
-                        // `cb_gui_set_content_scale` which is the
-                        // only writer of `host_scale`. Routing
-                        // through the shim's component (rather
-                        // than holding a plug view pointer) avoids
-                        // UAF across host editor recreations.
-                        let host_scale = (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale;
-                        // VST3 hosts speak physical points;
-                        // `Editor` speaks logical.
+                        // SAFETY: `ctx_raw` is the live `Vst3Instance` pointer
+                        // the shim holds in its ctx -> TruceComponent table.
+                        // The closure runs on the GUI thread, same as
+                        // `cb_gui_set_content_scale` (the only writer of
+                        // `host_scale`). Routing through the shim's component
+                        // (rather than holding a plug view pointer) avoids UAF
+                        // across host editor recreations.
+                        let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<Vst3Instance<P>>();
+                        let host_scale = inst.host_scale;
+                        // Update the editor directly so it rescales even when
+                        // the host's `gui_set_size` callback is gated off
+                        // (resizable=false / corner-drag disabled). The size
+                        // menu is the source of truth: set the editor, then ask
+                        // the host to resize the window to match.
+                        if let Some(ref mut editor) = inst.editor {
+                            editor.set_size(w, h);
+                        }
+                        // VST3 hosts speak physical points; `Editor` logical.
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let pw = (f64::from(w) * host_scale).round() as u32;
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
