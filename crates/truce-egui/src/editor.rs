@@ -746,6 +746,15 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
+        // Tear down any window left over from a prior `open()` that was not
+        // paired with a `close()`. AU never calls `gui_close` on editor
+        // teardown, so without this a second `open()` would overwrite
+        // `self.window` while the previous macOS frame timer keeps firing -
+        // baseview's `WindowHandle` drop does not cancel it (only `close()`
+        // does). That leaked timer keeps driving the shared `self.ui`, so each
+        // reopen stacked another frame loop on the same editor (visible as an
+        // animation running N times too fast after N open/close cycles).
+        self.close();
         // Re-type the dyn-erased context to `PluginContext<P>` using
         // the Arc<P> we stored at construction.
         let typed_ctx = context.with_params(self.params.clone());
