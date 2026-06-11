@@ -315,6 +315,42 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     last_cursor_pos: egui::Pos2,
 }
 
+/// Whether `on_frame` should skip this frame. True when baseview's view is
+/// detached from any window - the editor was torn down but baseview's timer is
+/// still firing (notably AU, which never calls `gui_close`) - or when the host
+/// window is fully occluded (minimized / covered).
+///
+/// Skipping detached frames avoids dereferencing a stale host view (a
+/// use-after-free crash when toggling between multiple AU instances). Skipping
+/// occluded frames avoids queuing Metal drawables that can't present and pile
+/// up unbounded (tens of GB) until the window returns to front.
+///
+/// Reads baseview's OWN view from `window` - always valid while the timer
+/// fires - never a stored host pointer; `[view window]` is `nil` once detached.
+#[cfg(target_os = "macos")]
+fn should_skip_frame(window: &Window) -> bool {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::HasRawWindowHandle;
+    let view = match window.raw_window_handle() {
+        raw_window_handle::RawWindowHandle::AppKit(handle) => handle.ns_view,
+        _ => return false,
+    };
+    if view.is_null() {
+        return true;
+    }
+    unsafe {
+        let view = view.cast::<Object>();
+        let ns_window: *mut Object = msg_send![view, window];
+        if ns_window.is_null() {
+            return true;
+        }
+        // NSWindowOcclusionStateVisible == 1 << 1. Bit clear => not visible.
+        let state: u64 = msg_send![ns_window, occlusionState];
+        state & (1 << 1) == 0
+    }
+}
+
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// Apply a pending resize: `NSView` frame (baseview's
     /// `Window::resize`) first, then the wgpu surface. Reverse
@@ -413,6 +449,15 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        // Skip all work while the host window is fully occluded (minimized or
+        // covered). A non-visible window can't present, so any drawables a
+        // render produces queue up and only drain when it returns to front -
+        // memory climbs into the tens of GB while backgrounded. baseview keeps
+        // ticking; we resume on the first visible frame.
+        #[cfg(target_os = "macos")]
+        if should_skip_frame(window) {
+            return;
+        }
         // Pick up host-driven `set_size` requests since the last frame.
         // baseview's macOS `Window::resize` doesn't synthesise a
         // `Resized` event, so the wgpu surface has to be reconfigured
