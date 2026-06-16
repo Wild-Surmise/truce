@@ -178,6 +178,27 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var inputBusses: AUAudioUnitBusArray { _inputBusArray }
     override var outputBusses: AUAudioUnitBusArray { _outputBusArray }
+
+    // MARK: - AUv3 view resizing
+
+    /// Accept every view configuration the host proposes. This is what
+    /// surfaces the resize / expand affordance in hosts like GarageBand —
+    /// without it the host treats the AUv3 view as a single fixed size and
+    /// never offers to enlarge it, regardless of the `resizable`
+    /// AudioComponents tag. Returning all indices says "we can render at any
+    /// size the host offers"; the embedded editor reflows to the host bounds
+    /// in the view controller's layout pass (`fitGUIToSafeArea`).
+    override func supportedViewConfigurations(
+        _ availableViewConfigurations: [AUAudioUnitViewConfiguration]
+    ) -> IndexSet {
+        IndexSet(integersIn: availableViewConfigurations.indices)
+    }
+
+    /// Host picked one of the configurations reported above. The hosted view
+    /// tracks its parent's bounds and refits on the next layout pass, so this
+    /// only needs to exist for the host's `select` call to succeed.
+    override func select(_ viewConfiguration: AUAudioUnitViewConfiguration) {}
+
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }
