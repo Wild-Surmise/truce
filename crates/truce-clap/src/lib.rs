@@ -374,11 +374,23 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
 
 unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
-        // Drop the ClapPluginData
-        let ptr = (*plugin).plugin_data.cast::<ClapPluginData<P>>();
-        drop(Box::from_raw(ptr));
-        // Drop the clap_plugin itself (we boxed it in create_plugin)
-        drop(Box::from_raw(plugin.cast_mut()));
+        // Wrap the drop in `catch_unwind`. Dropping the
+        // `ClapPluginData` cascades into the editor's `Drop`,
+        // which tears down the wgpu surface / `NSView` /
+        // baseview / runloop timers. A panic anywhere in that
+        // chain propagates across this `extern "C"` boundary as
+        // UB - hosts catch it as an Obj-C exception,
+        // `objc_exception_rethrow` can't recover, and
+        // `std::terminate` aborts the host on quit (the REAPER /
+        // Cubase quit-time SIGABRT pattern). Catching here keeps
+        // the host alive; the process is going away anyway so
+        // swallowing the panic is fine.
+        let plugin_ptr = plugin.cast_mut();
+        let data_ptr = (*plugin).plugin_data.cast::<ClapPluginData<P>>();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drop(Box::from_raw(data_ptr));
+            drop(Box::from_raw(plugin_ptr));
+        }));
     }
 }
 
@@ -1755,8 +1767,16 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
 unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        if let Some(ref mut editor) = data.editor {
-            editor.close();
+        if let Some(editor) = data.editor.as_mut() {
+            // Same FFI-boundary protection as `clap_plugin_destroy`:
+            // any panic during `editor.close()` (wgpu surface
+            // drop, NSView teardown, baseview window close) would
+            // otherwise become an unhandled Obj-C exception in
+            // the host.
+            let editor_ptr: *mut dyn truce_core::editor::Editor = editor.as_mut();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (*editor_ptr).close();
+            }));
         }
         data.editor = None;
         data.gui_created = false;
@@ -1847,7 +1867,7 @@ unsafe extern "C" fn gui_set_parent<P: PluginExport>(
                 } else {
                     "unknown panic".to_string()
                 };
-                eprintln!("[truce-clap] gui_set_parent panicked: {msg}");
+                log::error!("clap gui_set_parent panic swallowed: {msg}");
                 false
             }
         }

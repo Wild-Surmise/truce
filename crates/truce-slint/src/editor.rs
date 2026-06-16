@@ -267,6 +267,15 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        // Re-anchor on every frame so the child NSView's origin
+        // tracks size changes against the host's plug-in pane.
+        // Without this the editor drifts upward as the canvas grows,
+        // clipping the layout's top off the visible area.
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
+        }
         // Pick up host-driven `set_size` requests posted to the
         // shared `pending_size` cell since the last frame. Calls
         // `window.resize` (which on Linux / Win32 fires a
@@ -603,7 +612,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                         label: Some("truce-slint"),
                         required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_defaults(),
+                        required_limits: adapter.limits(),
                         experimental_features: wgpu::ExperimentalFeatures::default(),
                         memory_hints: wgpu::MemoryHints::Performance,
                         trace: wgpu::Trace::Off,

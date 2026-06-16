@@ -24,7 +24,7 @@ use truce_core::editor::for_test_params;
 /// pixels.
 ///
 /// Internal entry point for the headless screenshot render. Plugin
-/// tests reach this via [`truce_test::assert_screenshot`].
+/// tests reach this via `truce_test::assert_screenshot`.
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners
 /// without a GPU, headless VMs). Lets the caller fall back to a CPU
@@ -66,7 +66,7 @@ where
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("truce-iced-screenshot"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits: adapter.limits(),
         experimental_features: wgpu::ExperimentalFeatures::default(),
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,

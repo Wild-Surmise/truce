@@ -15,6 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use objc2::ffi::{objc_release, objc_retain};
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
 use objc2::sel;
@@ -179,6 +180,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             unsafe { install_editor_view::<P>(parent_ptr.cast(), lw, lh, scalef, &self.inner) };
         if view.is_null() || layer.is_null() {
             log::warn!("egui iOS: install_editor_view returned null");
+            // A non-null `view` here means the ivar Arc + display link
+            // were already set up before this null check tripped; tear
+            // them down so the partial open doesn't leak.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         }
 
@@ -189,9 +195,12 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             (unsafe { EguiRenderer::from_metal_layer(layer.cast(), phys_w, phys_h) })
         else {
             log::warn!("egui iOS: failed to create EguiRenderer from metal layer");
-            unsafe {
-                let _: () = msg_send![view, removeFromSuperview];
-            }
+            // `install_editor_view` already pinned the ivar Arc, retained
+            // the display link and scheduled it on the run loop; tear it
+            // all down so a failed open doesn't leave a zombie display
+            // link firing `tick:` with the view/layer/Arc graph leaked.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         };
 
@@ -251,24 +260,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let Some(inner) = self.inner.lock().expect("inner mutex").take() else {
             return;
         };
-        unsafe {
-            if !inner.display_link.is_null() {
-                let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
-            }
-            if !inner.child_view.is_null() {
-                // Reclaim the Arc the view's ivar holds.
-                let cls: &AnyClass = msg_send![inner.child_view, class];
-                let base: *const u8 = inner.child_view.cast();
-                let ivar_ptr: *const *mut std::ffi::c_void =
-                    base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
-                let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
-                if !leaked.is_null() {
-                    let _ = Arc::from_raw(leaked);
-                }
-                let _: () = msg_send![inner.child_view, removeFromSuperview];
-            }
-        }
+        // SAFETY: `view` + `link` were created by `install_editor_view`
+        // (with the ivar Arc pinned); `close` runs on the main thread.
+        unsafe { teardown_editor_view::<P>(inner.child_view, inner.display_link) };
         // EguiRenderer drops here, releasing wgpu surface / device / queue.
         drop(inner);
     }
@@ -434,13 +428,63 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, layer, std::ptr::null_mut(), leaked);
         }
-        let _: () = msg_send![link, retain];
+        retain_obj(link);
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;
         let _: () = msg_send![link, addToRunLoop: main, forMode: mode];
 
         (view, layer, link, leaked)
+    }
+}
+
+unsafe fn retain_obj(obj: *mut AnyObject) {
+    unsafe {
+        let retained = objc_retain(obj);
+        debug_assert_eq!(retained, obj, "objc_retain returned a different object");
+    }
+}
+
+unsafe fn release_obj(obj: *mut AnyObject) {
+    unsafe { objc_release(obj) }
+}
+
+/// Tear down the editor's `UIView` + `CADisplayLink`: invalidate and
+/// release the display link, reclaim the `Arc` pinned in the view's
+/// ivar, then detach the view from its superview. Shared by `close()`
+/// and the early-return error paths in `open()`. `install_editor_view`
+/// pins the ivar `Arc`, retains the link and schedules it on the run
+/// loop *before* `open()` has a chance to fail, so without this a
+/// failed open leaves a zombie display link firing `tick:` forever
+/// with the view/layer/`Arc` graph leaked.
+///
+/// SAFETY: `child_view` (if non-null) must be a view built by
+/// `install_editor_view` for the same `P` (so the ivar holds an
+/// `Arc<Mutex<Option<Inner<P>>>>`), and `display_link` (if non-null)
+/// the link returned alongside it. Both pointers are consumed - the
+/// link is released and the ivar `Arc` reclaimed - so callers must not
+/// reuse them afterwards. Must run on the main thread.
+unsafe fn teardown_editor_view<P: Params + 'static>(
+    child_view: *mut AnyObject,
+    display_link: *mut AnyObject,
+) {
+    unsafe {
+        if !display_link.is_null() {
+            let _: () = msg_send![display_link, invalidate];
+            release_obj(display_link);
+        }
+        if !child_view.is_null() {
+            // Reclaim the Arc the view's ivar holds.
+            let cls: &AnyClass = msg_send![child_view, class];
+            let base: *const u8 = child_view.cast();
+            let ivar_ptr: *const *mut std::ffi::c_void =
+                base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
+            let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
+            if !leaked.is_null() {
+                let _ = Arc::from_raw(leaked);
+            }
+            let _: () = msg_send![child_view, removeFromSuperview];
+        }
     }
 }
 
