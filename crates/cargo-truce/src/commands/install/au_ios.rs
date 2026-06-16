@@ -242,6 +242,11 @@ pub(crate) fn build_bundle(
     let au_sub = p.resolved_fourcc();
     let au_mfr = &cfg.vendor.au_manufacturer;
     let au_tag = &p.au_tag;
+    // `resizable` makes GarageBand offer its expand affordance for the
+    // AUv3 view; `size:{w,h}` is the first-open editor size AUM reads.
+    let [ios_view_w, ios_view_h] = p.resolved_ios_view_size();
+    let ios_size_tag = format!("size:{{{ios_view_w},{ios_view_h}}}");
+    let extra_au_tags = ["resizable", ios_size_tag.as_str()];
 
     let appex_info =
         crate::templates::au3::render_appex_info_plist(&crate::templates::au3::AppexPlistValues {
@@ -250,6 +255,7 @@ pub(crate) fn build_bundle(
             au_sub,
             au_mfr,
             au_tag,
+            extra_au_tags: &extra_au_tags,
             au_ver: "1",
             min_os: &min_ios,
             supported_platform: target.supported_platform(),
