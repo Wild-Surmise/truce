@@ -213,6 +213,15 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_minimum_os_version: Option<String>,
+    /// Initial `AUv3` view size advertised to iOS hosts via the
+    /// `AudioComponents` `size:{w,h}` tag (emitted alongside the
+    /// `resizable` tag). `GarageBand` keys off `resizable` to show its
+    /// expand affordance; AUM uses this size as the first-open editor
+    /// bounds before host-driven resizing takes over. Absent →
+    /// [`DEFAULT_IOS_VIEW_SIZE`].
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_view_size: Option<[u32; 2]>,
     /// Per-plugin URL the iOS container's "About" sheet links to
     /// (the link-out icon in the top-right opens this in Safari).
     /// Falls back to `[vendor].url`, then to <https://truce.audio/>.
@@ -248,6 +257,11 @@ pub(crate) struct PluginDef {
 fn default_true() -> bool {
     true
 }
+
+/// Default `AUv3` `size:{w,h}` advertised to iOS hosts when a plugin
+/// sets no `ios_view_size`. Matches the historical container default.
+#[cfg(target_os = "macos")]
+pub(crate) const DEFAULT_IOS_VIEW_SIZE: [u32; 2] = [420, 720];
 
 impl std::ops::Deref for PluginDef {
     type Target = truce_build::PluginDef;
@@ -300,6 +314,14 @@ impl PluginDef {
     #[cfg(target_os = "macos")]
     pub(crate) fn resolved_ios_app_group(&self) -> Option<&str> {
         self.ios_app_group.as_deref()
+    }
+
+    /// Resolved initial `AUv3` view size for the `size:{w,h}`
+    /// `AudioComponents` tag: per-plugin `ios_view_size` override →
+    /// [`DEFAULT_IOS_VIEW_SIZE`].
+    #[cfg(target_os = "macos")]
+    pub(crate) fn resolved_ios_view_size(&self) -> [u32; 2] {
+        self.ios_view_size.unwrap_or(DEFAULT_IOS_VIEW_SIZE)
     }
 
     /// Filesystem-safe form of the plugin's display name. Use this
@@ -632,6 +654,7 @@ mod suite_tests {
             ios_app_group: None,
             ios_icon_set: None,
             ios_minimum_os_version: None,
+            ios_view_size: None,
             ios_url: None,
             ios_orientations: None,
             ios_scale_editor_to_fit: true,
