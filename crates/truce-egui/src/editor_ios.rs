@@ -167,11 +167,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // been attached to a visible window yet, so the property
         // still returns its default 1.0 instead of the device's
         // actual scale. `main_screen_scale()` goes through
-        // `UIScreen.mainScreen.scale` and returns 3.0 on iPhone
-        // Retina regardless of the view hierarchy state. Without
-        // this, egui paints into a 1x wgpu surface that
-        // CoreAnimation upscales 3x with visibly grainy edges.
-        let scale = truce_gui::platform::main_screen_scale();
+        // `UIScreen.mainScreen.scale` and is reliable before attach.
+        // Cap high-density iPhones at 2x: native 3x is sharp but
+        // expensive for a continuously animated Metal editor.
+        let native_scale = truce_gui::platform::main_screen_scale();
+        let scale = native_scale.clamp(1.0, IOS_MAX_RENDER_SCALE);
         // Physical-pixel math bounded by editor size × backing
         // scale (max ~4000 px in practice); the cast loss is
         // irrelevant. `scale` won't exceed 4.0 on any Apple device.
@@ -226,11 +226,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         };
 
         let egui_ctx = egui::Context::default();
-        // Pin egui's logical→physical scale to the device backing
-        // scale (3x on Retina iPhones). Without this, egui paints
-        // at 1x pixels-per-point into a 3x-sized wgpu surface and
-        // Core Animation upscales the result, visible as grainy
-        // edges on every widget.
+        // Pin egui's logical→physical scale to the capped backing
+        // scale. This keeps the 2x/3x trade-off explicit instead of
+        // letting egui fall back to 1x and relying on Core Animation
+        // to upscale every widget.
         egui_ctx.set_pixels_per_point(scalef);
         if let Some(v) = self.visuals.clone() {
             egui_ctx.set_visuals(v);
@@ -320,9 +319,27 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_egui_inner_ptr";
+const IOS_DISPLAY_LINK_FPS: isize = 30;
+const IOS_MAX_RENDER_SCALE: f64 = 2.0;
 
 unsafe extern "C" {
     static NSRunLoopCommonModes: *const AnyObject;
+    static NSExtensionHostDidBecomeActiveNotification: *const AnyObject;
+    static NSExtensionHostDidEnterBackgroundNotification: *const AnyObject;
+    static NSExtensionHostWillEnterForegroundNotification: *const AnyObject;
+    static NSExtensionHostWillResignActiveNotification: *const AnyObject;
+}
+
+#[link(name = "UIKit", kind = "framework")]
+unsafe extern "C" {
+    static UIApplicationDidBecomeActiveNotification: *const AnyObject;
+    static UIApplicationDidEnterBackgroundNotification: *const AnyObject;
+    static UIApplicationWillEnterForegroundNotification: *const AnyObject;
+    static UIApplicationWillResignActiveNotification: *const AnyObject;
+    static UISceneDidActivateNotification: *const AnyObject;
+    static UISceneDidEnterBackgroundNotification: *const AnyObject;
+    static UISceneWillDeactivateNotification: *const AnyObject;
+    static UISceneWillEnterForegroundNotification: *const AnyObject;
 }
 
 /// `+[Class layerClass]` override that returns `CAMetalLayer`. Class
@@ -371,6 +388,14 @@ unsafe fn install_editor_view<P: Params + 'static>(
             builder.add_method(
                 sel!(tick:),
                 tick_thunk::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(trucePauseDisplayLink:),
+                pause_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(truceResumeDisplayLink:),
+                resume_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
             );
             builder.add_method(
                 sel!(touchesBegan:withEvent:),
@@ -478,6 +503,8 @@ unsafe fn install_editor_view<P: Params + 'static>(
             return (view, layer, std::ptr::null_mut(), leaked);
         }
         retain_obj(link);
+        set_display_link_preferred_fps(link, IOS_DISPLAY_LINK_FPS);
+        register_display_link_lifecycle_observers(view);
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;
@@ -496,6 +523,15 @@ unsafe fn retain_obj(obj: *mut AnyObject) {
 
 unsafe fn release_obj(obj: *mut AnyObject) {
     unsafe { objc_release(obj) }
+}
+
+unsafe fn set_display_link_preferred_fps(link: *mut AnyObject, fps: isize) {
+    unsafe {
+        if link.is_null() || fps <= 0 {
+            return;
+        }
+        let _: () = msg_send![link, setPreferredFramesPerSecond: fps];
+    }
 }
 
 /// Tear down the editor's `UIView` + `CADisplayLink`: invalidate and
@@ -519,6 +555,9 @@ unsafe fn teardown_editor_view<P: Params + 'static>(
 ) {
     unsafe {
         if !display_link.is_null() {
+            if !child_view.is_null() {
+                unregister_display_link_lifecycle_observers(child_view);
+            }
             let _: () = msg_send![display_link, invalidate];
             release_obj(display_link);
         }
@@ -554,6 +593,137 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
         let _ = Arc::into_raw(arc);
         Some(cloned)
     }
+}
+
+unsafe fn notification_center() -> *mut AnyObject {
+    unsafe {
+        let center_cls =
+            AnyClass::get(c"NSNotificationCenter").expect("NSNotificationCenter missing");
+        msg_send![center_cls, defaultCenter]
+    }
+}
+
+unsafe fn add_notification_observer(
+    center: *mut AnyObject,
+    observer: *mut AnyObject,
+    selector: Sel,
+    name: *const AnyObject,
+) {
+    unsafe {
+        if center.is_null() || observer.is_null() || name.is_null() {
+            return;
+        }
+        let _: () = msg_send![
+            center,
+            addObserver: observer,
+            selector: selector,
+            name: name,
+            object: std::ptr::null_mut::<AnyObject>()
+        ];
+    }
+}
+
+unsafe fn register_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        let pause = sel!(trucePauseDisplayLink:);
+        let resume = sel!(truceResumeDisplayLink:);
+
+        // Standalone app / scene lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationDidEnterBackgroundNotification,
+        );
+        add_notification_observer(center, view, pause, UISceneWillDeactivateNotification);
+        add_notification_observer(center, view, pause, UISceneDidEnterBackgroundNotification);
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationWillEnterForegroundNotification,
+        );
+        add_notification_observer(center, view, resume, UISceneDidActivateNotification);
+        add_notification_observer(center, view, resume, UISceneWillEnterForegroundNotification);
+
+        // AUv3 extension host lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostDidEnterBackgroundNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostWillEnterForegroundNotification,
+        );
+    }
+}
+
+unsafe fn unregister_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        if !center.is_null() && !view.is_null() {
+            let _: () = msg_send![center, removeObserver: view];
+        }
+    }
+}
+
+unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused: bool) {
+    unsafe {
+        let Some(arc) = borrow_inner_arc::<P>(view) else {
+            return;
+        };
+        let Ok(guard) = arc.lock() else { return };
+        let Some(inner) = guard.as_ref() else { return };
+        if inner.display_link.is_null() {
+            return;
+        }
+        let _: () = msg_send![inner.display_link, setPaused: Bool::new(paused)];
+    }
+}
+
+unsafe extern "C" fn pause_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, true) };
+}
+
+unsafe extern "C" fn resume_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, false) };
 }
 
 unsafe extern "C" fn tick_thunk<P: Params + 'static>(
