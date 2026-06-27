@@ -15,6 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use objc2::ffi::{objc_release, objc_retain};
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
 use objc2::sel;
@@ -178,11 +179,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // been attached to a visible window yet, so the property
         // still returns its default 1.0 instead of the device's
         // actual scale. `main_screen_scale()` goes through
-        // `UIScreen.mainScreen.scale` and returns 3.0 on iPhone
-        // Retina regardless of the view hierarchy state. Without
-        // this, egui paints into a 1x wgpu surface that
-        // CoreAnimation upscales 3x with visibly grainy edges.
-        let scale = truce_gui::platform::main_screen_scale();
+        // `UIScreen.mainScreen.scale` and is reliable before attach.
+        // Cap high-density iPhones at 2x: native 3x is sharp but
+        // expensive for a continuously animated Metal editor.
+        let native_scale = truce_gui::platform::main_screen_scale();
+        let scale = native_scale.clamp(1.0, IOS_MAX_RENDER_SCALE);
         // Physical-pixel math bounded by editor size × backing
         // scale (max ~4000 px in practice); the cast loss is
         // irrelevant. `scale` won't exceed 4.0 on any Apple device.
@@ -212,6 +213,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             unsafe { install_editor_view::<P>(parent_ptr.cast(), lw, lh, scalef, &self.inner) };
         if view.is_null() || layer.is_null() {
             log::warn!("egui iOS: install_editor_view returned null");
+            // A non-null `view` here means the ivar Arc + display link
+            // were already set up before this null check tripped; tear
+            // them down so the partial open doesn't leak.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         }
 
@@ -222,18 +228,20 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             (unsafe { EguiRenderer::from_metal_layer(layer.cast(), phys_w, phys_h) })
         else {
             log::warn!("egui iOS: failed to create EguiRenderer from metal layer");
-            unsafe {
-                let _: () = msg_send![view, removeFromSuperview];
-            }
+            // `install_editor_view` already pinned the ivar Arc, retained
+            // the display link and scheduled it on the run loop; tear it
+            // all down so a failed open doesn't leave a zombie display
+            // link firing `tick:` with the view/layer/Arc graph leaked.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         };
 
         let egui_ctx = egui::Context::default();
-        // Pin egui's logical→physical scale to the device backing
-        // scale (3x on Retina iPhones). Without this, egui paints
-        // at 1x pixels-per-point into a 3x-sized wgpu surface and
-        // Core Animation upscales the result, visible as grainy
-        // edges on every widget.
+        // Pin egui's logical→physical scale to the capped backing
+        // scale. This keeps the 2x/3x trade-off explicit instead of
+        // letting egui fall back to 1x and relying on Core Animation
+        // to upscale every widget.
         egui_ctx.set_pixels_per_point(scalef);
         if let Some(v) = self.visuals.clone() {
             egui_ctx.set_visuals(v);
@@ -284,24 +292,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let Some(inner) = self.inner.lock().expect("inner mutex").take() else {
             return;
         };
-        unsafe {
-            if !inner.display_link.is_null() {
-                let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
-            }
-            if !inner.child_view.is_null() {
-                // Reclaim the Arc the view's ivar holds.
-                let cls: &AnyClass = msg_send![inner.child_view, class];
-                let base: *const u8 = inner.child_view.cast();
-                let ivar_ptr: *const *mut std::ffi::c_void =
-                    base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
-                let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
-                if !leaked.is_null() {
-                    let _ = Arc::from_raw(leaked);
-                }
-                let _: () = msg_send![inner.child_view, removeFromSuperview];
-            }
-        }
+        unsafe { teardown_editor_view::<P>(inner.child_view, inner.display_link) };
         // EguiRenderer drops here, releasing wgpu surface / device / queue.
         drop(inner);
     }
@@ -338,9 +329,27 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_egui_inner_ptr";
+const IOS_DISPLAY_LINK_FPS: isize = 30;
+const IOS_MAX_RENDER_SCALE: f64 = 2.0;
 
 unsafe extern "C" {
     static NSRunLoopCommonModes: *const AnyObject;
+    static NSExtensionHostDidBecomeActiveNotification: *const AnyObject;
+    static NSExtensionHostDidEnterBackgroundNotification: *const AnyObject;
+    static NSExtensionHostWillEnterForegroundNotification: *const AnyObject;
+    static NSExtensionHostWillResignActiveNotification: *const AnyObject;
+}
+
+#[link(name = "UIKit", kind = "framework")]
+unsafe extern "C" {
+    static UIApplicationDidBecomeActiveNotification: *const AnyObject;
+    static UIApplicationDidEnterBackgroundNotification: *const AnyObject;
+    static UIApplicationWillEnterForegroundNotification: *const AnyObject;
+    static UIApplicationWillResignActiveNotification: *const AnyObject;
+    static UISceneDidActivateNotification: *const AnyObject;
+    static UISceneDidEnterBackgroundNotification: *const AnyObject;
+    static UISceneWillDeactivateNotification: *const AnyObject;
+    static UISceneWillEnterForegroundNotification: *const AnyObject;
 }
 
 /// `+[Class layerClass]` override that returns `CAMetalLayer`. Class
@@ -389,6 +398,14 @@ unsafe fn install_editor_view<P: Params + 'static>(
             builder.add_method(
                 sel!(tick:),
                 tick_thunk::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(trucePauseDisplayLink:),
+                pause_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(truceResumeDisplayLink:),
+                resume_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
             );
             builder.add_method(
                 sel!(touchesBegan:withEvent:),
@@ -495,13 +512,77 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, layer, std::ptr::null_mut(), leaked);
         }
-        let _: () = msg_send![link, retain];
+        retain_obj(link);
+        set_display_link_preferred_fps(link, IOS_DISPLAY_LINK_FPS);
+        register_display_link_lifecycle_observers(view);
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;
         let _: () = msg_send![link, addToRunLoop: main, forMode: mode];
 
         (view, layer, link, leaked)
+    }
+}
+
+unsafe fn retain_obj(obj: *mut AnyObject) {
+    unsafe {
+        let retained = objc_retain(obj);
+        debug_assert_eq!(retained, obj, "objc_retain returned a different object");
+    }
+}
+
+unsafe fn release_obj(obj: *mut AnyObject) {
+    unsafe { objc_release(obj) }
+}
+
+unsafe fn set_display_link_preferred_fps(link: *mut AnyObject, fps: isize) {
+    unsafe {
+        if link.is_null() || fps <= 0 {
+            return;
+        }
+        let _: () = msg_send![link, setPreferredFramesPerSecond: fps];
+    }
+}
+
+/// Tear down the editor's `UIView` + `CADisplayLink`: invalidate and
+/// release the display link, reclaim the `Arc` pinned in the view's
+/// ivar, then detach the view from its superview. Shared by `close()`
+/// and the early-return error paths in `open()`. `install_editor_view`
+/// pins the ivar `Arc`, retains the link and schedules it on the run
+/// loop *before* `open()` has a chance to fail, so without this a
+/// failed open leaves a zombie display link firing `tick:` forever
+/// with the view/layer/`Arc` graph leaked.
+///
+/// SAFETY: `child_view` (if non-null) must be a view built by
+/// `install_editor_view` for the same `P` (so the ivar holds an
+/// `Arc<Mutex<Option<Inner<P>>>>`), and `display_link` (if non-null)
+/// the link returned alongside it. Both pointers are consumed - the
+/// link is released and the ivar `Arc` reclaimed - so callers must not
+/// reuse them afterwards. Must run on the main thread.
+unsafe fn teardown_editor_view<P: Params + 'static>(
+    child_view: *mut AnyObject,
+    display_link: *mut AnyObject,
+) {
+    unsafe {
+        if !display_link.is_null() {
+            if !child_view.is_null() {
+                unregister_display_link_lifecycle_observers(child_view);
+            }
+            let _: () = msg_send![display_link, invalidate];
+            release_obj(display_link);
+        }
+        if !child_view.is_null() {
+            // Reclaim the Arc the view's ivar holds.
+            let cls: &AnyClass = msg_send![child_view, class];
+            let base: *const u8 = child_view.cast();
+            let ivar_ptr: *const *mut std::ffi::c_void =
+                base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
+            let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
+            if !leaked.is_null() {
+                let _ = Arc::from_raw(leaked);
+            }
+            let _: () = msg_send![child_view, removeFromSuperview];
+        }
     }
 }
 
@@ -522,6 +603,137 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
         let _ = Arc::into_raw(arc);
         Some(cloned)
     }
+}
+
+unsafe fn notification_center() -> *mut AnyObject {
+    unsafe {
+        let center_cls =
+            AnyClass::get(c"NSNotificationCenter").expect("NSNotificationCenter missing");
+        msg_send![center_cls, defaultCenter]
+    }
+}
+
+unsafe fn add_notification_observer(
+    center: *mut AnyObject,
+    observer: *mut AnyObject,
+    selector: Sel,
+    name: *const AnyObject,
+) {
+    unsafe {
+        if center.is_null() || observer.is_null() || name.is_null() {
+            return;
+        }
+        let _: () = msg_send![
+            center,
+            addObserver: observer,
+            selector: selector,
+            name: name,
+            object: std::ptr::null_mut::<AnyObject>()
+        ];
+    }
+}
+
+unsafe fn register_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        let pause = sel!(trucePauseDisplayLink:);
+        let resume = sel!(truceResumeDisplayLink:);
+
+        // Standalone app / scene lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationDidEnterBackgroundNotification,
+        );
+        add_notification_observer(center, view, pause, UISceneWillDeactivateNotification);
+        add_notification_observer(center, view, pause, UISceneDidEnterBackgroundNotification);
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationWillEnterForegroundNotification,
+        );
+        add_notification_observer(center, view, resume, UISceneDidActivateNotification);
+        add_notification_observer(center, view, resume, UISceneWillEnterForegroundNotification);
+
+        // AUv3 extension host lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostDidEnterBackgroundNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostWillEnterForegroundNotification,
+        );
+    }
+}
+
+unsafe fn unregister_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        if !center.is_null() && !view.is_null() {
+            let _: () = msg_send![center, removeObserver: view];
+        }
+    }
+}
+
+unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused: bool) {
+    unsafe {
+        let Some(arc) = borrow_inner_arc::<P>(view) else {
+            return;
+        };
+        let Ok(guard) = arc.lock() else { return };
+        let Some(inner) = guard.as_ref() else { return };
+        if inner.display_link.is_null() {
+            return;
+        }
+        let _: () = msg_send![inner.display_link, setPaused: Bool::new(paused)];
+    }
+}
+
+unsafe extern "C" fn pause_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, true) };
+}
+
+unsafe extern "C" fn resume_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, false) };
 }
 
 unsafe extern "C" fn tick_thunk<P: Params + 'static>(
