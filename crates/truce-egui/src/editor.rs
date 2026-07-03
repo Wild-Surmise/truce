@@ -16,6 +16,8 @@ use crate::platform::ParentWindow;
 use crate::renderer::EguiRenderer;
 use truce_gui::EditorScale;
 
+const MIN_EGUI_ZOOM: f32 = 0.01;
+
 /// Trait for stateful egui UI implementations.
 ///
 /// Implement this for complex UIs that need internal state. For simple
@@ -310,6 +312,33 @@ fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
+#[inline]
+fn clamped_zoom(ctx: &egui::Context) -> f32 {
+    ctx.zoom_factor().max(MIN_EGUI_ZOOM)
+}
+
+#[allow(clippy::cast_precision_loss)]
+#[inline]
+fn zoomed_screen_rect(window_size: (u32, u32), zoom: f32) -> egui::Rect {
+    let (lw, lh) = window_size;
+    let layout_size = egui::vec2(
+        (lw as f32 / zoom).round().max(1.0),
+        (lh as f32 / zoom).round().max(1.0),
+    );
+    egui::Rect::from_min_size(egui::Pos2::ZERO, layout_size)
+}
+
+#[allow(clippy::cast_possible_truncation)]
+#[inline]
+fn pointer_pos_from_window_points(x: f64, y: f64, zoom: f32) -> egui::Pos2 {
+    egui::pos2(x as f32 / zoom, y as f32 / zoom)
+}
+
+#[inline]
+fn pointer_delta_from_window_points(x: f32, y: f32, zoom: f32) -> egui::Vec2 {
+    egui::vec2(x / zoom, y / zoom)
+}
+
 // Baseview WindowHandler - owns the egui frame loop + wgpu renderer
 
 struct EguiWindowHandler<P: Params + ?Sized> {
@@ -424,13 +453,12 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         }
 
         let ppp = self.last_applied_scale;
-        let (lw, lh) = self.size; // logical points
+        let window_size = self.size; // host-window logical points
+        crate::set_actual_window_size(&self.egui_ctx, window_size);
+        let zoom = clamped_zoom(&self.egui_ctx);
 
         let mut raw_input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(lw as f32, lh as f32),
-            )),
+            screen_rect: Some(zoomed_screen_rect(window_size, zoom)),
             time: Some(self.start_time.elapsed().as_secs_f64()),
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),
@@ -651,11 +679,17 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             modifiers,
                         } => {
                             self.modifiers = convert_kb_modifiers(modifiers);
-                            // baseview reports cursor in f64 logical points;
-                            // egui uses f32. Window dimensions never reach
-                            // 2^23 - the narrowing is invisible.
-                            #[allow(clippy::cast_possible_truncation)]
-                            let pos = egui::pos2(position.x as f32, position.y as f32);
+                            // baseview reports cursor in f64 host-window
+                            // logical points. egui is laid out in design
+                            // points (`window_size / zoom`, see run_frame), so
+                            // pointer input needs the same inverse-zoom
+                            // transform as the screen rect. With zoom 1.0 this
+                            // is unchanged.
+                            let pos = pointer_pos_from_window_points(
+                                position.x,
+                                position.y,
+                                clamped_zoom(&self.egui_ctx),
+                            );
                             self.last_cursor_pos = pos;
                             self.pending_events.push(egui::Event::PointerMoved(pos));
                             EventStatus::Captured
@@ -703,7 +737,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             };
                             self.pending_events.push(egui::Event::MouseWheel {
                                 unit: egui::MouseWheelUnit::Point,
-                                delta: egui::vec2(dx, dy),
+                                delta: pointer_delta_from_window_points(
+                                    dx,
+                                    dy,
+                                    clamped_zoom(&self.egui_ctx),
+                                ),
                                 // baseview doesn't tell us touch / inertial phase;
                                 // `Move` is egui's "unknown" recommendation.
                                 phase: egui::TouchPhase::Move,
@@ -918,6 +956,58 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
         PageDown => egui::Key::PageDown,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < f32::EPSILON,
+            "actual {actual} != expected {expected}",
+        );
+    }
+
+    #[test]
+    fn zoomed_screen_rect_expands_layout_space_by_inverse_zoom() {
+        let rect = zoomed_screen_rect((210, 360), 0.5);
+
+        assert_approx_eq(rect.min.x, 0.0);
+        assert_approx_eq(rect.min.y, 0.0);
+        assert_approx_eq(rect.width(), 420.0);
+        assert_approx_eq(rect.height(), 720.0);
+    }
+
+    #[test]
+    fn pointer_position_uses_same_inverse_zoom_as_layout() {
+        let pos = pointer_pos_from_window_points(105.0, 180.0, 0.5);
+
+        assert_approx_eq(pos.x, 210.0);
+        assert_approx_eq(pos.y, 360.0);
+    }
+
+    #[test]
+    fn pointer_delta_uses_same_inverse_zoom_as_layout() {
+        let delta = pointer_delta_from_window_points(10.0, -20.0, 0.5);
+
+        assert_approx_eq(delta.x, 20.0);
+        assert_approx_eq(delta.y, -40.0);
+    }
+
+    #[test]
+    fn zoom_one_preserves_layout_and_pointer_space() {
+        let rect = zoomed_screen_rect((420, 720), 1.0);
+        let pos = pointer_pos_from_window_points(123.0, 456.0, 1.0);
+        let delta = pointer_delta_from_window_points(7.0, -9.0, 1.0);
+
+        assert_approx_eq(rect.width(), 420.0);
+        assert_approx_eq(rect.height(), 720.0);
+        assert_approx_eq(pos.x, 123.0);
+        assert_approx_eq(pos.y, 456.0);
+        assert_approx_eq(delta.x, 7.0);
+        assert_approx_eq(delta.y, -9.0);
+    }
 }
 
 // Editor trait implementation

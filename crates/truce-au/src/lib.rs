@@ -1040,6 +1040,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let transport_slot = inst.transport_slot.clone();
             let ctx_for_begin = ctx_raw;
             let ctx_for_end = ctx_raw;
+            #[cfg(target_os = "macos")]
+            let parent_view = SendPtr::new(parent);
             // iOS AU v3 hosts the editor inside an .appex; v2's
             // `AUEventListener` doesn't exist there. Parameter
             // changes from the editor flow to the host directly
@@ -1111,7 +1113,12 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             return false;
                         }
                         let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
-                        inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                        let resized = inst.editor.as_mut().is_some_and(|e| e.set_size(w, h));
+                        #[cfg(target_os = "macos")]
+                        if resized {
+                            truce_au_v2_resize_container(parent_view.as_ptr().cast_mut(), w, h);
+                        }
+                        resized
                     }),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
@@ -1204,6 +1211,7 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    fn truce_au_v2_resize_container(view: *mut std::ffi::c_void, w: u32, h: u32);
 }
 
 // ---------------------------------------------------------------------------
