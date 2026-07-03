@@ -71,6 +71,14 @@
 }
 @end
 
+void truce_au_v2_resize_container(void *view, uint32_t w, uint32_t h) {
+    if (view == NULL || w == 0 || h == 0) return;
+
+    NSView *nsView = (__bridge NSView *)view;
+    [nsView setPostsFrameChangedNotifications:YES];
+    [nsView setFrameSize:NSMakeSize((CGFloat)w, (CGFloat)h)];
+}
+
 @interface TRUCE_AU_VIEW_FACTORY_NAME : NSObject <AUCocoaUIBase>
 @end
 
