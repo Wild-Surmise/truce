@@ -824,6 +824,10 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
 }
 
 fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
+    // Publish the true host-view logical size so a plugin's `ui()` can
+    // read it back via `truce_egui::actual_window_size` on iOS the same
+    // way the desktop `editor.rs::run_frame` does each frame.
+    crate::set_actual_window_size(&inner.egui_ctx, (inner.logical_w, inner.logical_h));
     // `as f32` from u32: editor logical dimensions stay well below
     // 2^23, so the f32 mantissa loss never matters.
     #[allow(clippy::cast_precision_loss)]
