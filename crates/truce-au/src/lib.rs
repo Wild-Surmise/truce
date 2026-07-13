@@ -11,6 +11,8 @@ use std::os::raw::c_char;
 use std::slice;
 
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicPtr;
 use std::sync::{Arc, OnceLock};
 // The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
 #[cfg(target_os = "macos")]
@@ -262,6 +264,16 @@ struct AuInstance<P: PluginExport> {
     /// the cell; `cb_gui_get_size` applies it before reporting the size. GUI
     /// thread only; atomic for interior mutability through the shared `&inst`.
     pending_resize: AtomicU64,
+    /// AU v2's host container `NSView`, cached from `cb_gui_open`'s `parent`
+    /// so a later `request_resize` (immediate, via `try_enter`) or a
+    /// deferred `pending_resize` replay in `cb_gui_get_size` can resize the
+    /// container after `editor.set_size` succeeds - AU v2 has no
+    /// host-driven resize API, so the container `NSView` must be resized
+    /// explicitly for Logic/Live/REAPER to observe the frame change. Null
+    /// until the editor has been opened once. AU v3 (iOS) doesn't use
+    /// this - it owns host-fit resize itself.
+    #[cfg(target_os = "macos")]
+    gui_parent_view: AtomicPtr<std::ffi::c_void>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
@@ -411,6 +423,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 }),
                 gui: PluginCell::new(AuGui { editor: None }),
                 pending_resize: AtomicU64::new(0),
+                #[cfg(target_os = "macos")]
+                gui_parent_view: AtomicPtr::new(std::ptr::null_mut()),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 legacy_key_cstrings: info
@@ -1736,7 +1750,12 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         {
             #[allow(clippy::cast_possible_truncation)]
             let (rw, rh) = ((packed >> 32) as u32, packed as u32);
-            editor.set_size(rw, rh);
+            let resized = editor.set_size(rw, rh);
+            #[cfg(target_os = "macos")]
+            if resized {
+                let parent_view = inst.gui_parent_view.load(Ordering::Relaxed);
+                truce_au_v2_resize_container(parent_view, rw, rh);
+            }
         }
         if let Some(ref editor) = gui.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -1772,6 +1791,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         unsafe {
             let inst = &*ctx.cast::<AuInstance<P>>();
+            #[cfg(target_os = "macos")]
+            inst.gui_parent_view.store(parent, Ordering::Relaxed);
             let mut gui = inst.gui.enter();
             if let Some(ref mut editor) = gui.editor {
                 let params = Arc::clone(&inst.params_arc);
@@ -1868,7 +1889,15 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             // and otherwise stashes it for `cb_gui_get_size` to
                             // apply on the next size query.
                             if let Some(mut gui) = inst.gui.try_enter() {
-                                gui.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                                let resized =
+                                    gui.editor.as_mut().is_some_and(|e| e.set_size(w, h));
+                                #[cfg(target_os = "macos")]
+                                if resized {
+                                    let parent_view =
+                                        inst.gui_parent_view.load(Ordering::Relaxed);
+                                    truce_au_v2_resize_container(parent_view, w, h);
+                                }
+                                resized
                             } else {
                                 inst.pending_resize
                                     .store((u64::from(w) << 32) | u64::from(h), Ordering::Relaxed);
@@ -1942,6 +1971,13 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
                 (*editor_ptr).close();
             }));
         }
+        // The host may free its container NSView after `gui_close`. The
+        // editor survives (see below) and a stale `pending_resize` could
+        // still be replayed from `cb_gui_get_size` before the next
+        // `gui_open` re-stores a live parent - clear the cached view so
+        // that replay resizes nothing instead of a freed NSView.
+        inst.gui_parent_view
+            .store(std::ptr::null_mut(), Ordering::Relaxed);
         // Keep the editor alive - just closed, not dropped.
         //
         // Dropping the editor here would synchronously deallocate its
@@ -1973,6 +2009,11 @@ unsafe extern "C" {
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_latency_changed(ctx: *mut std::ffi::c_void);
+    /// Resizes the AU v2 host's container `NSView` after a successful
+    /// `editor.set_size` - AU v2 has no host-driven resize API, so Logic /
+    /// Live / REAPER only observe the new frame via AppKit's own
+    /// frame-changed notification on the container.
+    fn truce_au_v2_resize_container(view: *mut std::ffi::c_void, w: u32, h: u32);
 }
 
 // ---------------------------------------------------------------------------
