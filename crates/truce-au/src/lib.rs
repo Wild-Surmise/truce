@@ -1750,9 +1750,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         {
             #[allow(clippy::cast_possible_truncation)]
             let (rw, rh) = ((packed >> 32) as u32, packed as u32);
-            let resized = editor.set_size(rw, rh);
+            let _resized = editor.set_size(rw, rh);
             #[cfg(target_os = "macos")]
-            if resized {
+            if _resized {
                 let parent_view = inst.gui_parent_view.load(Ordering::Relaxed);
                 truce_au_v2_resize_container(parent_view, rw, rh);
             }
@@ -1969,13 +1969,16 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
                 (*editor_ptr).close();
             }));
         }
-        // The host may free its container NSView after `gui_close`. The
-        // editor survives (see below) and a stale `pending_resize` could
-        // still be replayed from `cb_gui_get_size` before the next
-        // `gui_open` re-stores a live parent - clear the cached view so
-        // that replay resizes nothing instead of a freed NSView.
-        inst.gui_parent_view
-            .store(std::ptr::null_mut(), Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
+        {
+            // The host may free its container NSView after `gui_close`. The
+            // editor survives (see below) and a stale `pending_resize` could
+            // still be replayed from `cb_gui_get_size` before the next
+            // `gui_open` re-stores a live parent - clear the cached view so
+            // that replay resizes nothing instead of a freed NSView.
+            inst.gui_parent_view
+                .store(std::ptr::null_mut(), Ordering::Relaxed);
+        }
         // Keep the editor alive - just closed, not dropped.
         //
         // Dropping the editor here would synchronously deallocate its
