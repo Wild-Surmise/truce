@@ -204,6 +204,7 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
 
     for p in &plugins {
         eprintln!("\nPackaging: {} ({})", p.name, archs_label(&archs));
+        let plugin_version = p.resolved_version(&version);
 
         let staging = truce_build::target_dir(&root)
             .join("package/windows/plugin")
@@ -260,7 +261,15 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
         }
 
         let iss = render_iss(
-            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope, presets,
+            &config,
+            p,
+            &formats,
+            &archs,
+            &staging,
+            plugin_version,
+            &dist_dir,
+            scope,
+            presets,
         );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
@@ -269,7 +278,7 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
         let installer = dist_dir.join(format!(
             "{}-{}-windows{}.exe",
             p.crate_name,
-            version,
+            plugin_version,
             scope.dist_suffix()
         ));
         if !installer.exists() {

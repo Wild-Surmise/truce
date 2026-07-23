@@ -436,6 +436,8 @@ fn write_xcode_project_files(
         // macOS AU resize is wrapper-driven (no host expand tag); the
         // `resizable` / `size:` tags are an iOS-only affordance.
         extra_au_tags: &[],
+        short_version: p.resolved_version("1.0.0"),
+        au_component_version: p.resolved_au_component_version("1.0.0"),
         au_ver: &ver,
         min_os: "13.0",
         supported_platform: "MacOSX",

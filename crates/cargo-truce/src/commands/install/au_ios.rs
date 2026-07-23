@@ -171,6 +171,11 @@ pub(crate) fn build_bundle(
         .into());
     }
     let min_ios = p.resolved_ios_minimum_os_version(&cfg.ios);
+    let workspace_version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
+        "0.0.0".to_string()
+    });
+    let plugin_version = p.resolved_version(&workspace_version);
     let target_triple = format!("arm64-apple-ios{min_ios}{}", target.swift_target_suffix());
 
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
@@ -215,7 +220,7 @@ pub(crate) fn build_bundle(
     )?;
     fs_ctx::write(
         fw_dir.join("Info.plist"),
-        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, plugin_version, target),
     )?;
 
     // Factory presets into the framework's flat `Presets/` directory.
@@ -273,7 +278,9 @@ pub(crate) fn build_bundle(
             au_mfr,
             au_tag,
             extra_au_tags: &extra_au_tags,
-            au_ver: "1",
+            short_version: plugin_version,
+            au_component_version: p.resolved_au_component_version(&workspace_version),
+            au_ver: plugin_version,
             min_os: &min_ios,
             supported_platform: target.supported_platform(),
             xcode_tokens: Some(crate::templates::au3::XcodeTokens {
@@ -469,6 +476,7 @@ pub(crate) fn build_bundle(
             app_name,
             &app_bundle_id,
             &min_ios,
+            plugin_version,
             target,
             &orientations_xml,
         ),
@@ -762,6 +770,11 @@ pub(crate) fn build_xcframework(
     fs_ctx::create_dir_all(&out)?;
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
     let min_ios = p.resolved_ios_minimum_os_version(&cfg.ios);
+    let workspace_version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
+        "0.0.0".to_string()
+    });
+    let plugin_version = p.resolved_version(&workspace_version);
     // Same `{vendor.id}.{suffix}` construction as build_bundle.
     let suffix = p.bundle_id.replace('_', "-");
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
@@ -804,7 +817,7 @@ pub(crate) fn build_xcframework(
         )?;
         fs_ctx::write(
             slice_dir.join("Info.plist"),
-            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, plugin_version, target),
         )?;
         // Factory presets into each slice's flat `Presets/` directory
         // (iOS frameworks are shallow bundles - a `Resources/` subdir
@@ -877,10 +890,11 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     // other formats: `<crate>-<version>-ios.ipa`.
     let dist_dir = truce_build::target_dir(root).join("dist");
     fs_ctx::create_dir_all(&dist_dir)?;
-    let version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+    let workspace_version = crate::read_workspace_version(root).unwrap_or_else(|e| {
         eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
         "0.0.0".to_string()
     });
+    let version = p.resolved_version(&workspace_version);
     let ipa_path = dist_dir.join(format!("{}-{}-ios.ipa", p.crate_name, version));
     // Pre-clean the dist artifact: `zip -r` appends to an existing
     // archive rather than replacing it, so leaving a stale .ipa in
@@ -1272,6 +1286,7 @@ fn framework_info_plist(
     fw_name: &str,
     bundle_id: &str,
     min_ios: &str,
+    version: &str,
     target: IosTarget,
 ) -> String {
     let platform = target.supported_platform();
@@ -1285,8 +1300,8 @@ fn framework_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{fw_name}</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>
 </dict>
@@ -1341,6 +1356,7 @@ fn app_info_plist(
     app_name: &str,
     bundle_id: &str,
     min_ios: &str,
+    version: &str,
     target: IosTarget,
     orientations_xml: &str,
 ) -> String {
@@ -1355,8 +1371,8 @@ fn app_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{app_name}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>

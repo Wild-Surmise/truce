@@ -257,6 +257,18 @@ impl std::ops::Deref for PluginDef {
 }
 
 impl PluginDef {
+    /// Product version declared on `[[plugin]]`, falling back to the
+    /// workspace package version for configurations that omit it.
+    pub(crate) fn resolved_version<'a>(&'a self, workspace_version: &'a str) -> &'a str {
+        self.version.as_deref().unwrap_or(workspace_version)
+    }
+
+    /// AudioComponent versions are packed as `major << 16 | minor << 8 | patch`.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn resolved_au_component_version(&self, workspace_version: &str) -> u32 {
+        au_component_version(self.resolved_version(workspace_version))
+    }
+
     pub(crate) fn resolved_fourcc(&self) -> &str {
         self.fourcc
             .as_deref()
@@ -354,6 +366,27 @@ impl PluginDef {
     pub(crate) fn dylib_stem(&self) -> String {
         self.crate_name.replace('-', "_")
     }
+}
+
+#[cfg(target_os = "macos")]
+fn au_component_version(version: &str) -> u32 {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(1)
+        .min(0xffff);
+    let minor = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(0xff);
+    let patch = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(0xff);
+    (major << 16) | (minor << 8) | patch
 }
 
 fn default_au_tag() -> String {
@@ -799,5 +832,16 @@ mod suite_tests {
         assert_eq!(p.resolved_au_type(), "aumu");
         p.shared.category = "note_effect".into();
         assert_eq!(p.resolved_au_type(), "aumi");
+    }
+
+    #[test]
+    fn plugin_version_overrides_workspace_version() {
+        let mut p = plugin("fx", "fx");
+        assert_eq!(p.resolved_version("1.0.0"), "1.0.0");
+
+        p.shared.version = Some("0.2.3".into());
+        assert_eq!(p.resolved_version("1.0.0"), "0.2.3");
+        #[cfg(target_os = "macos")]
+        assert_eq!(p.resolved_au_component_version("1.0.0"), 0x0000_0203);
     }
 }

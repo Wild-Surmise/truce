@@ -39,6 +39,8 @@ pub mod au3 {
         /// Each entry renders as its own `<string>...</string>` line
         /// inside the `tags` array.
         pub extra_au_tags: &'a [&'a str],
+        pub short_version: &'a str,
+        pub au_component_version: u32,
         pub au_ver: &'a str,
         pub min_os: &'a str,
         pub supported_platform: &'a str,
@@ -73,6 +75,7 @@ pub mod au3 {
             extra_tags_block.push_str(tag);
             extra_tags_block.push_str("</string>");
         }
+        let au_component_version = values.au_component_version.to_string();
         let mut subs: Vec<(&str, &str)> = vec![
             ("AUNAME", values.au_name),
             ("AUTYPE", values.au_type),
@@ -80,6 +83,8 @@ pub mod au3 {
             ("AUMFR", values.au_mfr),
             ("AUTAG", values.au_tag),
             ("EXTRATAGS", extra_tags_block.as_str()),
+            ("SHORTVER", values.short_version),
+            ("AUCOMPVER", au_component_version.as_str()),
             ("AUVER", values.au_ver),
             ("MINIOS", values.min_os),
             ("SUPPORTEDPLAT", values.supported_platform),
@@ -118,6 +123,8 @@ pub mod au3 {
                 au_mfr: "Acme",
                 au_tag: "Effect",
                 extra_au_tags: &[],
+                short_version: "1.0.0",
+                au_component_version: 65_536,
                 au_ver: "1",
                 min_os: "13.0",
                 supported_platform: "MacOSX",
@@ -133,6 +140,8 @@ pub mod au3 {
                 au_mfr: "Acme",
                 au_tag: "Effect",
                 extra_au_tags: &["resizable"],
+                short_version: "1.1.0",
+                au_component_version: 65_792,
                 au_ver: "1",
                 min_os: "15.0",
                 supported_platform: "iPhoneOS",
@@ -153,7 +162,11 @@ pub mod au3 {
             let plist = render_appex_info_plist(&ios_values());
             assert!(plist.contains("<string>Effect</string>"));
             assert!(plist.contains("<string>resizable</string>"));
+            assert!(plist.contains("<string>1.1.0</string>"));
+            assert!(plist.contains("<integer>65792</integer>"));
             assert!(!plist.contains("EXTRATAGS"));
+            assert!(!plist.contains("SHORTVER"));
+            assert!(!plist.contains("AUCOMPVER"));
         }
 
         #[test]
