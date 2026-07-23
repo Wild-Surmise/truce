@@ -199,6 +199,21 @@ pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
 /// relying on whichever Developer shell the user launched.
 #[cfg(target_os = "windows")]
 pub(crate) fn locate_vcvarsall() -> Option<PathBuf> {
+    // A runner launched through vcvarsall already has these variables even
+    // when vswhere.exe is absent or its installation registry is incomplete.
+    // Prefer that authoritative active-install path before scanning.
+    if let Some(vc_install) = std::env::var_os("VCINSTALLDIR") {
+        let vcvars = PathBuf::from(vc_install).join(r"Auxiliary\Build\vcvarsall.bat");
+        if vcvars.is_file() {
+            return Some(vcvars);
+        }
+    }
+    if let Some(vs_install) = std::env::var_os("VSINSTALLDIR") {
+        let vcvars = PathBuf::from(vs_install).join(r"VC\Auxiliary\Build\vcvarsall.bat");
+        if vcvars.is_file() {
+            return Some(vcvars);
+        }
+    }
     for vs_install in vs_install_paths() {
         let vcvars = vs_install.join(r"VC\Auxiliary\Build\vcvarsall.bat");
         if vcvars.is_file() {

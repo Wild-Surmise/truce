@@ -344,10 +344,11 @@ pub(crate) fn vst3_preset_payload(
     p: &PluginDef,
     config: &Config,
 ) -> Vec<(PathBuf, Vec<u8>)> {
-    let dir = PathBuf::from(safe_filename(&config.vendor.name)).join(safe_filename(resolved_name(
-        p.vst3_name.as_deref(),
-        &p.name,
-    )));
+    let dir = vst3_preset_subdir(
+        p.presets.as_ref().and_then(|c| c.user_dir.as_deref()),
+        &config.vendor.name,
+        resolved_name(p.vst3_name.as_deref(), &p.name),
+    );
     let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.bundle_id));
     fp.presets
         .iter()
@@ -369,12 +370,11 @@ pub(crate) fn emit_vst3_presets(
     let Some(presets_root) = vst3_presets_root(scope) else {
         return Err("cannot resolve the VST3 preset directory".into());
     };
-    let dest_root = presets_root
-        .join(safe_filename(&config.vendor.name))
-        .join(safe_filename(resolved_name(
-            p.vst3_name.as_deref(),
-            &p.name,
-        )));
+    let dest_root = presets_root.join(vst3_preset_subdir(
+        p.presets.as_ref().and_then(|c| c.user_dir.as_deref()),
+        &config.vendor.name,
+        resolved_name(p.vst3_name.as_deref(), &p.name),
+    ));
     let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.bundle_id));
     let files: Vec<_> = fp
         .presets
@@ -399,6 +399,41 @@ pub(crate) fn emit_vst3_presets(
         dest_root.display()
     ));
     Ok(())
+}
+
+/// Relative directory below the OS VST3 preset root.
+///
+/// An explicit `[plugin.presets] user_dir` is the product's stable,
+/// filesystem-safe preset identity and takes precedence over the
+/// host-facing display name. This matters for names such as `Ispín`:
+/// macOS `pkgbuild` cannot reliably produce a BOM for decomposed Unicode
+/// directory names, while the VST3 class ID inside each `.vstpreset`
+/// remains the authoritative host match.
+fn vst3_preset_subdir(user_dir: Option<&str>, vendor: &str, plugin_name: &str) -> PathBuf {
+    user_dir
+        .and_then(truce_utils::presets::sanitize_preset_user_dir)
+        .unwrap_or_else(|| PathBuf::from(safe_filename(vendor)).join(safe_filename(plugin_name)))
+}
+
+#[cfg(test)]
+mod vst3_path_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_user_dir_overrides_host_display_name() {
+        assert_eq!(
+            vst3_preset_subdir(Some("Wild Surmise/Ispin"), "Wild Surmise", "Ispín"),
+            PathBuf::from("Wild Surmise").join("Ispin")
+        );
+    }
+
+    #[test]
+    fn absent_user_dir_uses_vendor_and_host_display_name() {
+        assert_eq!(
+            vst3_preset_subdir(None, "Acme", "My Synth"),
+            PathBuf::from("Acme").join("My Synth")
+        );
+    }
 }
 
 /// The OS root directory VST3 hosts walk for presets, per the
