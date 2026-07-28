@@ -748,6 +748,8 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
                 .ui(ui, context);
         });
 
+        crate::handle_platform_output(&output.platform_output);
+
         let repaint_delay = output
             .viewport_output
             .get(&egui::ViewportId::ROOT)

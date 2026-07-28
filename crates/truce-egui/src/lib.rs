@@ -67,3 +67,35 @@ pub fn set_actual_window_size(ctx: &egui::Context, size: (u32, u32)) {
 pub fn actual_window_size(ctx: &egui::Context) -> Option<(u32, u32)> {
     ctx.data(|data| data.get_temp(actual_window_size_id()))
 }
+
+/// Execute egui commands that require an operating-system integration.
+///
+/// Rendering backends must consume these commands after each frame. In
+/// particular, [`egui::Context::open_url`] only queues an `OpenUrl` command;
+/// it does not launch the external system browser by itself.
+pub(crate) fn handle_platform_output(platform_output: &egui::PlatformOutput) {
+    for command in &platform_output.commands {
+        if let egui::OutputCommand::OpenUrl(open_url) = command
+            && let Err(error) = webbrowser::open(&open_url.url)
+        {
+            log::warn!("failed to open URL '{}': {error}", open_url.url);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn open_url_is_emitted_as_a_platform_command() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |_| {
+            ctx.open_url(egui::OpenUrl::new_tab("https://example.com/contact"));
+        });
+
+        assert!(matches!(
+            output.platform_output.commands.as_slice(),
+            [egui::OutputCommand::OpenUrl(open_url)]
+                if open_url.url == "https://example.com/contact" && open_url.new_tab
+        ));
+    }
+}

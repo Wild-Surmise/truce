@@ -875,6 +875,7 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .ui(root_ui, &inner.context);
     });
+    crate::handle_platform_output(&output.platform_output);
     let clipped = inner
         .egui_ctx
         .tessellate(output.shapes, output.pixels_per_point);

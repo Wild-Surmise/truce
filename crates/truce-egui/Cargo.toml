@@ -21,6 +21,7 @@ pollster = "0.4"
 raw-window-handle = "0.5"
 keyboard-types = "0.7"
 log = "0.4"
+webbrowser = "1.2"
 
 # baseview is desktop-only. iOS uses the in-tree editor_ios.rs which
 # builds its wgpu surface from a CAMetalLayer attached to a UIView.
