@@ -23,11 +23,14 @@
 pub mod blit;
 // baseview-bound editor is macOS / Windows / Linux only. iOS
 // embeds the editor in a UIView managed by the AUv3 view
-// controller - see [`editor_ios`]. `BuiltinEditor` itself stays
-// available regardless of the `cpu` feature so the wgpu-only
-// `GpuEditor` can wrap it; the cpu-specific fields and Editor
-// trait impl inside this module are individually gated.
-#[cfg(not(target_os = "ios"))]
+// controller - see [`editor_ios`]. wasm has no window to host
+// either - the embedder owns the canvas/surface, same reasoning as
+// iOS but with no analogous in-tree module to alias `editor` to.
+// `BuiltinEditor` itself stays available regardless of the `cpu`
+// feature so the wgpu-only `GpuEditor` can wrap it; the cpu-specific
+// fields and Editor trait impl inside this module are individually
+// gated.
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub mod editor;
 #[cfg(target_os = "ios")]
 pub mod editor_ios;
@@ -37,7 +40,7 @@ pub use editor_ios as editor;
 // `truce_gpu::WgpuBackend`. Lives here so the user-facing renderer
 // crate (truce-gui) is a one-stop dep for plugin authors; the wgpu
 // primitives stay an implementation detail in truce-gpu.
-#[cfg(all(feature = "gpu", not(target_os = "ios")))]
+#[cfg(all(feature = "gpu", not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub mod gpu_editor;
 pub mod interaction;
 pub mod platform;
@@ -93,8 +96,11 @@ pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_
 #[doc(hidden)]
 pub use truce_plugin::__plugin_logic_deps;
 
+// No wasm arm: unlike iOS (aliased to `editor_ios` above), wasm has
+// no in-tree `editor` module to alias `BuiltinEditor` from.
+#[cfg(not(target_arch = "wasm32"))]
 pub use editor::BuiltinEditor;
-#[cfg(all(feature = "gpu", not(target_os = "ios")))]
+#[cfg(all(feature = "gpu", not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub use gpu_editor::GpuEditor;
 pub use platform::{EditorScale, PaintPacer, to_physical_px};
 
@@ -190,6 +196,12 @@ impl IntoLayoutEditor for GridLayout {
 /// dimensions on any other. Outside screenshot rendering the
 /// override is unset and we return the platform's main-screen DPI
 /// query (Retina = 2.0, normal = 1.0).
+///
+/// Not available on wasm: `platform::main_screen_scale` has no web arm
+/// (the embedder owns the canvas and its device-pixel-ratio query), and
+/// every caller of `backing_scale` lives in the baseview-driven `editor`
+/// / `gpu_editor` modules, which are themselves excluded on wasm32.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn backing_scale() -> f64 {
     if let Some(s) = override_scale() {

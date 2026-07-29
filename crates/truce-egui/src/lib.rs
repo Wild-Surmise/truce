@@ -22,7 +22,7 @@
 // drives the UIView + CADisplayLink + CAMetalLayer host on iOS.
 // `renderer.rs` (egui-wgpu wrapper) is shared - it has both a
 // baseview-window and a raw-CAMetalLayer constructor.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub mod editor;
 pub mod font;
 pub mod platform;
@@ -37,11 +37,16 @@ pub mod widgets;
 #[cfg(target_os = "ios")]
 mod editor_ios;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub use editor::{EditorUi, EguiEditor};
 
 #[cfg(target_os = "ios")]
 pub use editor_ios::{EditorUi, EguiEditor};
+
+#[cfg(target_arch = "wasm32")]
+mod editor_web;
+#[cfg(target_arch = "wasm32")]
+pub use editor_web::EditorUi;
 
 fn actual_window_size_id() -> egui::Id {
     egui::Id::new("truce_egui_actual_window_size")

@@ -572,7 +572,7 @@ pub fn editor_instance_descriptor() -> wgpu::InstanceDescriptor {
 ///
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned surface.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 #[must_use]
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
