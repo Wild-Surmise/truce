@@ -56,7 +56,7 @@ impl EguiRenderer {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the renderer.
-    #[cfg(not(any(target_os = "ios", target_os = "windows")))]
+    #[cfg(not(any(target_os = "ios", target_os = "windows", target_arch = "wasm32")))]
     #[must_use]
     pub unsafe fn from_window(
         window: &baseview::Window,

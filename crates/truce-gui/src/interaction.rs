@@ -9,16 +9,16 @@ pub use truce_gui_types::interaction::*;
 
 // Baseview-event translator is macOS / Windows / Linux only. iOS
 // delivers events via UIKit touch handlers in `editor_ios`.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 const DOUBLE_CLICK_MS: u128 = 300;
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 const DOUBLE_CLICK_SLOP: f32 = 4.0;
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 const WHEEL_LINE_PX: f32 = 20.0;
 
 /// Stateful translator from baseview events to truce-gui's
 /// platform-agnostic [`InputEvent`] stream.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 ///
 /// Exists because baseview emits logical-point mouse positions on every
 /// platform (macOS via Cocoa points; X11 and Windows via explicit
@@ -32,7 +32,7 @@ const WHEEL_LINE_PX: f32 = 20.0;
 // All fields share a `last_` prefix because the struct's whole purpose
 // is to remember the previous cursor / click - the prefix is meaningful,
 // not redundant.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 #[allow(clippy::struct_field_names)]
 #[derive(Default)]
 pub struct BaseviewTranslator {
@@ -41,7 +41,7 @@ pub struct BaseviewTranslator {
     last_click_pos: (f32, f32),
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 impl BaseviewTranslator {
     /// The last cursor position we saw from a `CursorMoved`, in logical
     /// points. Useful when a caller needs to query cursor state outside
@@ -122,7 +122,7 @@ impl BaseviewTranslator {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 fn map_button(b: baseview::MouseButton) -> Option<MouseButton> {
     match b {
         baseview::MouseButton::Left => Some(MouseButton::Left),

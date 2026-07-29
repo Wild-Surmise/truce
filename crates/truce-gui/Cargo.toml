@@ -26,8 +26,9 @@ pollster = "0.4"
 log = "0.4"
 
 # baseview hosts the editor on macOS / Windows / Linux. iOS embeds
-# a UIView directly into the AUv3 view controller - no baseview.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# a UIView directly into the AUv3 view controller - no baseview. wasm
+# has no window to host either - the embedder owns the canvas/surface.
+[target.'cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))'.dependencies]
 baseview = { workspace = true }
 
 # wgpu backend features, per OS. truce-gui's blit pipeline (cpu

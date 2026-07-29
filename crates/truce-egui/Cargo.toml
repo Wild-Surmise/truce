@@ -23,9 +23,10 @@ keyboard-types = "0.7"
 log = "0.4"
 webbrowser = "1.2"
 
-# baseview is desktop-only. iOS uses the in-tree editor_ios.rs which
-# builds its wgpu surface from a CAMetalLayer attached to a UIView.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# baseview is desktop-only. iOS uses the in-tree editor_ios.rs which builds
+# its wgpu surface from a CAMetalLayer attached to a UIView; wasm uses
+# editor_web.rs, where the embedder owns the canvas and surface entirely.
+[target.'cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))'.dependencies]
 baseview = { workspace = true }
 
 # `wgpu/metal` is gated on the Apple targets because
@@ -45,6 +46,18 @@ wgpu = { workspace = true, features = ["metal"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 wgpu = { workspace = true, features = ["metal"] }
+
+# `wgpu/webgpu` + `wgpu/webgl` are gated on wasm32 for the same
+# feature-unification reason as the Apple `metal` block above:
+# `egui-wgpu`'s wasm arm unconditionally references `wgpu::web_sys`,
+# which only exists when wgpu's `web` cfg is active — itself gated on
+# the `web` feature, which `webgpu` / `webgl` both imply. Both are
+# enabled (not just one) because the eventual wasm host (`wsfx_web`,
+# not yet built) opens the wgpu instance with
+# `Backends::BROWSER_WEBGPU | Backends::GL` so WebGL2 still works
+# where WebGPU is unavailable.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu", "webgl"] }
 
 [lints]
 workspace = true
