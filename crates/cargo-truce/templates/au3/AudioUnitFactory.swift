@@ -444,9 +444,15 @@ class TruceAUAudioUnit: AUAudioUnit {
     }
 
     override func deallocateRenderResources() {
-        DispatchQueue.main.async { [weak self] in
-            self?._latencyTimer?.invalidate()
-            self?._latencyTimer = nil
+        // `-[AUAudioUnit dealloc]` invokes this override, and forming a
+        // weak reference to a deallocating object is an ObjC runtime
+        // abort ("Cannot form weak reference to instance ... in the
+        // process of deallocation"). Hand the timer itself to the main
+        // queue instead - the closure must not capture self in any way.
+        let timer = _latencyTimer
+        _latencyTimer = nil
+        if let timer = timer {
+            DispatchQueue.main.async { timer.invalidate() }
         }
         super.deallocateRenderResources()
     }
@@ -1012,7 +1018,13 @@ class TruceAUAudioUnit: AUAudioUnit {
                 _currentPreset = preset
             } else {
                 // User preset: replay the host-stored document state.
-                guard let state = try? presetState(for: preset) else { return }
+                // `presetStateFor:` raises an ObjC exception (not an
+                // NSError) when the preset has no backing file - e.g. a
+                // host recalling a preset deleted elsewhere. Swift's
+                // `try?` cannot catch that, so refuse preset numbers
+                // that are no longer in `userPresets` up front.
+                guard userPresets.contains(where: { $0.number == preset.number }),
+                      let state = try? presetState(for: preset) else { return }
                 fullStateForDocument = state
                 _currentPreset = preset
             }
