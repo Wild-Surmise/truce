@@ -1083,7 +1083,33 @@ class TruceAUAudioUnit: AUAudioUnit {
               truceAbiTailVersion(cb) >= 3, _sampleRate > 0 else { return 0 }
         return TimeInterval(cb.pointee.tail_samples(ctx)) / _sampleRate
     }
-    override var shouldBypassEffect: Bool { get { false } set { } }
+    override var shouldBypassEffect: Bool {
+        get {
+            guard let ctx = rustCtx, let cb = g_callbacks, let descriptor = g_descriptor else {
+                return false
+            }
+            let bypassID = descriptor.pointee.bypass_param_id
+            guard bypassID != UInt32.max else { return false }
+            return cb.pointee.param_get_value(ctx, bypassID) >= 0.5
+        }
+        set {
+            guard let ctx = rustCtx, let cb = g_callbacks, let descriptor = g_descriptor else {
+                return
+            }
+            let bypassID = descriptor.pointee.bypass_param_id
+            guard bypassID != UInt32.max else { return }
+            let value: AUValue = newValue ? 1.0 : 0.0
+            cb.pointee.param_set_value(ctx, bypassID, Double(value))
+
+            // Keep the AU parameter tree and custom editor synchronized
+            // without feeding the same change back through its observer.
+            if let parameter = _parameterTree?.parameter(withAddress: AUParameterAddress(bypassID)) {
+                isSyncingToHost = true
+                parameter.value = value
+                isSyncingToHost = false
+            }
+        }
+    }
 
     // AUAudioUnit.latency is KVO-observed by hosts for delay
     // compensation, but the value comes from a callback (a computed

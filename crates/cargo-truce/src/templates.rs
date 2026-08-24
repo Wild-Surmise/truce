@@ -213,6 +213,16 @@ pub mod au3 {
             assert!(plist.contains("<string>Effect</string>"));
             assert!(plist.contains("<string>Acme: Tremolo</string>"));
         }
+
+        #[test]
+        fn swift_routes_native_bypass_through_the_flagged_parameter() {
+            assert!(SWIFT_SOURCE.contains("descriptor.pointee.bypass_param_id"));
+            assert!(SWIFT_SOURCE.contains("cb.pointee.param_get_value(ctx, bypassID)"));
+            assert!(SWIFT_SOURCE.contains("cb.pointee.param_set_value(ctx, bypassID"));
+            assert!(!SWIFT_SOURCE.contains(
+                "override var shouldBypassEffect: Bool { get { false } set { } }"
+            ));
+        }
     }
 }
 
