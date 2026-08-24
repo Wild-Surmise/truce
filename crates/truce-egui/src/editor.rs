@@ -1105,6 +1105,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     }
                 }
                 Event::Keyboard(kb) => {
+                    let status = keyboard_event_status(&self.egui_ctx);
+                    if status == EventStatus::Ignored {
+                        return status;
+                    }
+
                     use keyboard_types::KeyState;
                     self.modifiers = convert_kb_modifiers(kb.modifiers);
 
@@ -1135,7 +1140,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         });
                     }
 
-                    EventStatus::Captured
+                    status
                 }
                 Event::Window(win) => {
                     if let baseview::WindowEvent::Resized(info) = win {
@@ -1387,9 +1392,41 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
     })
 }
 
+/// Embedded editors must leave DAW transport shortcuts alone unless a text
+/// widget is actively editing. On macOS, `Ignored` makes baseview forward the
+/// native key event to the parent host view; the other desktop adapters use the
+/// same status contract.
+fn keyboard_event_status(ctx: &egui::Context) -> EventStatus {
+    if ctx.text_edit_focused() {
+        EventStatus::Captured
+    } else {
+        EventStatus::Ignored
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_events_are_ignored_without_a_focused_text_editor() {
+        let ctx = egui::Context::default();
+
+        assert_eq!(keyboard_event_status(&ctx), EventStatus::Ignored);
+    }
+
+    #[test]
+    fn keyboard_events_are_captured_for_a_focused_text_editor() {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut text))
+                .request_focus();
+        });
+
+        assert!(ctx.text_edit_focused());
+        assert_eq!(keyboard_event_status(&ctx), EventStatus::Captured);
+    }
 
     fn assert_approx_eq(actual: f32, expected: f32) {
         assert!(
