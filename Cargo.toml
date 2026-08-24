@@ -165,18 +165,16 @@ base64 = "0.22"
 # `truce-gpu/Cargo.toml`, then unified across the workspace.
 wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 
-# The truce-audio fork carries the AAX / Pro Tools close-path fix
-# (responder / tracking-area / layer-contents cleanup). Published to
-# crates.io as `baseview-truce`; the `package =` rename keeps every
-# `use baseview::*` in the GUI crates compiling unchanged. GUI crates
-# consume this via `baseview = { workspace = true }` so the registry
-# pin lives in exactly one place.
+# The Wild Surmise fork carries the AAX / Pro Tools close-path fix and
+# forwards ignored keyboard events from parented plugin editors to hosts.
+# GUI crates consume this via `baseview = { workspace = true }` so the
+# exact source pin lives in one place.
 #
 # Vizia's git-pinned baseview rev lives outside this workspace in
 # `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
 # wiring vizia ends up needing belongs there, not here - keeping the
 # parent lockfile + iOS bake free of the vizia mess.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.13" }
+baseview = { package = "baseview-truce", git = "https://github.com/Wild-Surmise/baseview.git", rev = "ddc2239f6babf639adac7320952a032ca40331cf" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features
