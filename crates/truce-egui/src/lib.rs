@@ -68,6 +68,147 @@ pub fn actual_window_size(ctx: &egui::Context) -> Option<(u32, u32)> {
     ctx.data(|data| data.get_temp(actual_window_size_id()))
 }
 
+/// Translate committed native text input into the egui events consumed by
+/// text widgets on the next frame.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn native_text_input_events(text: &str) -> Vec<egui::Event> {
+    if text.is_empty() {
+        Vec::new()
+    } else if matches!(text, "\n" | "\r" | "\r\n") {
+        let modifiers = egui::Modifiers::default();
+        [true, false]
+            .into_iter()
+            .map(|pressed| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            })
+            .collect()
+    } else {
+        vec![egui::Event::Text(text.to_owned())]
+    }
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn native_text_replacement_events(text: &str) -> Vec<egui::Event> {
+    let command = egui::Modifiers {
+        command: true,
+        mac_cmd: true,
+        ..Default::default()
+    };
+    let mut events = Vec::with_capacity(3);
+    push_key(&mut events, egui::Key::A, command);
+    if text.is_empty() {
+        push_key(
+            &mut events,
+            egui::Key::Backspace,
+            egui::Modifiers::default(),
+        );
+    } else {
+        events.push(egui::Event::Text(text.to_owned()));
+    }
+    events
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeKeyboardAction {
+    None,
+    BecomeFirstResponder,
+    ResignFirstResponder,
+    SurrenderEguiFocus,
+    DismissAndSurrender,
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn native_keyboard_action(
+    wants_keyboard: bool,
+    session_active: bool,
+    is_first_responder: bool,
+    dismiss_requested: bool,
+) -> NativeKeyboardAction {
+    if dismiss_requested {
+        return NativeKeyboardAction::DismissAndSurrender;
+    }
+    match (wants_keyboard, session_active, is_first_responder) {
+        (true, false, false) => NativeKeyboardAction::BecomeFirstResponder,
+        (true, true, false) => NativeKeyboardAction::SurrenderEguiFocus,
+        (false, _, true) => NativeKeyboardAction::ResignFirstResponder,
+        _ => NativeKeyboardAction::None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeTextSelection {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl NativeTextSelection {
+    pub(crate) fn normalized(self) -> Self {
+        Self {
+            start: self.start.min(self.end),
+            end: self.start.max(self.end),
+        }
+    }
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn utf16_offset_for_char_index(text: &str, char_index: usize) -> usize {
+    text.chars().take(char_index).map(char::len_utf16).sum()
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn char_index_for_utf16_offset(text: &str, utf16_offset: usize) -> usize {
+    let mut consumed = 0;
+    for (index, character) in text.chars().enumerate() {
+        if consumed >= utf16_offset {
+            return index;
+        }
+        consumed += character.len_utf16();
+        if consumed >= utf16_offset {
+            return index + 1;
+        }
+    }
+    text.chars().count()
+}
+
+fn push_key(events: &mut Vec<egui::Event>, key: egui::Key, modifiers: egui::Modifiers) {
+    for pressed in [true, false] {
+        events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        });
+    }
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) fn apply_native_selection_to_focused_text_edit(
+    ctx: &egui::Context,
+    selection: NativeTextSelection,
+) -> bool {
+    let Some(id) = ctx.memory(|memory| memory.focused()) else {
+        return false;
+    };
+    let Some(mut state) = egui::widgets::text_edit::TextEditState::load(ctx, id) else {
+        return false;
+    };
+    let selection = selection.normalized();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(selection.start),
+            egui::text::CCursor::new(selection.end),
+        )));
+    state.store(ctx, id);
+    ctx.request_repaint();
+    true
+}
+
 /// Execute egui commands that require an operating-system integration.
 ///
 /// Rendering backends must consume these commands after each frame. In
@@ -85,6 +226,112 @@ pub(crate) fn handle_platform_output(platform_output: &egui::PlatformOutput) {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        NativeKeyboardAction, NativeTextSelection, apply_native_selection_to_focused_text_edit,
+        char_index_for_utf16_offset, native_keyboard_action, native_text_input_events,
+        native_text_replacement_events, utf16_offset_for_char_index,
+    };
+
+    #[test]
+    fn native_return_is_an_enter_key_press_not_literal_text() {
+        let events = native_text_input_events("\n");
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    ..
+                },
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: false,
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn native_committed_text_stays_a_text_event() {
+        assert!(matches!(
+            native_text_input_events("https://example.com").as_slice(),
+            [egui::Event::Text(text)] if text == "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn native_shadow_text_replaces_the_focused_egui_value() {
+        let events = native_text_replacement_events("https://example.com/xyz");
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    pressed: true,
+                    modifiers,
+                    ..
+                },
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    pressed: false,
+                    ..
+                },
+                egui::Event::Text(text)
+            ] if modifiers.command && text == "https://example.com/xyz"
+        ));
+    }
+
+    #[test]
+    fn external_responder_loss_surrenders_stale_egui_focus() {
+        assert_eq!(
+            native_keyboard_action(true, true, false, false),
+            NativeKeyboardAction::SurrenderEguiFocus
+        );
+    }
+
+    #[test]
+    fn return_dismissal_overrides_stale_egui_keyboard_focus() {
+        assert_eq!(
+            native_keyboard_action(true, true, true, true),
+            NativeKeyboardAction::DismissAndSurrender
+        );
+    }
+
+    #[test]
+    fn native_utf16_offsets_round_trip_non_bmp_characters() {
+        let text = "a💡b";
+        assert_eq!(utf16_offset_for_char_index(text, 2), 3);
+        assert_eq!(char_index_for_utf16_offset(text, 3), 2);
+        assert_eq!(char_index_for_utf16_offset(text, usize::MAX), 3);
+    }
+
+    #[test]
+    fn native_selection_updates_text_edit_state_without_key_replay() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("native-selection-test");
+        let mut text = "https://example.com/".to_owned();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .show(ui)
+                .response
+                .request_focus();
+        });
+
+        assert!(apply_native_selection_to_focused_text_edit(
+            &ctx,
+            NativeTextSelection { start: 8, end: 15 }
+        ));
+        let state = egui::widgets::text_edit::TextEditState::load(&ctx, id)
+            .expect("focused text edit state");
+        let range = state.cursor.char_range().expect("cursor range");
+        assert_eq!(range.primary.index, 15);
+        assert_eq!(range.secondary.index, 8);
+    }
+
     #[test]
     fn open_url_is_emitted_as_a_platform_command() {
         let ctx = egui::Context::default();

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
 use objc2::sel;
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_gui::ios::{TouchPhase, fnv1a_64, ivar_offset};
@@ -66,6 +66,7 @@ unsafe impl<P: Params + ?Sized> Send for EguiEditor<P> {}
 
 struct Inner<P: Params + ?Sized> {
     child_view: *mut AnyObject,
+    text_input: *mut AnyObject,
     display_link: *mut AnyObject,
     logical_w: u32,
     logical_h: u32,
@@ -76,6 +77,11 @@ struct Inner<P: Params + ?Sized> {
     params: Arc<P>,
     context: PluginContext<P>,
     pending_events: Vec<egui::Event>,
+    native_text: String,
+    native_selection: crate::NativeTextSelection,
+    native_selection_dirty: bool,
+    keyboard_session_active: bool,
+    keyboard_dismiss_requested: bool,
     last_pointer: egui::Pos2,
 }
 
@@ -282,6 +288,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let inner = Inner {
             child_view: view,
+            text_input: unsafe { install_text_input_proxy::<P>(view) },
             display_link: link,
             logical_w: lw,
             logical_h: lh,
@@ -292,6 +299,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             params: Arc::clone(&self.params),
             context: typed_ctx,
             pending_events: Vec::with_capacity(16),
+            native_text: String::new(),
+            native_selection: crate::NativeTextSelection::default(),
+            native_selection_dirty: false,
+            keyboard_session_active: false,
+            keyboard_dismiss_requested: false,
             last_pointer: egui::pos2(-1.0, -1.0),
         };
         *self
@@ -460,6 +472,14 @@ unsafe fn install_editor_view<P: Params + 'static>(
                 sel!(touchesCancelled:withEvent:),
                 touches_cancelled::<P> as unsafe extern "C" fn(_, _, _, _),
             );
+            builder.add_method(
+                sel!(truceTextFieldChanged:),
+                text_field_changed::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(truceTextFieldReturn:),
+                text_field_return::<P> as unsafe extern "C" fn(_, _, _),
+            );
             // `UIKeyInput` conformance - implemented as raw selector
             // additions because ObjC protocols are duck-typed at
             // dispatch time. The runtime calls `respondsToSelector:`
@@ -558,6 +578,59 @@ unsafe fn install_editor_view<P: Params + 'static>(
         let _: () = msg_send![link, addToRunLoop: main, forMode: mode];
 
         (view, layer, link, leaked)
+    }
+}
+
+/// Install a native, off-screen `UITextField` that owns UIKit's text editing
+/// session while egui continues to paint the visible widget. `UITextField`
+/// already implements the complete `UITextInput` contract, including the
+/// keyboard's hold-space cursor trackpad. `UIControl` edit/Return actions
+/// mirror its value into egui; selection is synchronized once per display
+/// frame in [`run_frame`].
+unsafe fn install_text_input_proxy<P: Params + 'static>(
+    editor_view: *mut AnyObject,
+) -> *mut AnyObject {
+    unsafe {
+        if editor_view.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let frame = NSRect {
+            origin: NSPoint {
+                x: -1000.0,
+                y: -1000.0,
+            },
+            size: NSSize {
+                width: 1.0,
+                height: 1.0,
+            },
+        };
+        let text_field = AnyClass::get(c"UITextField").expect("UITextField missing");
+        let alloc: *mut AnyObject = msg_send![text_field, alloc];
+        let input: *mut AnyObject = msg_send![alloc, initWithFrame: frame];
+        if input.is_null() {
+            return std::ptr::null_mut();
+        }
+        let _: () = msg_send![input, setAccessibilityElementsHidden: Bool::YES];
+        let editing_changed: usize = 1 << 17;
+        let editing_did_end_on_exit: usize = 1 << 19;
+        let _: () = msg_send![
+            input,
+            addTarget: editor_view,
+            action: sel!(truceTextFieldChanged:),
+            forControlEvents: editing_changed
+        ];
+        let _: () = msg_send![
+            input,
+            addTarget: editor_view,
+            action: sel!(truceTextFieldReturn:),
+            forControlEvents: editing_did_end_on_exit
+        ];
+        let _: () = msg_send![editor_view, addSubview: input];
+        // `addSubview:` retained the field. Balance alloc/init so its lifetime
+        // is now exactly the editor view's lifetime.
+        release_obj(input);
+        input
     }
 }
 
@@ -834,6 +907,10 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
 }
 
 fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
+    // UIKit updates the proxy's selectedTextRange directly while the user
+    // drags the keyboard trackpad. Mirror that range into egui before this
+    // frame consumes input events.
+    unsafe { sync_native_proxy_to_egui(inner) };
     // Publish the true host-view logical size so a plugin's `ui()` can
     // read it back via `truce_egui::actual_window_size` on iOS the same
     // way the desktop `editor.rs::run_frame` does each frame.
@@ -875,6 +952,15 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .ui(root_ui, &inner.context);
     });
+    unsafe { sync_native_text_input_from_egui(inner, &output.platform_output) };
+    if inner.native_selection_dirty
+        && crate::apply_native_selection_to_focused_text_edit(
+            &inner.egui_ctx,
+            inner.native_selection,
+        )
+    {
+        inner.native_selection_dirty = false;
+    }
     crate::handle_platform_output(&output.platform_output);
     let clipped = inner
         .egui_ctx
@@ -895,18 +981,250 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     // egui widget makes the flag go false again on the next frame;
     // we resign and the keyboard dismisses.
     let wants_kb = inner.egui_ctx.egui_wants_keyboard_input();
-    let view = inner.child_view;
-    if !view.is_null() {
+    let responder = if inner.text_input.is_null() {
+        inner.child_view
+    } else {
+        inner.text_input
+    };
+    if !responder.is_null() {
         unsafe {
-            let is_first: Bool = msg_send![view, isFirstResponder];
-            if wants_kb && !is_first.as_bool() {
-                let _: Bool = msg_send![view, becomeFirstResponder];
-            } else if !wants_kb && is_first.as_bool() {
-                let _: Bool = msg_send![view, resignFirstResponder];
+            let is_first: Bool = msg_send![responder, isFirstResponder];
+            match crate::native_keyboard_action(
+                wants_kb,
+                inner.keyboard_session_active,
+                is_first.as_bool(),
+                inner.keyboard_dismiss_requested,
+            ) {
+                crate::NativeKeyboardAction::BecomeFirstResponder => {
+                    let became: Bool = msg_send![responder, becomeFirstResponder];
+                    inner.keyboard_session_active = became.as_bool();
+                }
+                crate::NativeKeyboardAction::ResignFirstResponder => {
+                    let _: Bool = msg_send![responder, resignFirstResponder];
+                    inner.keyboard_session_active = false;
+                }
+                crate::NativeKeyboardAction::SurrenderEguiFocus => {
+                    if let Some(id) = inner.egui_ctx.memory(|memory| memory.focused()) {
+                        inner
+                            .egui_ctx
+                            .memory_mut(|memory| memory.surrender_focus(id));
+                    }
+                    inner.native_selection_dirty = false;
+                    inner.keyboard_session_active = false;
+                }
+                crate::NativeKeyboardAction::DismissAndSurrender => {
+                    let _: Bool = msg_send![responder, resignFirstResponder];
+                    let _: Bool = msg_send![inner.child_view, endEditing: Bool::YES];
+                    if let Some(id) = inner.egui_ctx.memory(|memory| memory.focused()) {
+                        inner
+                            .egui_ctx
+                            .memory_mut(|memory| memory.surrender_focus(id));
+                    }
+                    inner.native_selection_dirty = false;
+                    inner.keyboard_session_active = false;
+                    inner.keyboard_dismiss_requested = false;
+                }
+                crate::NativeKeyboardAction::None => {
+                    if is_first.as_bool() {
+                        inner.keyboard_session_active = true;
+                    } else if !wants_kb {
+                        inner.keyboard_session_active = false;
+                        inner.native_selection_dirty = false;
+                    }
+                }
             }
         }
     }
     let _ = inner.params;
+}
+
+unsafe fn native_proxy_text(input: *mut AnyObject) -> Option<String> {
+    unsafe {
+        if input.is_null() {
+            return None;
+        }
+        let text: *mut AnyObject = msg_send![input, text];
+        if text.is_null() {
+            return Some(String::new());
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![text, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        std::ffi::CStr::from_ptr(utf8)
+            .to_str()
+            .ok()
+            .map(ToOwned::to_owned)
+    }
+}
+
+unsafe fn native_proxy_selection(
+    input: *mut AnyObject,
+    text: &str,
+) -> Option<crate::NativeTextSelection> {
+    unsafe {
+        if input.is_null() {
+            return None;
+        }
+        let range: *mut AnyObject = msg_send![input, selectedTextRange];
+        let beginning: *mut AnyObject = msg_send![input, beginningOfDocument];
+        if range.is_null() || beginning.is_null() {
+            return None;
+        }
+        let start: *mut AnyObject = msg_send![range, start];
+        let end: *mut AnyObject = msg_send![range, end];
+        if start.is_null() || end.is_null() {
+            return None;
+        }
+        let start_offset: isize =
+            msg_send![input, offsetFromPosition: beginning, toPosition: start];
+        let end_offset: isize = msg_send![input, offsetFromPosition: beginning, toPosition: end];
+        if start_offset < 0 || end_offset < 0 {
+            return None;
+        }
+        Some(
+            crate::NativeTextSelection {
+                start: crate::char_index_for_utf16_offset(text, start_offset as usize),
+                end: crate::char_index_for_utf16_offset(text, end_offset as usize),
+            }
+            .normalized(),
+        )
+    }
+}
+
+unsafe fn set_native_proxy_text(input: *mut AnyObject, text: &str) {
+    unsafe {
+        if input.is_null() {
+            return;
+        }
+        let text = NSString::from_str(text);
+        let _: () = msg_send![input, setText: &*text];
+    }
+}
+
+unsafe fn set_native_proxy_selection(
+    input: *mut AnyObject,
+    text: &str,
+    selection: crate::NativeTextSelection,
+) {
+    unsafe {
+        if input.is_null() {
+            return;
+        }
+        let selection = selection.normalized();
+        let beginning: *mut AnyObject = msg_send![input, beginningOfDocument];
+        if beginning.is_null() {
+            return;
+        }
+        let start_offset = crate::utf16_offset_for_char_index(text, selection.start);
+        let end_offset = crate::utf16_offset_for_char_index(text, selection.end);
+        let Ok(start_offset) = isize::try_from(start_offset) else {
+            return;
+        };
+        let Ok(end_offset) = isize::try_from(end_offset) else {
+            return;
+        };
+        let start: *mut AnyObject =
+            msg_send![input, positionFromPosition: beginning, offset: start_offset];
+        let end: *mut AnyObject =
+            msg_send![input, positionFromPosition: beginning, offset: end_offset];
+        if start.is_null() || end.is_null() {
+            return;
+        }
+        let range: *mut AnyObject = msg_send![input, textRangeFromPosition: start, toPosition: end];
+        if !range.is_null() {
+            let _: () = msg_send![input, setSelectedTextRange: range];
+        }
+    }
+}
+
+unsafe fn queue_native_proxy_change<P: Params + 'static>(
+    inner: &mut Inner<P>,
+    input: *mut AnyObject,
+) {
+    unsafe {
+        let Some(text) = native_proxy_text(input) else {
+            return;
+        };
+        let selection = native_proxy_selection(input, &text).unwrap_or_else(|| {
+            let end = text.chars().count();
+            crate::NativeTextSelection { start: end, end }
+        });
+
+        if text != inner.native_text {
+            inner
+                .pending_events
+                .extend(crate::native_text_replacement_events(&text));
+            inner.native_text = text;
+            inner.native_selection_dirty = true;
+        }
+        if selection != inner.native_selection {
+            inner.native_selection = selection;
+            inner.native_selection_dirty = true;
+        }
+    }
+}
+
+unsafe fn sync_native_proxy_to_egui<P: Params + 'static>(inner: &mut Inner<P>) {
+    unsafe { queue_native_proxy_change(inner, inner.text_input) }
+}
+
+unsafe fn sync_native_text_input_from_egui<P: Params + 'static>(
+    inner: &mut Inner<P>,
+    output: &egui::PlatformOutput,
+) {
+    unsafe {
+        if inner.text_input.is_null() || output.ime.is_none() {
+            return;
+        }
+
+        let mut latest_text = None;
+        let mut latest_selection = None;
+        let mut gained_focus = false;
+        for event in &output.events {
+            let info = event.widget_info();
+            let Some(text) = info.current_text_value.as_deref() else {
+                continue;
+            };
+            latest_text = Some(text);
+            if let Some(selection) = info.text_selection.as_ref() {
+                latest_selection = Some(
+                    crate::NativeTextSelection {
+                        start: *selection.start(),
+                        end: *selection.end(),
+                    }
+                    .normalized(),
+                );
+            }
+            gained_focus |= matches!(event, egui::output::OutputEvent::FocusGained(_));
+        }
+
+        let Some(text) = latest_text else { return };
+        if text != inner.native_text {
+            set_native_proxy_text(inner.text_input, text);
+            inner.native_text.clear();
+            inner.native_text.push_str(text);
+        }
+
+        let char_count = text.chars().count();
+        let selection = latest_selection.unwrap_or_else(|| {
+            if gained_focus {
+                crate::NativeTextSelection {
+                    start: char_count,
+                    end: char_count,
+                }
+            } else {
+                crate::NativeTextSelection {
+                    start: inner.native_selection.start.min(char_count),
+                    end: inner.native_selection.end.min(char_count),
+                }
+            }
+        });
+        if latest_selection.is_some() || gained_focus {
+            set_native_proxy_selection(inner.text_input, text, selection);
+        }
+        inner.native_selection = selection;
+    }
 }
 
 /// Re-size the live editor surface to `logical_w` x `logical_h` logical
@@ -1056,7 +1374,9 @@ unsafe extern "C" fn insert_text<P: Params + 'static>(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
-        inner.pending_events.push(egui::Event::Text(s.to_string()));
+        inner
+            .pending_events
+            .extend(crate::native_text_input_events(s));
     });
 }
 
@@ -1088,6 +1408,51 @@ unsafe extern "C" fn delete_backward<P: Params + 'static>(self_: &AnyObject, _cm
             repeat: false,
             modifiers,
         });
+    });
+}
+
+/// `UIControlEventEditingChanged` target for the native text proxy. UIKit
+/// mutates `UITextField`'s private storage without reliably dispatching its
+/// public `UIKeyInput` overrides, so mirror the complete native value here.
+unsafe extern "C" fn text_field_changed<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    sender: *mut AnyObject,
+) {
+    ffi_firewall("text_field_changed", || unsafe {
+        if sender.is_null() {
+            return;
+        }
+        let Some(arc) = borrow_inner_arc::<P>(self_) else {
+            return;
+        };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(inner) = guard.as_mut() else { return };
+        queue_native_proxy_change(inner, sender);
+    });
+}
+
+/// `UIControlEventEditingDidEndOnExit` target. `UITextField` consumes Return
+/// as a control action instead of inserting a newline into its value.
+unsafe extern "C" fn text_field_return<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _sender: *mut AnyObject,
+) {
+    ffi_firewall("text_field_return", || unsafe {
+        let Some(arc) = borrow_inner_arc::<P>(self_) else {
+            return;
+        };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(inner) = guard.as_mut() else { return };
+        inner
+            .pending_events
+            .extend(crate::native_text_input_events("\n"));
+        inner.keyboard_dismiss_requested = true;
     });
 }
 
