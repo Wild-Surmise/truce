@@ -610,6 +610,10 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
         {
             let mut instance = enter_plugin(&data.plugin);
             instance.init();
+            // Hosts may save before activation or the first process block.
+            // Seed custom state now so that first save and subsequent recalls
+            // have the same complete envelope (including default UI/pattern state).
+            instance.republish_snapshot();
             data.param_infos = instance.params().param_infos();
         }
         // Query host params extension for request_flush support
@@ -2836,6 +2840,15 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             editor.state_changed();
         }
 
+        // State loads run on the main thread. Values are already restored,
+        // but hosts also need this notification to invalidate cached values.
+        if !data.host.is_null()
+            && !data.host_params.is_null()
+            && let Some(rescan) = (*data.host_params).rescan
+        {
+            rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
+
         true
     })
 }
@@ -2911,6 +2924,12 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
 
         // Tell the host the preset landed so it can update its
         // preset chrome (Bitwig's preset name display reads this).
+        if !data.host.is_null()
+            && !data.host_params.is_null()
+            && let Some(rescan) = (*data.host_params).rescan
+        {
+            rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
         if !data.host.is_null()
             && let Some(get_ext) = (*data.host).get_extension
         {
