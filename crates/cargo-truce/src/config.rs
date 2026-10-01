@@ -208,6 +208,11 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_icon_set: Option<String>,
+    /// AUM preferred window bounds in points. Shared-shell products default
+    /// to portrait 420x720; products with another base aspect can override it.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_view_size: Option<(u32, u32)>,
     /// Per-plugin iOS minimum OS version override. Falls back to
     /// `[ios].minimum_os_version`, which itself defaults to "16.0".
     #[serde(default)]
@@ -705,6 +710,7 @@ mod suite_tests {
             macos_icon: None,
             ios_app_group: None,
             ios_icon_set: None,
+            ios_view_size: None,
             ios_minimum_os_version: None,
             ios_url: None,
             ios_orientations: None,
@@ -721,6 +727,31 @@ mod suite_tests {
             version: None,
             description: None,
         }
+    }
+
+    #[test]
+    fn aum_view_size_parses_product_override() {
+        let p: PluginDef = toml::from_str(
+            r#"
+name = "Test"
+bundle_id = "test"
+crate = "test"
+category = "effect"
+ios_view_size = [820, 620]
+"#,
+        )
+        .unwrap();
+        assert_eq!(p.ios_view_size, Some((820, 620)));
+        let p: PluginDef = toml::from_str(
+            r#"
+name = "Test"
+bundle_id = "test"
+crate = "test"
+category = "effect"
+"#,
+        )
+        .unwrap();
+        assert_eq!(p.ios_view_size, None);
     }
 
     #[test]

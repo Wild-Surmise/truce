@@ -266,9 +266,11 @@ pub(crate) fn build_bundle(
     let au_mfr = &cfg.vendor.au_manufacturer;
     let au_tag = &p.au_tag;
     // `resizable` makes GarageBand offer its expand affordance for the
-    // AU v3 view. The editor's runtime size (`gui_get_size`) plus
-    // host-driven resize own the actual bounds, so no `size:` hint.
-    let extra_au_tags = ["resizable"];
+    // AU v3 view. AUM reads the underscored size hint for first-open bounds.
+    // Host-driven resizing still owns the actual bounds after opening.
+    let (width, height) = p.ios_view_size.unwrap_or((420, 720));
+    let size_tag = format!("_size:{{{width},{height}}}");
+    let extra_au_tags = ["resizable", size_tag.as_str()];
 
     let appex_info =
         crate::templates::au3::render_appex_info_plist(&crate::templates::au3::AppexPlistValues {
