@@ -959,6 +959,11 @@ pub(crate) fn generate_distribution_xml(
     // Per-scope <domains> drives Installer.app's "Destination Select"
     // page. `--ask` enables both - Installer.app shows the radio
     // buttons. `--user` / `--system` hard-lock the prefix, no page.
+    let conclusion = resources.and_then(|r| r.conclusion_html.as_deref()).map_or(
+        "",
+        |_| "    <conclusion file=\"conclusion.html\" mime-type=\"text/html\"/>\n",
+    );
+
     let domains = match scope {
         PkgScope::User => {
             "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" \
@@ -981,7 +986,7 @@ pub(crate) fn generate_distribution_xml(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{plugin_name}</title>
-{welcome}{license}{domains}    <options customize="always" require-scripts="false"/>
+{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
 
     <choices-outline>
 {choices_outline}    </choices-outline>

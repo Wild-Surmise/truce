@@ -9,6 +9,8 @@ use crate::CargoTruceError;
 use crate::PluginDef;
 use crate::Res;
 
+#[allow(dead_code)]
+mod installer_ui;
 pub(crate) mod stage;
 pub(crate) mod verify;
 

@@ -1636,6 +1636,10 @@ fn render_iss(
         }
     }
 
+    super::installer_ui::write_windows_messages(
+        &mut setup,
+        &p.installer.windows_packaging(&config.windows.packaging),
+    );
     setup
 }
 
@@ -1905,6 +1909,7 @@ fn render_suite_iss(
         }
     }
 
+    super::installer_ui::write_windows_messages(&mut setup, &config.windows.packaging);
     setup
 }
 

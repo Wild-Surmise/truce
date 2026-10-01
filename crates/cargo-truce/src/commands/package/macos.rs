@@ -409,6 +409,10 @@ fn package_one_suite(
             o.config.macos.packaging.license_html.as_deref(),
             "license.html",
         ),
+        (
+            o.config.macos.packaging.conclusion_html.as_deref(),
+            "conclusion.html",
+        ),
     ] {
         if let Some(html) = key {
             let src = root.join(html);
@@ -593,6 +597,11 @@ fn generate_suite_distribution_xml(
         .and_then(|r| r.license_html.as_deref())
         .map_or("", |_| "    <license file=\"license.html\"/>\n");
 
+    let conclusion = resources.and_then(|r| r.conclusion_html.as_deref()).map_or(
+        "",
+        |_| "    <conclusion file=\"conclusion.html\" mime-type=\"text/html\"/>\n",
+    );
+
     let domains = match scope {
         crate::install_scope::PkgScope::User => {
             "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" enable_localSystem=\"false\"/>\n"
@@ -610,7 +619,7 @@ fn generate_suite_distribution_xml(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{title}</title>
-{welcome}{license}{domains}    <options customize="always" require-scripts="false"/>
+{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
 
     <choices-outline>
 {outline}    </choices-outline>
@@ -1051,6 +1060,7 @@ fn build_vst3_preset_component(
 
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
     eprintln!("\nPackaging: {}", p.name);
+    let packaging = p.installer.macos_packaging(&o.config.macos.packaging);
     let plugin_version = p.resolved_version(o.version);
 
     let staging = truce_build::target_dir(root)
@@ -1150,25 +1160,20 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &plugin_formats,
         &extras,
         plugin_version,
-        Some(&o.config.macos.packaging),
+        Some(&packaging),
         o.effective_scope,
         crate::read_standalone_bin_name(&p.crate_name).is_some(),
     );
     let dist_xml_path = staging.join("distribution.xml");
     fs::write(&dist_xml_path, &dist_xml)?;
 
-    // Step 5: Prepare resources (optional welcome/license html)
+    // Step 5: Prepare resources (optional welcome/license/conclusion html)
     let resources_dir = staging.join("resources");
     fs::create_dir_all(&resources_dir)?;
     for (key, dst_name) in [
-        (
-            o.config.macos.packaging.welcome_html.as_deref(),
-            "welcome.html",
-        ),
-        (
-            o.config.macos.packaging.license_html.as_deref(),
-            "license.html",
-        ),
+        (packaging.welcome_html.as_deref(), "welcome.html"),
+        (packaging.license_html.as_deref(), "license.html"),
+        (packaging.conclusion_html.as_deref(), "conclusion.html"),
     ] {
         if let Some(html) = key {
             let src = root.join(html);

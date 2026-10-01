@@ -71,7 +71,7 @@ pub(crate) struct WindowsConfig {
     pub(crate) packaging: WindowsPackagingConfig,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsPackagingConfig {
     /// Publisher name shown in the installer and Apps & Features.
@@ -86,6 +86,10 @@ pub(crate) struct WindowsPackagingConfig {
     pub(crate) welcome_bmp: Option<String>,
     /// License shown on the wizard's license page (.rtf or .txt).
     pub(crate) license_rtf: Option<String>,
+    /// Plain welcome-page message; displayed in a monospace font.
+    pub(crate) welcome_message: Option<String>,
+    /// Plain completion-page message; displayed in a monospace font.
+    pub(crate) completion_message: Option<String>,
     /// Override for the stable `AppId` Inno Setup uses to detect upgrades.
     /// Defaults to `{vendor_id}.{bundle_id}` when absent.
     pub(crate) app_id: Option<String>,
@@ -100,7 +104,7 @@ pub(crate) struct MacosConfig {
     pub(crate) packaging: MacosPackagingConfig,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct MacosPackagingConfig {
     /// Whether to run `xcrun notarytool submit` on the produced
@@ -118,6 +122,46 @@ pub(crate) struct MacosPackagingConfig {
     /// License-page HTML for the productbuild Distribution wizard.
     /// macOS-only - Windows uses `[windows.packaging] license_rtf`.
     pub(crate) license_html: Option<String>,
+    /// Conclusion-page HTML for the productbuild Distribution wizard.
+    pub(crate) conclusion_html: Option<String>,
+}
+
+/// Optional per-product welcome/completion overrides in `[plugin.installer]`.
+#[derive(Deserialize, Default)]
+pub(crate) struct InstallerConfig {
+    pub(crate) welcome_html: Option<String>,
+    pub(crate) conclusion_html: Option<String>,
+    pub(crate) welcome_message: Option<String>,
+    pub(crate) completion_message: Option<String>,
+}
+
+impl InstallerConfig {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn macos_packaging(&self, defaults: &MacosPackagingConfig) -> MacosPackagingConfig {
+        let mut resolved = defaults.clone();
+        if let Some(path) = &self.welcome_html {
+            resolved.welcome_html = Some(path.clone());
+        }
+        if let Some(path) = &self.conclusion_html {
+            resolved.conclusion_html = Some(path.clone());
+        }
+        resolved
+    }
+
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) fn windows_packaging(
+        &self,
+        defaults: &WindowsPackagingConfig,
+    ) -> WindowsPackagingConfig {
+        let mut resolved = defaults.clone();
+        if let Some(text) = &self.welcome_message {
+            resolved.welcome_message = Some(text.clone());
+        }
+        if let Some(text) = &self.completion_message {
+            resolved.completion_message = Some(text.clone());
+        }
+        resolved
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -168,6 +212,9 @@ pub(crate) struct VendorConfig {
 pub(crate) struct PluginDef {
     #[serde(flatten)]
     pub(crate) shared: truce_build::PluginDef,
+    /// Product-specific wizard copy; absent fields inherit vendor defaults.
+    #[serde(default)]
+    pub(crate) installer: InstallerConfig,
     #[serde(default)]
     pub(crate) au3_subtype: Option<String>,
     #[serde(default = "default_au_tag")]
@@ -674,6 +721,7 @@ mod suite_tests {
 
     fn plugin(crate_name: &str, bundle_id: &str) -> PluginDef {
         PluginDef {
+            installer: InstallerConfig::default(),
             shared: truce_build::PluginDef {
                 name: crate_name.into(),
                 bundle_id: bundle_id.into(),
