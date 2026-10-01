@@ -2229,20 +2229,15 @@ fn au_version_u32(version: &str) -> u32 {
     ((major & 0xFFFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF)
 }
 
-fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
-    let info = P::info();
-
-    // Static metadata path: derive emits a `LazyLock`-cached
-    // `Vec<ParamInfo>` so registration doesn't construct a plugin
-    // instance just to read parameter shape. Hand-written
-    // `PluginExport` impls without a `Params::param_infos_static`
-    // override fall back to the historical
-    // `Self::create().params().param_infos()` walk inside the trait
-    // default - see `PluginExport::param_infos_static`.
-    let param_infos = P::param_infos_static();
+fn au_param_descriptors(param_infos: &[truce_params::ParamInfo]) -> Vec<AuParamDescriptor> {
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
 
-    for pi in &param_infos {
+    // Hidden parameters remain in Params and serialized state, with stable IDs,
+    // but must not be published in AUv2 lists or the AUv3 parameter tree.
+    for pi in param_infos
+        .iter()
+        .filter(|pi| !pi.flags.contains(ParamFlags::HIDDEN))
+    {
         let cs = ParamCStrings::from_info(pi);
         param_descs.push(AuParamDescriptor {
             id: pi.id,
@@ -2261,6 +2256,22 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             midi_channel: pi.midi_channel.map_or(-1, i16::from),
         });
     }
+
+    param_descs
+}
+
+fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
+    let info = P::info();
+
+    // Static metadata path: derive emits a `LazyLock`-cached
+    // `Vec<ParamInfo>` so registration doesn't construct a plugin
+    // instance just to read parameter shape. Hand-written
+    // `PluginExport` impls without a `Params::param_infos_static`
+    // override fall back to the historical
+    // `Self::create().params().param_infos()` walk inside the trait
+    // default - see `PluginExport::param_infos_static`.
+    let param_infos = P::param_infos_static();
+    let param_descs = au_param_descriptors(&param_infos);
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
@@ -2466,6 +2477,46 @@ mod tests {
         au_version_u32, drain_sysex_input, queue_sysex_input,
     };
     use truce_core::bus::{BusLayout, ChannelConfig};
+
+    #[test]
+    fn hidden_au_params_are_not_published_and_visible_ids_stay_stable() {
+        use super::au_param_descriptors;
+        use std::ffi::{CString, c_char};
+        use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, ParamValueKind};
+        let make = |id, flags| ParamInfo {
+            id,
+            name: "Test",
+            short_name: "Test",
+            group: "",
+            range: ParamRange::Linear { min: 0.0, max: 1.0 },
+            default_plain: 0.5,
+            unit: ParamUnit::None,
+            flags,
+            kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
+        };
+        let infos = [
+            make(0, ParamFlags::AUTOMATABLE),
+            make(22, ParamFlags::HIDDEN),
+            make(23, ParamFlags::HIDDEN | ParamFlags::AUTOMATABLE),
+            make(24, ParamFlags::AUTOMATABLE),
+        ];
+        let descriptors = au_param_descriptors(&infos);
+        assert_eq!(
+            descriptors.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [0, 24]
+        );
+        // Production descriptors intentionally live for the plugin lifetime.
+        // Release the test strings so this unit test doesn't leak them.
+        for p in descriptors {
+            unsafe {
+                drop(CString::from_raw(p.name as *mut c_char));
+                drop(CString::from_raw(p.unit as *mut c_char));
+                drop(CString::from_raw(p.group as *mut c_char));
+            }
+        }
+    }
 
     /// AU exposes one sidechain element, so registration counts aux buses
     /// to reject a plugin declaring more than one (rather than merging).
