@@ -2464,19 +2464,9 @@ const VST3_PARAM_IS_BYPASS: i32 = 1 << 16;
 // linear pass; splitting it further would scatter the one-time registration
 // wiring across helpers that each read once.
 #[allow(clippy::too_many_lines)]
-fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
-    let info = P::info();
-    // Static metadata path: derive emits a `LazyLock`-cached
-    // `Vec<ParamInfo>` so registration skips the
-    // `Self::create().params().param_infos()` walk and the plugin
-    // construction it implies. Hand-written `PluginExport` impls
-    // without a `Params::param_infos_static` override fall back to
-    // the historical runtime path inside `PluginExport`'s default
-    // impl.
-    let param_infos = P::param_infos_static();
-
+fn vst3_param_descriptors(param_infos: &[ParamInfo]) -> Vec<Vst3ParamDescriptor> {
     let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
-    for pi in &param_infos {
+    for pi in param_infos {
         let cs = ParamCStrings::from_info(pi);
 
         let mut flags: i32 = 0;
@@ -2506,7 +2496,9 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             id: pi.id,
             name: cs.name.into_raw(),
             short_name: cs.short_name.into_raw(),
-            units: cs.unit.into_raw(),
+            // format_value already carries units (including scaled kHz/ms).
+            // Hosts append this field to that string, producing duplicate units.
+            units: CString::default().into_raw(),
             min: pi.range.min(),
             max: pi.range.max(),
             default_normalized: pi.range.normalize(pi.default_plain),
@@ -2518,6 +2510,22 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             group: cs.group.into_raw(),
         });
     }
+
+    param_descs
+}
+
+fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
+    let info = P::info();
+    // Static metadata path: derive emits a `LazyLock`-cached
+    // `Vec<ParamInfo>` so registration skips the
+    // `Self::create().params().param_infos()` walk and the plugin
+    // construction it implies. Hand-written `PluginExport` impls
+    // without a `Params::param_infos_static` override fall back to
+    // the historical runtime path inside `PluginExport`'s default
+    // impl.
+    let param_infos = P::param_infos_static();
+
+    let mut param_descs = vst3_param_descriptors(&param_infos);
 
     // Hidden MIDI input proxies (see the MIDI-proxy block above):
     // appended *after* the real params so the shim's index-based
@@ -2969,6 +2977,37 @@ mod tests {
             kind: ParamValueKind::Float,
             midi_map,
             midi_channel: None,
+        }
+    }
+
+    #[test]
+    fn host_value_strings_have_one_unit_including_scaled_frequencies() {
+        for (unit, value, expected) in [
+            (ParamUnit::Db, -6.0, "-6.0 dB"),
+            (ParamUnit::Percent, 0.5, "50%"),
+            (ParamUnit::Milliseconds, 330.0, "330.0 ms"),
+            (ParamUnit::Hz, 2000.0, "2.0 kHz"),
+        ] {
+            let mut pi = info(
+                ParamRange::Linear {
+                    min: -96.0,
+                    max: 20000.0,
+                },
+                None,
+            );
+            pi.unit = unit;
+            let descriptor = vst3_param_descriptors(&[pi.clone()]).pop().unwrap();
+            let host_units = unsafe { CStr::from_ptr(descriptor.units) }
+                .to_str()
+                .unwrap();
+            let text = truce_params::format_param_value(&pi, value);
+            assert_eq!(format!("{text}{host_units}"), expected);
+            unsafe {
+                drop(CString::from_raw(descriptor.name as *mut c_char));
+                drop(CString::from_raw(descriptor.short_name as *mut c_char));
+                drop(CString::from_raw(descriptor.units as *mut c_char));
+                drop(CString::from_raw(descriptor.group as *mut c_char));
+            }
         }
     }
 
