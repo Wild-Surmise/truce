@@ -3,6 +3,13 @@
 use crate::config::WindowsPackagingConfig;
 use std::fmt::Write;
 
+pub(super) fn write_windows_setup(out: &mut String, config: &WindowsPackagingConfig) {
+    // Inno hides the welcome page by default, even with custom label text.
+    if config.welcome_message.is_some() {
+        out.push_str("DisableWelcomePage=no\r\n");
+    }
+}
+
 pub(super) fn write_windows_messages(out: &mut String, config: &WindowsPackagingConfig) {
     if config.welcome_message.is_none() && config.completion_message.is_none() {
         return;
@@ -37,6 +44,41 @@ pub(super) fn write_windows_messages(out: &mut String, config: &WindowsPackaging
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_welcome_enables_page_for_product_and_suite() {
+        let vendor = WindowsPackagingConfig {
+            welcome_message: Some("Welcome to the suite".into()),
+            ..Default::default()
+        };
+        let product = crate::config::InstallerConfig {
+            welcome_message: Some("Welcome to this product".into()),
+            ..Default::default()
+        };
+        for config in [
+            vendor.clone(),
+            product.windows_packaging(&vendor),
+            product.windows_packaging(&WindowsPackagingConfig::default()),
+            crate::config::InstallerConfig::default().windows_packaging(&vendor),
+        ] {
+            let mut out = String::new();
+            write_windows_setup(&mut out, &config);
+            assert_eq!(out, "DisableWelcomePage=no\r\n");
+        }
+    }
+
+    #[test]
+    fn absent_welcome_preserves_default_even_with_completion_copy() {
+        for completion_message in [None, Some("Finished".into())] {
+            let config = WindowsPackagingConfig {
+                completion_message,
+                ..Default::default()
+            };
+            let mut out = String::new();
+            write_windows_setup(&mut out, &config);
+            assert!(out.is_empty());
+        }
+    }
 
     #[test]
     fn product_copy_overrides_only_configured_fields() {

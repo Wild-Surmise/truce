@@ -1490,6 +1490,10 @@ fn render_iss(
 
     let mut setup = String::new();
     setup.push_str("[Setup]\r\n");
+    super::installer_ui::write_windows_setup(
+        &mut setup,
+        &p.installer.windows_packaging(&config.windows.packaging),
+    );
     let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape_directive(&app_id));
     let _ = write!(setup, "AppName={}\r\n", iss_escape_directive(&p.name));
     let _ = write!(setup, "AppVersion={}\r\n", iss_escape_directive(version));
@@ -1965,6 +1969,7 @@ fn write_suite_setup_section(
         .filter(|p| p.exists());
 
     setup.push_str("[Setup]\r\n");
+    super::installer_ui::write_windows_setup(setup, &config.windows.packaging);
     let _ = write!(
         setup,
         "AppId={{{{{}}}}}\r\n",
