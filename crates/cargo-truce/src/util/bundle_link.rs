@@ -201,6 +201,9 @@ fn clang_bundle_single(
         // truce-{clap,vst3,vst2}) aren't dead-stripped before we get
         // a chance to mark them exported below.
         "-Wl,-all_load",
+        // This is a separate link from rustc's cdylib, so RUSTFLAGS cannot
+        // reserve space here. Leave room for DRM load commands in each slice.
+        "-Wl,-headerpad,0x1000",
     ]);
     for framework in MACOS_PLUGIN_FRAMEWORKS {
         cmd.args(["-framework", framework]);
@@ -367,4 +370,89 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
         archive_path,
         temp_dir,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Exercise the real second linker, not rustc's unrelated cdylib output.
+    #[test]
+    fn bundle_link_reserves_drm_header_padding_for_both_architectures() {
+        let temp = Command::new("mktemp")
+            .args(["-d", "-t", "truce-headerpad"])
+            .output()
+            .unwrap();
+        assert!(temp.status.success());
+        let root = PathBuf::from(String::from_utf8(temp.stdout).unwrap().trim());
+        let result = std::panic::catch_unwind(|| {
+            let source = root.join("probe.c");
+            std::fs::write(&source, "int GetPluginFactory(void) { return 42; }\n").unwrap();
+            for (arch, name) in [(MacArch::Arm64, "arm64"), (MacArch::X86_64, "x86_64")] {
+                let object = root.join(format!("{name}.o"));
+                let archive = root.join(format!("{name}.a"));
+                let binary = root.join(format!("{name}.bundle"));
+                assert!(
+                    Command::new("clang")
+                        .args(["-arch", name, "-mmacosx-version-min=11.0", "-c"])
+                        .arg(&source)
+                        .arg("-o")
+                        .arg(&object)
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                assert!(
+                    Command::new("ar")
+                        .arg("rcs")
+                        .arg(&archive)
+                        .arg(&object)
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                link_macos_bundle(&[(arch, archive)], &["_GetPluginFactory"], "11.0", &binary)
+                    .unwrap();
+                assert!(
+                    Command::new("strip")
+                        .args(["-S", "-x"])
+                        .arg(&binary)
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                let data = std::fs::read(binary).unwrap();
+                let u32_at = |offset| {
+                    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize
+                };
+                assert_eq!(u32_at(0), 0xfeedfacf);
+                assert_eq!(u32_at(12), 8, "must test MH_BUNDLE");
+                let header_end = 32 + u32_at(20);
+                let mut first_section = usize::MAX;
+                let mut command = 32;
+                for _ in 0..u32_at(16) {
+                    if u32_at(command) == 0x19 {
+                        // LC_SEGMENT_64
+                        for i in 0..u32_at(command + 64) {
+                            let offset = u32_at(command + 72 + i * 80 + 48);
+                            if offset != 0 {
+                                first_section = first_section.min(offset);
+                            }
+                        }
+                    }
+                    command += u32_at(command + 4);
+                }
+                assert_ne!(first_section, usize::MAX);
+                let padding = first_section - header_end;
+                assert!(
+                    padding >= 0x1000,
+                    "{name} bundle has only {padding} header-padding bytes"
+                );
+            }
+        });
+        std::fs::remove_dir_all(root).unwrap();
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
+    }
 }
