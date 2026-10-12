@@ -21,7 +21,7 @@ use objc2::sel;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
-use truce_gui::ios::{TouchPhase, fnv1a_64, ivar_offset};
+use truce_gui::ios::{fnv1a_64, ivar_offset};
 use truce_params::Params;
 
 use crate::renderer::EguiRenderer;
@@ -82,7 +82,7 @@ struct Inner<P: Params + ?Sized> {
     native_selection_dirty: bool,
     keyboard_session_active: bool,
     keyboard_dismiss_requested: bool,
-    last_pointer: egui::Pos2,
+    touches: crate::ios_touch::TouchTranslator,
 }
 
 impl<P: Params + 'static> EguiEditor<P> {
@@ -304,7 +304,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             native_selection_dirty: false,
             keyboard_session_active: false,
             keyboard_dismiss_requested: false,
-            last_pointer: egui::pos2(-1.0, -1.0),
+            touches: crate::ios_touch::TouchTranslator::default(),
         };
         *self
             .inner
@@ -314,7 +314,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn close(&mut self) {
-        let Some(inner) = self
+        let Some(mut inner) = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -325,6 +325,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // SAFETY: `child_view`/`display_link` were built by
         // `install_editor_view` for this `P`; `take()` above guarantees
         // no other path touches them.
+        inner.touches.cancel_all(&mut inner.pending_events);
+        // Deliver cancellation to raw-touch consumers before their editor disappears.
+        ffi_firewall("close_touch_cancel", || run_frame(&mut inner, false));
         unsafe { teardown_editor_view::<P>(inner.child_view, inner.display_link) };
         // EguiRenderer drops here, releasing wgpu surface / device / queue.
         drop(inner);
@@ -540,6 +543,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
             );
         }
         let _: () = msg_send![view, setUserInteractionEnabled: true];
+        let _: () = msg_send![view, setMultipleTouchEnabled: true];
         let _: () = msg_send![view, setContentScaleFactor: f64::from(scale)];
 
         // Reach into the view's layer (already a CAMetalLayer thanks
@@ -840,10 +844,13 @@ unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused:
         let Some(arc) = borrow_inner_arc::<P>(view) else {
             return;
         };
-        let guard = arc
+        let mut guard = arc
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(inner) = guard.as_ref() else { return };
+        let Some(inner) = guard.as_mut() else { return };
+        if paused {
+            inner.touches.cancel_all(&mut inner.pending_events);
+        }
         if inner.display_link.is_null() {
             return;
         }
@@ -902,11 +909,11 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
-        run_frame(inner);
+        run_frame(inner, true);
     });
 }
 
-fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
+fn run_frame<P: Params + 'static>(inner: &mut Inner<P>, present: bool) {
     // UIKit updates the proxy's selectedTextRange directly while the user
     // drags the keyboard trackpad. Mirror that range into egui before this
     // frame consumes input events.
@@ -920,7 +927,8 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     #[allow(clippy::cast_precision_loss)]
     let screen_rect = egui::Rect::from_min_size(
         egui::pos2(0.0, 0.0),
-        egui::vec2(inner.logical_w as f32, inner.logical_h as f32),
+        egui::vec2(inner.logical_w as f32, inner.logical_h as f32)
+            / inner.egui_ctx.zoom_factor().max(0.01),
     );
     let mut raw_input = egui::RawInput {
         screen_rect: Some(screen_rect),
@@ -952,6 +960,12 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .ui(root_ui, &inner.context);
     });
+    // Teardown delivers Cancel to consumers without presenting a hidden Metal
+    // surface or reclaiming the UIKit keyboard. Pause cancellation is queued
+    // until the next active frame.
+    if !present {
+        return;
+    }
     unsafe { sync_native_text_input_from_egui(inner, &output.platform_output) };
     if inner.native_selection_dirty
         && crate::apply_native_selection_to_focused_text_edit(
@@ -1290,7 +1304,7 @@ unsafe extern "C" fn touches_began<P: Params + 'static>(
     _event: *mut AnyObject,
 ) {
     ffi_firewall("touches_began", || unsafe {
-        dispatch_touch::<P>(self_, touches, TouchPhase::Began);
+        dispatch_touch::<P>(self_, touches, egui::TouchPhase::Start);
     });
 }
 
@@ -1301,7 +1315,7 @@ unsafe extern "C" fn touches_moved<P: Params + 'static>(
     _event: *mut AnyObject,
 ) {
     ffi_firewall("touches_moved", || unsafe {
-        dispatch_touch::<P>(self_, touches, TouchPhase::Moved);
+        dispatch_touch::<P>(self_, touches, egui::TouchPhase::Move);
     });
 }
 
@@ -1312,7 +1326,7 @@ unsafe extern "C" fn touches_ended<P: Params + 'static>(
     _event: *mut AnyObject,
 ) {
     ffi_firewall("touches_ended", || unsafe {
-        dispatch_touch::<P>(self_, touches, TouchPhase::Ended);
+        dispatch_touch::<P>(self_, touches, egui::TouchPhase::End);
     });
 }
 
@@ -1323,7 +1337,7 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
     _event: *mut AnyObject,
 ) {
     ffi_firewall("touches_cancelled", || unsafe {
-        dispatch_touch::<P>(self_, touches, TouchPhase::Ended);
+        dispatch_touch::<P>(self_, touches, egui::TouchPhase::Cancel);
     });
 }
 
@@ -1459,7 +1473,7 @@ unsafe extern "C" fn text_field_return<P: Params + 'static>(
 unsafe fn dispatch_touch<P: Params + 'static>(
     self_: &AnyObject,
     touches: *mut AnyObject,
-    phase: TouchPhase,
+    phase: egui::TouchPhase,
 ) {
     unsafe {
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
@@ -1470,39 +1484,21 @@ unsafe fn dispatch_touch<P: Params + 'static>(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
 
-        // Pick one touch - egui is single-pointer. Real multi-touch
-        // would need an `egui::Event` per finger which egui doesn't
-        // model natively; "first finger wins" is the standard
-        // single-pointer reduction.
-        let touch: *mut AnyObject = msg_send![touches, anyObject];
-        if touch.is_null() {
-            return;
-        }
+        // NSSet order is unspecified; the translator sorts native identities.
+        let objects: *mut AnyObject = msg_send![touches, allObjects];
+        let count: usize = msg_send![objects, count];
         let view_ptr: *mut AnyObject = std::ptr::from_ref::<AnyObject>(self_).cast_mut();
-        let pt: NSPoint = msg_send![touch, locationInView: view_ptr];
-        #[allow(clippy::cast_possible_truncation)]
-        let pos = egui::pos2(pt.x as f32, pt.y as f32);
-        inner.last_pointer = pos;
-        inner.pending_events.push(egui::Event::PointerMoved(pos));
-        match phase {
-            TouchPhase::Began => {
-                inner.pending_events.push(egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::default(),
-                });
-            }
-            TouchPhase::Ended => {
-                inner.pending_events.push(egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::default(),
-                });
-                inner.pending_events.push(egui::Event::PointerGone);
-            }
-            TouchPhase::Moved => {}
+        let zoom = inner.egui_ctx.zoom_factor().max(0.01);
+        let mut changed = Vec::with_capacity(count);
+        for index in 0..count {
+            let touch: *mut AnyObject = msg_send![objects, objectAtIndex: index];
+            let pt: NSPoint = msg_send![touch, locationInView: view_ptr];
+            #[allow(clippy::cast_possible_truncation)]
+            let pos = crate::ios_touch::zoom_position(egui::pos2(pt.x as f32, pt.y as f32), zoom);
+            changed.push((touch as usize, pos));
         }
+        inner
+            .touches
+            .translate(phase, &mut changed, &mut inner.pending_events);
     }
 }

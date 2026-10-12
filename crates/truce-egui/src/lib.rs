@@ -25,6 +25,7 @@
 #[cfg(all(not(target_os = "ios"), not(target_arch = "wasm32")))]
 pub mod editor;
 pub mod font;
+mod ios_touch;
 pub mod platform;
 #[cfg(target_os = "windows")]
 mod render_thread;
