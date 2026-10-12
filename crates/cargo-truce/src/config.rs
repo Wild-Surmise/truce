@@ -290,8 +290,9 @@ pub(crate) struct PluginDef {
     /// Never up-scales above 1.0. Default `true` - desktop-sized
     /// editors are the common case and overflow the iPhone screen
     /// without it. Opt out (`false`) for plug-ins whose editor is
-    /// already iPhone-sized or that ship multiple per-orientation
-    /// layouts and want verbatim natural-pixel rendering.
+    /// already iPhone-sized. With false, resizable editors follow
+    /// the available host bounds via gui_set_size; non-resizable
+    /// editors retain their natural size without a transform.
     #[serde(default = "default_true")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_scale_editor_to_fit: bool,

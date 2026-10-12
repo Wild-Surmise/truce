@@ -505,26 +505,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             container.clipsToBounds = true
             container.translatesAutoresizingMaskIntoConstraints = false
             previewHost.addSubview(container)
-            // Centre the editor inside the hero `previewHost`
-            // region. previewHost's bounds vary by screen size; the
-            // editor keeps its natural pixel size, so we use centre
-            // anchors + fixed width/height instead of pin-to-edges
-            // (which would stretch the editor and break its
-            // logical-pixel coordinate space).
-            NSLayoutConstraint.activate([
-                container.centerXAnchor.constraint(equalTo: previewHost.centerXAnchor),
-                container.centerYAnchor.constraint(equalTo: previewHost.centerYAnchor),
-                container.widthAnchor.constraint(equalToConstant: sz.width),
-                container.heightAnchor.constraint(equalToConstant: sz.height),
-            ])
+            // Responsive editors receive host bounds; fixed editors retain
+            // their natural canvas and optional aspect-preserving transform.
+            let followsHost = !self.scaleEditorToFit && cb.pointee.gui_can_resize(ctx) != 0
+            if followsHost {
+                NSLayoutConstraint.activate([
+                    container.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
+                    container.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
+                    container.topAnchor.constraint(equalTo: previewHost.topAnchor),
+                    container.bottomAnchor.constraint(equalTo: previewHost.bottomAnchor),
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    container.centerXAnchor.constraint(equalTo: previewHost.centerXAnchor),
+                    container.centerYAnchor.constraint(equalTo: previewHost.centerYAnchor),
+                    container.widthAnchor.constraint(equalToConstant: sz.width),
+                    container.heightAnchor.constraint(equalToConstant: sz.height),
+                ])
+            }
             cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
             log.info("editor: gui_open(\(w)x\(h)) into UIView")
-            // Keep references for `applyEditorScale`. We leave the
-            // fixed-size constraints in place even when scale-to-
-            // fit is active - the transform shrinks the rasterised
-            // bitmap at composite time without changing the
-            // editor's logical-pixel coordinate space (which the
-            // CPU backend bakes into its tiny-skia Pixmap size).
+            // Keep references for host resizing or fixed-canvas scaling.
             self.editorContainer = container
             self.editorNaturalSize = sz
 
@@ -1656,17 +1657,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
     }
 
-    /// Apply the uniform scale-to-fit transform to the editor
-    /// container so the rasterised bitmap fills `previewHost.bounds`
-    /// without distorting aspect ratio. Up-scales as well as down-
-    /// scales - small desktop editors expand to fill iPad real
-    /// estate; large editors shrink to fit iPhone. No-op when
-    /// `scaleEditorToFit` is false.
+    /// Resize opted-in responsive editors in UIKit points. Legacy fixed
+    /// canvases retain their aspect-preserving composite-time scale.
     func applyEditorScale() {
-        guard self.scaleEditorToFit,
-              let container = self.editorContainer,
+        guard let container = self.editorContainer,
               let host = container.superview else { return }
         let avail = host.bounds.size
+        guard avail.width > 0, avail.height > 0 else { return }
+        if !self.scaleEditorToFit {
+            guard let cb = g_callbacks, let ctx = self.inProcessCtx,
+                  cb.pointee.gui_can_resize(ctx) != 0 else { return }
+            let width = UInt32(avail.width.rounded())
+            let height = UInt32(avail.height.rounded())
+            let size = CGSize(width: CGFloat(width), height: CGFloat(height))
+            guard size != self.editorNaturalSize else { return }
+            self.editorNaturalSize = size
+            container.transform = .identity
+            cb.pointee.gui_set_size(ctx, width, height)
+            return
+        }
         let natural = self.editorNaturalSize
         guard natural.width > 0, natural.height > 0,
               avail.width > 0, avail.height > 0 else { return }
