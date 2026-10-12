@@ -921,6 +921,12 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>, present: bool) {
     // Publish the true host-view logical size so a plugin's `ui()` can
     // read it back via `truce_egui::actual_window_size` on iOS the same
     // way the desktop `editor.rs::run_frame` does each frame.
+    inner.egui_ctx.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("truce_ios_editor_view"),
+            inner.child_view as usize,
+        )
+    });
     crate::set_actual_window_size(&inner.egui_ctx, (inner.logical_w, inner.logical_h));
     // `as f32` from u32: editor logical dimensions stay well below
     // 2^23, so the f32 mantissa loss never matters.

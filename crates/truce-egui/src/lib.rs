@@ -49,6 +49,18 @@ mod editor_web;
 #[cfg(target_arch = "wasm32")]
 pub use editor_web::EditorUi;
 
+/// Borrow the UIKit editor UIView for immediate, main-thread native presentation.
+///
+/// # Safety
+/// Call only during `EditorUi::ui` on the UIKit main thread. The pointer is
+/// borrowed and must not be retained as a raw pointer beyond the call; UIKit
+/// objects derived from it need their own retain if used asynchronously.
+#[cfg(target_os = "ios")]
+pub unsafe fn ios_editor_view(ctx: &egui::Context) -> Option<*mut std::ffi::c_void> {
+    ctx.data(|data| data.get_temp::<usize>(egui::Id::new("truce_ios_editor_view")))
+        .map(|pointer| pointer as *mut std::ffi::c_void)
+}
+
 fn actual_window_size_id() -> egui::Id {
     egui::Id::new("truce_egui_actual_window_size")
 }
