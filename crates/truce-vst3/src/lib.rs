@@ -51,12 +51,50 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 // Instance wrapper
 // ---------------------------------------------------------------------------
 
-/// Bounded handoff slot for state loads. Capacity 1: presets don't
-/// arrive faster than the audio thread completes a block, and on
-/// overflow we want most-recent-wins (`force_push`) so a rapid
-/// double-recall doesn't get the audio thread to apply a stale state
-/// after the host already moved on.
-type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
+/// Separate bounded host/editor handoffs. An editor write must never replace a
+/// pending host recall: it may have been built from the snapshot that preceded
+/// that recall. Each source remains newest-wins, but host recalls take priority.
+/// Epochs also reject an editor producer that started before a recall and only
+/// finished enqueueing after the consumer discarded its older edits.
+struct StateLoadQueue<T> {
+    host: crossbeam_queue::ArrayQueue<T>,
+    editor: crossbeam_queue::ArrayQueue<(u64, T)>,
+    epoch: AtomicU64,
+}
+
+impl<T> StateLoadQueue<T> {
+    fn new() -> Self {
+        Self {
+            host: crossbeam_queue::ArrayQueue::new(1),
+            editor: crossbeam_queue::ArrayQueue::new(1),
+            epoch: AtomicU64::new(0),
+        }
+    }
+
+    fn push_host(&self, state: T) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        let _ = self.host.force_push(state);
+    }
+
+    fn push_editor(&self, state: T) {
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let _ = self.editor.force_push((epoch, state));
+    }
+
+    /// One bounded drain, shared by processing and inactive lifecycle paths.
+    /// Editor/UI reconciliation after publication still belongs to the editor;
+    /// this handoff only discards edits made before a pending recall is applied.
+    fn pop(&self) -> Option<T> {
+        if let Some(state) = self.host.pop() {
+            self.epoch.fetch_add(1, Ordering::SeqCst);
+            let _ = self.editor.pop();
+            return Some(state);
+        }
+        self.editor.pop().and_then(|(epoch, state)| {
+            (epoch == self.epoch.load(Ordering::SeqCst)).then_some(state)
+        })
+    }
+}
 
 /// VST3 `RestartFlags::kLatencyChanged`. The audio thread flags this
 /// through `truce_vst3_mark_restart` (an atomic bit-set, no host call);
@@ -126,7 +164,7 @@ struct Vst3Instance<P: PluginExport> {
     midi_maps: Vec<(u32, MidiMap)>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
-    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
+    /// Bounded handoffs for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
     /// `cb_process` and calls [`state::apply_state`]
@@ -134,7 +172,7 @@ struct Vst3Instance<P: PluginExport> {
     /// runs, so the host thread drains it in `cb_state_save` /
     /// `cb_set_active` - the editor pushes unconditionally rather than
     /// entering the cell from its own (possibly third) thread.
-    pending_state: Arc<StateLoadQueue>,
+    pending_state: Arc<StateLoadQueue<state::DeserializedState>>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()` reports. Updated by the audio thread (or `cb_reset`)
     /// so host-thread callbacks (`cb_get_latency`, `cb_get_tail`) read
@@ -361,7 +399,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 param_ranges,
                 midi_maps,
                 transport_slot: TransportSlot::new(),
-                pending_state: Arc::new(StateLoadQueue::new(1)),
+                pending_state: Arc::new(StateLoadQueue::new()),
                 latency_cache,
                 tail_cache,
                 midi_proxy_values: (0..midi_proxy_len::<P>())
@@ -1281,24 +1319,18 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // running a process block. pluginval / DAW preset reload
         // both observe this.
         state::apply_params(&*inst.params_arc, &deserialized);
-        if inst.active.load(Ordering::Relaxed) {
-            // Active: the audio thread drains `pending_state` at the top
-            // of the next block and applies the custom-state blob under
-            // its exclusive `&mut plugin`. `force_push` overwrites any
-            // older pending blob - see the `pending_state` field comment
-            // for why newest-wins is right.
-            let _ = inst.pending_state.force_push(deserialized);
-        } else {
-            // Inactive: no `cb_process` will run, so apply the full
-            // state (params + extra) synchronously under the plugin
-            // lock - uncontended here since no audio thread is
-            // processing. Otherwise a `getState` before the next
-            // activate would re-serialize stale custom state.
-            let mut plugin = enter_plugin(&inst.plugin);
-            state::apply_state(&mut *plugin, &deserialized);
-            // No `cb_process` will publish, so refresh the snapshot slot
-            // now - a `getState` while still inactive reads live state.
-            plugin.republish_snapshot();
+        // Publish through the same priority handoff even while inactive so
+        // pre-recall editor writes cannot survive and overwrite this load at
+        // the next save, activation, or process callback.
+        inst.pending_state.push_host(deserialized);
+        if !inst.active.load(Ordering::Relaxed) {
+            // Inactive: the host owns the plugin and must publish immediately
+            // so a getState before activation sees the recalled custom state.
+            if let Some(deserialized) = inst.pending_state.pop() {
+                let mut plugin = enter_plugin(&inst.plugin);
+                state::apply_state(&mut *plugin, &deserialized);
+                plugin.republish_snapshot();
+            }
         }
         // `try_enter`, not `enter`: a host can deliver `setState`
         // synchronously from a component-handler callback while an outer
@@ -2340,7 +2372,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // inactive the main thread drains it in `cb_state_save`
                         // / `cb_set_active`, so an edit made in that window is
                         // neither lost nor stranded.
-                        let _ = pending_state_for_set.force_push(state::DeserializedState {
+                        pending_state_for_set.push_editor(state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
                             persist: Vec::new(),
@@ -2963,6 +2995,46 @@ mod tests {
     use super::*;
     use truce_core::events::EventBody;
     use truce_params::{MidiSource, ParamFlags, ParamUnit, ParamValueKind};
+
+    #[test]
+    fn pending_host_recall_cannot_be_replaced_by_editor_state() {
+        let queue = StateLoadQueue::new();
+        queue.push_editor("old editor state");
+        queue.push_host("restored project");
+        queue.push_editor("edit based on old snapshot");
+        assert_eq!(queue.pop(), Some("restored project"));
+        assert_eq!(queue.pop(), None);
+        // Once the UI has reconciled with the published restore, edits work.
+        queue.push_editor("post-recall edit");
+        assert_eq!(queue.pop(), Some("post-recall edit"));
+    }
+
+    #[test]
+    fn pending_state_is_newest_wins_within_each_source() {
+        let queue = StateLoadQueue::new();
+        queue.push_editor(1);
+        queue.push_editor(2);
+        assert_eq!(queue.pop(), Some(2));
+        queue.push_host(3);
+        queue.push_host(4);
+        queue.push_editor(5);
+        assert_eq!(queue.pop(), Some(4));
+        assert_eq!(queue.pop(), None);
+    }
+
+    #[test]
+    fn delayed_editor_enqueue_cannot_survive_host_recall() {
+        let queue = StateLoadQueue::new();
+        // Deterministically interleave a producer paused before force_push.
+        let before_recall = queue.epoch.load(Ordering::SeqCst);
+        queue.push_host("project");
+        let during_recall = queue.epoch.load(Ordering::SeqCst);
+        assert_eq!(queue.pop(), Some("project"));
+        for stale_epoch in [before_recall, during_recall] {
+            let _ = queue.editor.force_push((stale_epoch, "stale edit"));
+            assert_eq!(queue.pop(), None);
+        }
+    }
 
     fn info(range: ParamRange, midi_map: Option<MidiSource>) -> ParamInfo {
         ParamInfo {
