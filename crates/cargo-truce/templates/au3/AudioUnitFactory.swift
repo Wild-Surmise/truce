@@ -934,8 +934,10 @@ class TruceAUAudioUnit: AUAudioUnit {
             return state
         }
         set {
-            super.fullState = newValue
             guard let ctx = rustCtx, let cb = g_callbacks else { return }
+            // The Rust envelope is authoritative. The redundant Apple `data`
+            // archive may be incompatible or corrupt; decoding it first can
+            // raise an Objective-C exception before we reach our own loader.
             if let blob = newValue?["truce_state"] as? Data {
                 blob.withUnsafeBytes { ptr in
                     cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
@@ -951,21 +953,36 @@ class TruceAUAudioUnit: AUAudioUnit {
             // struct tail (AU ABI version 1); this appex may be newer
             // than the plugin binary, so gate on the reported version
             // before reading them.
-            guard truceAbiTailVersion(cb) >= 1,
+            if truceAbiTailVersion(cb) >= 1,
                   let dict = newValue,
                   let keyCount = cb.pointee.legacy_state_key_count,
                   let keyAt = cb.pointee.legacy_state_key_at,
-                  let loadForeign = cb.pointee.state_load_foreign else { return }
-            for i in 0..<keyCount(ctx) {
-                guard let cKey = keyAt(ctx, i),
-                      let blob = dict[String(cString: cKey)] as? Data else { continue }
-                let accepted = blob.withUnsafeBytes { ptr in
-                    loadForeign(ctx, cKey, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
+                  let loadForeign = cb.pointee.state_load_foreign {
+                for i in 0..<keyCount(ctx) {
+                    guard let cKey = keyAt(ctx, i),
+                          let blob = dict[String(cString: cKey)] as? Data else { continue }
+                    let accepted = blob.withUnsafeBytes { ptr in
+                        loadForeign(ctx, cKey, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
+                    }
+                    if accepted != 0 {
+                        syncParameterTreeFromRust()
+                        return
+                    }
                 }
-                if accepted != 0 {
-                    syncParameterTreeFromRust()
-                    return
+            }
+
+            // Retain compatibility with parameter-only Apple presets. Swift
+            // do/catch cannot catch NSException: keep Apple's decoder entirely
+            // inside the Objective-C boundary in the shared bridging header.
+            guard let dict = newValue, dict["data"] != nil else { return }
+            let parameters = _parameterTree?.allParameters ?? []
+            let previousValues = parameters.map { $0.value }
+            if !truce_au_restore_parameter_state(self, dict) {
+                // The decoder may have applied some parameters before failing.
+                for (parameter, value) in zip(parameters, previousValues) {
+                    parameter.value = value
                 }
+                logger.error("AU state restore: rejected invalid Apple parameter archive")
             }
         }
     }

@@ -219,9 +219,27 @@ pub mod au3 {
             assert!(SWIFT_SOURCE.contains("descriptor.pointee.bypass_param_id"));
             assert!(SWIFT_SOURCE.contains("cb.pointee.param_get_value(ctx, bypassID)"));
             assert!(SWIFT_SOURCE.contains("cb.pointee.param_set_value(ctx, bypassID"));
-            assert!(!SWIFT_SOURCE.contains(
-                "override var shouldBypassEffect: Bool { get { false } set { } }"
-            ));
+            assert!(!SWIFT_SOURCE
+                .contains("override var shouldBypassEffect: Bool { get { false } set { } }"));
+        }
+
+        #[test]
+        fn swift_state_restore_survives_incompatible_apple_archives() {
+            // Exercise the actual Swift template against AudioToolbox, not a
+            // string assertion or a second implementation of the setter.
+            let result = std::process::Command::new("python3")
+                .arg(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/au3_state/run.py"
+                ))
+                .output()
+                .expect("AUv3 state regression test requires Python 3 and Xcode");
+            assert!(
+                result.status.success(),
+                "AUv3 state restoration failed:\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
         }
     }
 }
