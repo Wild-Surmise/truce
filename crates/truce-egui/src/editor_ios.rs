@@ -544,6 +544,10 @@ unsafe fn install_editor_view<P: Params + 'static>(
         }
         let _: () = msg_send![view, setUserInteractionEnabled: true];
         let _: () = msg_send![view, setMultipleTouchEnabled: true];
+        // Track floating/split iPad keyboards too. The guide belongs to this
+        // embedded editor, so its frame is already in host-pane coordinates.
+        let guide: *mut AnyObject = msg_send![view, keyboardLayoutGuide];
+        let _: () = msg_send![guide, setFollowsUndockedKeyboard: true];
         let _: () = msg_send![view, setContentScaleFactor: f64::from(scale)];
 
         // Reach into the view's layer (already a CAMetalLayer thanks
@@ -941,6 +945,19 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>, present: bool) {
         time: Some(timestamp_seconds()),
         ..Default::default()
     };
+    let keyboard_rect = unsafe {
+        let guide: *mut AnyObject = msg_send![inner.child_view, keyboardLayoutGuide];
+        let frame: NSRect = msg_send![guide, layoutFrame];
+        let zoom = inner.egui_ctx.zoom_factor().max(0.01);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(frame.origin.x as f32, frame.origin.y as f32) / zoom,
+            egui::vec2(frame.size.width as f32, frame.size.height as f32) / zoom,
+        ).intersect(screen_rect);
+        rect.is_positive().then_some(rect)
+    };
+    inner.egui_ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new("truce_keyboard_rect"), keyboard_rect);
+    });
     raw_input.events = std::mem::take(&mut inner.pending_events);
     // Pin the root viewport's pixels_per_point on every frame.
     // `RawInput::default()` seeds the viewport map with

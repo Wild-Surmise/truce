@@ -65,6 +65,14 @@ fn actual_window_size_id() -> egui::Id {
     egui::Id::new("truce_egui_actual_window_size")
 }
 
+/// Keyboard overlap in editor-local egui points. `None` on desktop and when
+/// the iOS keyboard is hidden or outside the editor. Consumers can position
+/// text-entry overlays without changing the host-owned editor bounds.
+pub fn keyboard_occlusion(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|data| data.get_temp::<Option<egui::Rect>>(egui::Id::new("truce_keyboard_rect")))
+        .flatten()
+}
+
 /// Stash the true OS window size (logical points) in egui ctx data so a
 /// plugin's `ui()` can read it back via [`actual_window_size`].
 ///
