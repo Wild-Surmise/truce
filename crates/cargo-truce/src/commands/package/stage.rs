@@ -949,6 +949,7 @@ pub(crate) fn generate_distribution_xml(
         }
     }
 
+    let background = super::installer_ui::macos_background_xml(resources);
     let welcome = resources
         .and_then(|r| r.welcome_html.as_deref())
         .map_or("", |_| "    <welcome file=\"welcome.html\"/>\n");
@@ -986,7 +987,7 @@ pub(crate) fn generate_distribution_xml(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{plugin_name}</title>
-{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
+{background}{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
 
     <choices-outline>
 {choices_outline}    </choices-outline>

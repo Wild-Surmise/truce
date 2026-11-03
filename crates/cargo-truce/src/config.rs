@@ -124,6 +124,9 @@ pub(crate) struct MacosPackagingConfig {
     pub(crate) license_html: Option<String>,
     /// Conclusion-page HTML for the productbuild Distribution wizard.
     pub(crate) conclusion_html: Option<String>,
+    /// Optional PNG artwork (relative to workspace root), shown at its native
+    /// size in the bottom-left of the installer in both light and dark mode.
+    pub(crate) background_png: Option<String>,
 }
 
 /// Optional per-product welcome/completion overrides in `[plugin.installer]`.

@@ -422,6 +422,8 @@ fn package_one_suite(
         }
     }
 
+    super::installer_ui::stage_macos_background(root, &resources_dir, &o.config.macos.packaging)?;
+
     // productbuild → final suite .pkg.
     let pkg_name = format!(
         "{}-{}-macos{}.pkg",
@@ -590,6 +592,7 @@ fn generate_suite_distribution_xml(
         }
     }
 
+    let background = super::installer_ui::macos_background_xml(resources);
     let welcome = resources
         .and_then(|r| r.welcome_html.as_deref())
         .map_or("", |_| "    <welcome file=\"welcome.html\"/>\n");
@@ -619,7 +622,7 @@ fn generate_suite_distribution_xml(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{title}</title>
-{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
+{background}{welcome}{license}{conclusion}{domains}    <options customize="always" require-scripts="false"/>
 
     <choices-outline>
 {outline}    </choices-outline>
@@ -1182,6 +1185,8 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             }
         }
     }
+
+    super::installer_ui::stage_macos_background(root, &resources_dir, &packaging)?;
 
     let pkg_path = run_productbuild(
         p,
@@ -1771,6 +1776,33 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suite_artwork_uses_vendor_settings_for_light_and_dark_mode() {
+        let def: crate::config::SuiteDef =
+            toml::from_str("name = 'Suite'\nbundle_id = 'suite'").unwrap();
+        let suite = crate::config::ResolvedSuite {
+            def: &def,
+            plugins: vec![],
+        };
+        let mut config = crate::config::MacosPackagingConfig::default();
+        let render = |config: &crate::config::MacosPackagingConfig| {
+            generate_suite_distribution_xml(
+                &suite,
+                "com.example",
+                &[],
+                &[],
+                "1.0.0",
+                Some(config),
+                PkgScope::User,
+            )
+        };
+        assert!(!render(&config).contains("<background"));
+        config.background_png = Some("vendor-logo.png".into());
+        let xml = render(&config);
+        assert!(xml.contains("<background file=\"background.png\" mime-type=\"image/png\""));
+        assert!(xml.contains("<background-darkAqua file=\"background.png\""));
+    }
 
     #[test]
     fn standalone_dropped_when_au3_present() {

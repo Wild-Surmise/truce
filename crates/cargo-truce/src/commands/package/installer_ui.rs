@@ -1,7 +1,29 @@
-//! Native wizard copy, shared by per-product and suite Windows installers.
+//! Native installer copy and artwork shared by product and suite installers.
 
 use crate::config::WindowsPackagingConfig;
 use std::fmt::Write;
+
+pub(super) fn macos_background_xml(
+    config: Option<&crate::config::MacosPackagingConfig>,
+) -> &'static str {
+    if config.and_then(|c| c.background_png.as_deref()).is_none() {
+        return "";
+    }
+    "    <background file=\"background.png\" mime-type=\"image/png\" alignment=\"bottomleft\" scaling=\"none\"/>\n\
+     <background-darkAqua file=\"background.png\" mime-type=\"image/png\" alignment=\"bottomleft\" scaling=\"none\"/>\n"
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn stage_macos_background(
+    root: &std::path::Path,
+    resources: &std::path::Path,
+    config: &crate::config::MacosPackagingConfig,
+) -> std::io::Result<()> {
+    if let Some(path) = &config.background_png {
+        std::fs::copy(root.join(path), resources.join("background.png"))?;
+    }
+    Ok(())
+}
 
 pub(super) fn write_windows_setup(out: &mut String, config: &WindowsPackagingConfig) {
     // Inno hides the welcome page by default, even with custom label text.
@@ -88,6 +110,7 @@ mod tests {
             ..Default::default()
         };
         let macos = crate::config::MacosPackagingConfig {
+            background_png: Some("brand.png".into()),
             welcome_html: Some("default.html".into()),
             conclusion_html: Some("conclusion.html".into()),
             license_html: Some("license.html".into()),
@@ -97,6 +120,7 @@ mod tests {
         assert_eq!(resolved.welcome_html.as_deref(), Some("moon.html"));
         assert_eq!(resolved.conclusion_html, macos.conclusion_html);
         assert_eq!(resolved.license_html, macos.license_html);
+        assert_eq!(resolved.background_png, macos.background_png);
         let windows = WindowsPackagingConfig {
             welcome_message: Some("Hello!".into()),
             completion_message: Some("Goodbye!".into()),
@@ -132,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn macos_conclusion_is_opt_in_and_has_an_explicit_content_type() {
+    fn macos_artwork_and_conclusion_are_opt_in_with_explicit_content_types() {
         let mut config = crate::config::MacosPackagingConfig::default();
         let render = |config: &crate::config::MacosPackagingConfig| {
             super::super::stage::generate_distribution_xml(
@@ -148,10 +172,41 @@ mod tests {
             )
         };
         assert!(!render(&config).contains("<conclusion"));
+        assert!(!render(&config).contains("<background"));
         config.conclusion_html = Some("assets/conclusion.html".into());
+        config.background_png = Some("assets/brand.png".into());
+        assert!(render(&config).contains(macos_background_xml(Some(&config))));
+        assert!(render(&config).contains("<background-darkAqua"));
         assert!(
             render(&config)
                 .contains("<conclusion file=\"conclusion.html\" mime-type=\"text/html\"/>")
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_artwork_is_staged_and_missing_artwork_fails() {
+        let root = std::env::temp_dir().join(format!(
+            "truce-installer-artwork-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let resources = root.join("resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        let mut config = crate::config::MacosPackagingConfig::default();
+        stage_macos_background(&root, &resources, &config).unwrap();
+        assert!(!resources.join("background.png").exists());
+        config.background_png = Some("logo.png".into());
+        assert!(stage_macos_background(&root, &resources, &config).is_err());
+        std::fs::write(root.join("logo.png"), b"logo bytes").unwrap();
+        stage_macos_background(&root, &resources, &config).unwrap();
+        assert_eq!(
+            std::fs::read(resources.join("background.png")).unwrap(),
+            b"logo bytes"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
