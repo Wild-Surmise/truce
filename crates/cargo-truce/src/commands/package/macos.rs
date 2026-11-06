@@ -1332,28 +1332,7 @@ fn run_pkgbuild_for_format(
     ];
     if fmt.is_native_bundle() {
         let plist_path = staging.join(format!("_component_plist_{}.plist", fmt.label()));
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<array>
-    <dict>
-        <key>RootRelativeBundlePath</key>
-        <string>{bundle_name_escaped}</string>
-        <key>BundleIsRelocatable</key>
-        <false/>
-        <key>BundleIsVersionChecked</key>
-        <true/>
-        <key>BundleHasStrictIdentifier</key>
-        <true/>
-        <key>BundleOverwriteAction</key>
-        <string>upgrade</string>
-    </dict>
-</array>
-</plist>
-"#,
-            bundle_name_escaped = bundle_name.replace('&', "&amp;").replace('<', "&lt;"),
-        );
+        let plist = native_component_plist(&bundle_name);
         fs::write(&plist_path, plist)?;
         pkgbuild_args.push("--component-plist".to_string());
         pkgbuild_args.push(plist_path.to_str().unwrap().to_string());
@@ -1392,6 +1371,37 @@ fn run_pkgbuild_for_format(
         return Err(format!("pkgbuild failed for {} {}", p.name, fmt.label()).into());
     }
     Ok(())
+}
+
+/// pkgbuild component plist for native bundle formats.
+///
+/// `BundleIsVersionChecked` stays false: `PackageKit` decides to skip a
+/// same-or-older bundle before `preinstall` runs, and `preinstall` then
+/// deletes the installed copy - an upgrade would leave no VST3/AU at all.
+/// `preinstall` already clears the prior bundle, so no check is needed.
+fn native_component_plist(bundle_name: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>RootRelativeBundlePath</key>
+        <string>{bundle_name_escaped}</string>
+        <key>BundleIsRelocatable</key>
+        <false/>
+        <key>BundleIsVersionChecked</key>
+        <false/>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>BundleOverwriteAction</key>
+        <string>upgrade</string>
+    </dict>
+</array>
+</plist>
+"#,
+        bundle_name_escaped = bundle_name.replace('&', "&amp;").replace('<', "&lt;"),
+    )
 }
 
 /// Build the workspace-wide `--no-default-features --features {feature}`
@@ -1776,6 +1786,16 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_component_plist_is_not_version_checked() {
+        // Regression: a version-checked bundle is skipped on upgrade after
+        // preinstall has already deleted the installed copy.
+        let plist = native_component_plist("Gealach Echo.vst3");
+        let compact: String = plist.split_whitespace().collect();
+        assert!(compact.contains("<key>BundleIsVersionChecked</key><false/>"));
+        assert!(compact.contains("<key>BundleIsRelocatable</key><false/>"));
+    }
 
     #[test]
     fn suite_artwork_uses_vendor_settings_for_light_and_dark_mode() {

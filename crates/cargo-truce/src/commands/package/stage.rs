@@ -23,6 +23,15 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+/// Product version (`[[plugin]].version`, else the workspace version)
+/// for `CFBundleVersion` / `CFBundleShortVersionString`. A constant
+/// version made every upgrade look like a reinstall of the same bundle.
+#[cfg(target_os = "macos")]
+pub(crate) fn bundle_version(root: &Path, p: &PluginDef) -> String {
+    let workspace = crate::read_workspace_version(root).unwrap_or_else(|_| "0.0.0".into());
+    p.resolved_version(&workspace).to_string()
+}
+
 /// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
 /// identifier suitable for LV2 bundle / file / IRI use. Thin re-export
 /// of [`truce_utils::slugify`]; kept under the `package::stage` module
@@ -241,13 +250,16 @@ fn stage_clap_macos(
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>{version}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{version}</string>
 </dict>
 </plist>"#,
         display_name = xml_escape(&p.name),
         bundle_id = p.bundle_id,
         vendor_id = xml_escape(&config.vendor.id),
         exec_name = xml_escape(&exec_name),
+        version = xml_escape(&bundle_version(root, p)),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     // Presets are part of the bundle's sealed Resources - emit before
@@ -356,13 +368,16 @@ fn stage_vst3_macos(root: &Path, p: &PluginDef, config: &Config, bundle: &Path) 
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>{version}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{version}</string>
 </dict>
 </plist>"#,
         display_name = xml_escape(&p.name),
         bundle_id = p.bundle_id,
         vendor_id = xml_escape(&config.vendor.id),
         exec_name = xml_escape(&exec_name),
+        version = xml_escape(&bundle_version(root, p)),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     codesign_bundle(
@@ -490,13 +505,16 @@ pub(crate) fn stage_vst2(
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>{version}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{version}</string>
 </dict>
 </plist>"#,
             display_name = xml_escape(&p.name),
             bundle_id = p.bundle_id,
             vendor_id = xml_escape(&config.vendor.id),
             exec_name = xml_escape(&exec_name),
+            version = xml_escape(&bundle_version(root, p)),
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
@@ -538,7 +556,9 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>{version}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{version}</string>
     <key>AudioComponents</key>
     <array>
         <dict>
@@ -575,6 +595,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
         au_mfr = xml_escape(&config.vendor.au_manufacturer),
         au_tag = xml_escape(&p.au_tag),
         exec_name = xml_escape(&exec_name),
+        version = xml_escape(&bundle_version(root, p)),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     // The shim's kAudioUnitProperty_FactoryPresets handler enumerates
@@ -808,9 +829,9 @@ pub(crate) fn write_standalone_info_plist(
 {icon_key}    <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>{version}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>{version}</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
@@ -825,6 +846,7 @@ pub(crate) fn write_standalone_info_plist(
         bundle_id = plugin.bundle_id,
         exe = xml_escape(bin_stem),
         mic_usage = xml_escape(&mic_usage),
+        version = xml_escape(&bundle_version(&crate::project_root(), plugin)),
     );
     fs::write(bundle_root.join("Contents/Info.plist"), plist)?;
     Ok(())
@@ -1161,4 +1183,28 @@ pub(crate) fn write_format_scripts(
     }
 
     Ok(scripts_dir)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod bundle_version_tests {
+    use super::bundle_version;
+
+    #[test]
+    fn bundle_version_uses_product_then_workspace_version() {
+        let root =
+            std::env::temp_dir().join(format!("truce-bundle-version-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace.package]\nversion = \"2.4.0\"\n",
+        )
+        .unwrap();
+        let mut p: crate::PluginDef =
+            toml::from_str("name = 'Fx'\nbundle_id = 'fx'\ncrate = 'fx'\ncategory = 'effect'")
+                .unwrap();
+        assert_eq!(bundle_version(&root, &p), "2.4.0");
+        p.shared.version = Some("1.0.3".into());
+        assert_eq!(bundle_version(&root, &p), "1.0.3");
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
