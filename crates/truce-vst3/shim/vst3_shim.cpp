@@ -715,6 +715,7 @@ static_assert(speaker_arr_for_channels(8) == 0x63Full, "7.1 = 5.1 + Sl + Sr");
 
 class TruceComponent {
     std::atomic<int32> refCount{1};
+    int32 selectedUnit = 0; // kRootUnitId
     void* ctx;
     double sampleRate;
     uint32_t maxFrames;
@@ -748,6 +749,14 @@ class TruceComponent {
     uint8_t* silenceScratch = nullptr;
     uint8_t* trashScratch = nullptr;
 public:
+    int32 getSelectedUnit() const { return selectedUnit; }
+    tresult selectUnit(int32 unitId) {
+        // build_unit_map assigns consecutive unit IDs starting at the root.
+        if (unitId < 0 || unitId >= g_num_units) return kInvalidArgument;
+        selectedUnit = unitId;
+        return kResultOk;
+    }
+
     // cb_create (Rust `_create`) returns null when the author's create() /
     // init() panicked; a component with a null ctx is an inert zombie that
     // guards every callback but does nothing. The factory checks this to
@@ -2683,6 +2692,8 @@ static tresult ui_ni_ii(void*, int32, int32)                         { return kN
 static tresult ui_ni_iihw(void*, int32, int32, int16_t, char16*)     { return kNotImplemented; }
 static tresult ui_ni_iiiii_ip(void*, int32, int32, int32, int32, int32*) { return kNotImplemented; }
 static tresult ui_ni_iiiv(void*, int32, int32, void*)                { return kNotImplemented; }
+static int32 ui_getSelectedUnit(void* s) { return UINFO(s).getSelectedUnit(); }
+static tresult ui_selectUnit(void* s, int32 unitId) { return UINFO(s).selectUnit(unitId); }
 
 static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_qi, ui_addRef, ui_release,
@@ -2692,8 +2703,7 @@ static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_ni_iisw,
     ui_ni_ii,
     ui_ni_iihw,
-    [](void*) -> int32 { return 0; },
-    [](void*, int32) -> tresult { return kResultOk; },
+    ui_getSelectedUnit, ui_selectUnit,
     ui_ni_iiiii_ip,
     ui_ni_iiiv,
 };
