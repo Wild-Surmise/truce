@@ -120,10 +120,10 @@ static const TUID IAudioProcessor_iid = MAKE_IID(0x42043F99, 0xB7DA453C, 0xA569E
 static const TUID IEditController_iid = MAKE_IID(0xDCD7BBE3, 0x7742448D, 0xA874AACC, 0x979C759E);
 static const TUID IPluginFactory_iid  = MAKE_IID(0x7A4D811C, 0x52114A1F, 0xAED9D2EE, 0x0B43BF9F);
 static const TUID IPlugView_iid       = MAKE_IID(0x5BC32507, 0xD06049EA, 0xA6151B52, 0x2B755B29);
-static const TUID IEditControllerHostEditing_iid = MAKE_IID(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0);
+static const TUID IEditControllerHostEditing_iid = MAKE_IID(0xC1271208, 0x70594098, 0xB9DD34B3, 0x6BB0195E);
 static const TUID IMidiMapping_iid = MAKE_IID(0xDF0FF9F7, 0x49B74669, 0xB63AB732, 0x7ADBF5E5);
-static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3C, 0xA8E8C6F3, 0xDBAE0F77);
-static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5332E1F);
+static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3D, 0x95B5FE83, 0x730EF6D0);
+static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5EB92C1);
 static const TUID INoteExpressionController_iid =
     MAKE_IID(0xB7F8F859, 0x41234872, 0x91169581, 0x4F3721A3);
 static const TUID IPlugViewContentScaleSupport_iid =
@@ -715,6 +715,7 @@ static_assert(speaker_arr_for_channels(8) == 0x63Full, "7.1 = 5.1 + Sl + Sr");
 
 class TruceComponent {
     std::atomic<int32> refCount{1};
+    int32 selectedUnit = 0; // kRootUnitId
     void* ctx;
     double sampleRate;
     uint32_t maxFrames;
@@ -748,6 +749,14 @@ class TruceComponent {
     uint8_t* silenceScratch = nullptr;
     uint8_t* trashScratch = nullptr;
 public:
+    int32 getSelectedUnit() const { return selectedUnit; }
+    tresult selectUnit(int32 unitId) {
+        // build_unit_map assigns consecutive unit IDs starting at the root.
+        if (unitId < 0 || unitId >= g_num_units) return kInvalidArgument;
+        selectedUnit = unitId;
+        return kResultOk;
+    }
+
     // cb_create (Rust `_create`) returns null when the author's create() /
     // init() panicked; a component with a null ctx is an inert zombie that
     // guards every callback but does nothing. The factory checks this to
@@ -2683,6 +2692,8 @@ static tresult ui_ni_ii(void*, int32, int32)                         { return kN
 static tresult ui_ni_iihw(void*, int32, int32, int16_t, char16*)     { return kNotImplemented; }
 static tresult ui_ni_iiiii_ip(void*, int32, int32, int32, int32, int32*) { return kNotImplemented; }
 static tresult ui_ni_iiiv(void*, int32, int32, void*)                { return kNotImplemented; }
+static int32 ui_getSelectedUnit(void* s) { return UINFO(s).getSelectedUnit(); }
+static tresult ui_selectUnit(void* s, int32 unitId) { return UINFO(s).selectUnit(unitId); }
 
 static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_qi, ui_addRef, ui_release,
@@ -2692,8 +2703,7 @@ static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_ni_iisw,
     ui_ni_ii,
     ui_ni_iihw,
-    [](void*) -> int32 { return 0; },
-    [](void*, int32) -> tresult { return kResultOk; },
+    ui_getSelectedUnit, ui_selectUnit,
     ui_ni_iiiii_ip,
     ui_ni_iiiv,
 };
