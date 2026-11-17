@@ -374,6 +374,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_egui_inner_ptr";
+const LEGACY_TEXT_INPUT_IVAR: &std::ffi::CStr = c"_truce_egui_legacy_text_input";
 /// Cap the `CADisplayLink` at 30 fps: a plugin editor doesn't need
 /// the display's native 60/120 Hz, and the halved wake-up rate is a
 /// meaningful battery / thermal win inside an AU v3 host.
@@ -438,6 +439,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
             let mut builder = ClassBuilder::new(class_name.as_c_str(), uiview)
                 .expect("unique class name per monomorphization");
             builder.add_ivar::<*mut std::ffi::c_void>(INNER_PTR_IVAR);
+            builder.add_ivar::<Bool>(LEGACY_TEXT_INPUT_IVAR);
             // `+layerClass` returns the class that backs every
             // instance's `layer` property. Returning `CAMetalLayer`
             // here makes `self.layer` a CAMetalLayer directly, so
@@ -488,9 +490,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
             // dispatch time. The runtime calls `respondsToSelector:`
             // before delivering keyboard events; presence of these
             // three selectors is what flips the view into a usable
-            // text input. `canBecomeFirstResponder` overrides
-            // `UIResponder`'s default `NO` so `becomeFirstResponder`
-            // actually presents the soft keyboard.
+            // text input when the native text proxy could not be installed.
             builder.add_method(
                 sel!(canBecomeFirstResponder),
                 can_become_first_responder as unsafe extern "C" fn(_, _) -> Bool,
@@ -617,6 +617,11 @@ unsafe fn install_text_input_proxy<P: Params + 'static>(
         let alloc: *mut AnyObject = msg_send![text_field, alloc];
         let input: *mut AnyObject = msg_send![alloc, initWithFrame: frame];
         if input.is_null() {
+            let class = (*editor_view).class();
+            *editor_view
+                .cast::<u8>()
+                .add(ivar_offset(class, LEGACY_TEXT_INPUT_IVAR))
+                .cast::<Bool>() = Bool::YES;
             return std::ptr::null_mut();
         }
         let _: () = msg_send![input, setAccessibilityElementsHidden: Bool::YES];
@@ -1005,18 +1010,8 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>, present: bool) {
     inner
         .renderer
         .render(&output.textures_delta, &clipped, inner.scale);
-    // Drive the iOS soft keyboard from egui's focus state. egui
-    // sets `egui_wants_keyboard_input()` while a `TextEdit` (or
-    // other focus-grabbing widget) is the active receiver; we
-    // mirror that into `becomeFirstResponder` /
-    // `resignFirstResponder` on the host UIView. UIKit only
-    // presents the keyboard for the current first responder *and*
-    // only if that responder conforms to `UIKeyInput`; the class
-    // declares both `UIKeyInput` + `UITextInputTraits` at class-
-    // build time (via `add_protocol` in `install_editor_view`) so
-    // UIKit accepts our `becomeFirstResponder`. Tapping a non-text
-    // egui widget makes the flag go false again on the next frame;
-    // we resign and the keyboard dismisses.
+    // Mirror egui focus into UIKit using the native text proxy. The editor
+    // view can receive legacy UIKeyInput events if proxy creation failed.
     let wants_kb = inner.egui_ctx.egui_wants_keyboard_input();
     let responder = if inner.text_input.is_null() {
         inner.child_view
@@ -1366,8 +1361,15 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
 
 // UIKeyInput conformance - drives the iOS soft keyboard for egui text widgets
 
-unsafe extern "C" fn can_become_first_responder(_self: &AnyObject, _cmd: Sel) -> Bool {
-    Bool::YES
+unsafe extern "C" fn can_become_first_responder(self_: &AnyObject, _cmd: Sel) -> Bool {
+    // UIKit can promote the editor view when its text field resigns, keeping
+    // the keyboard onscreen. Only allow the view to take focus in fallback mode.
+    unsafe {
+        *std::ptr::from_ref(self_)
+            .cast::<u8>()
+            .add(ivar_offset(self_.class(), LEGACY_TEXT_INPUT_IVAR))
+            .cast::<Bool>()
+    }
 }
 
 /// `UIKeyInput.hasText` - `UIKit` reads this to decide whether
