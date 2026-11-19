@@ -261,6 +261,10 @@ pub mod au_ios {
     /// `{vendor_url}` placeholders that `render_app_main_swift`
     /// substitutes per install.
     pub const APP_MAIN: &str = include_str!("../templates/au_ios/AppMain.swift");
+
+    /// The root Info.plist entry for the container app's single window scene.
+    pub const APP_SCENE_MANIFEST: &str =
+        include_str!("../templates/au_ios/AppSceneManifest.plist.inc");
 }
 
 // ---------------------------------------------------------------------------

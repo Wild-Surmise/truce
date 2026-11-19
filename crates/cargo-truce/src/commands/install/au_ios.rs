@@ -1363,6 +1363,7 @@ fn app_info_plist(
     orientations_xml: &str,
 ) -> String {
     let platform = target.supported_platform();
+    let scene_manifest = crate::templates::au_ios::APP_SCENE_MANIFEST.trim_end();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1381,6 +1382,7 @@ fn app_info_plist(
     <key>NSMicrophoneUsageDescription</key><string>{app_name} can route your device's microphone through the plug-in so you can hear it process live audio - useful for previewing effects without a DAW.</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>{app_name} discovers Bluetooth MIDI controllers paired in Settings so you can play / control the plug-in from an external keyboard.</string>
     <key>UILaunchScreen</key><dict/>
+{scene_manifest}
     <key>UISupportedInterfaceOrientations</key>
     <array>
 {orientations_xml}    </array>
@@ -1648,7 +1650,35 @@ fn render_app_main_swift(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_dt_xcode, profile_covers_bundle, scan_get_task_allow, splice_plist_keys};
+    use super::{
+        IosTarget, app_info_plist, format_dt_xcode, profile_covers_bundle, scan_get_task_allow,
+        splice_plist_keys,
+    };
+
+    #[test]
+    fn ios_app_declares_one_window_scene_and_keeps_its_minimum_os() {
+        for target in [IosTarget::Simulator, IosTarget::Device] {
+            let xml = app_info_plist("Test", "com.truce.test", "16.0", "1.0", target, "");
+            let value = plist::Value::from_reader_xml(xml.as_bytes()).unwrap();
+            let app = value.as_dictionary().unwrap();
+            assert_eq!(app["MinimumOSVersion"].as_string(), Some("16.0"));
+            let manifest = app["UIApplicationSceneManifest"].as_dictionary().unwrap();
+            assert_eq!(
+                manifest["UIApplicationSupportsMultipleScenes"].as_boolean(),
+                Some(false)
+            );
+            let configurations = manifest["UISceneConfigurations"].as_dictionary().unwrap();
+            let scenes = configurations["UIWindowSceneSessionRoleApplication"]
+                .as_array()
+                .unwrap();
+            assert_eq!(scenes.len(), 1);
+            let scene = scenes[0].as_dictionary().unwrap();
+            assert_eq!(
+                scene["UISceneDelegateClassName"].as_string(),
+                Some("TruceAppSceneDelegate")
+            );
+        }
+    }
 
     #[test]
     fn profile_coverage_matches_concrete_and_wildcard() {

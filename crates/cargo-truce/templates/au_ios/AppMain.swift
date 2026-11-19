@@ -73,9 +73,24 @@ class ContainerViewController: UIViewController {
     }
 }
 
+@objc(TruceAppSceneDelegate)
+final class AppSceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene,
+              let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+
+        let window = appDelegate.makePreviewWindow(in: windowScene)
+        self.window = window
+        window.makeKeyAndVisible()
+    }
+}
+
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
-    var window: UIWindow?
+    private var previewWindow: UIWindow?
     /// Root VC owning the chrome + editor preview. Held so the
     /// AppDelegate can read `view.bounds` for scale-to-fit /
     /// orientation-aware layout decisions and hook the sidebar
@@ -134,7 +149,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// stack on each placeChromeInSidebar call.
     var sidebarChromeSpacer: UIView?
     /// Flips true once the editor-block write at the bottom of
-    /// `application(_:didFinishLaunchingWithOptions:)` runs. The
+    /// `makePreviewWindow(in:)` runs. The
     /// plug-in-independent fallback (which writes only the safe-
     /// area inset with zeroed editor frame) consults this and
     /// skips if the editor already wrote. Both blocks are
@@ -246,7 +261,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     let midiInRingLock = NSLock()
     /// Fixed-size MIDI-in ring shared between the Core MIDI input
     /// callback (high-priority MIDI thread) and the audio render
-    /// thread. Pre-allocated once in `application(_:didFinishLaunching…)`
+    /// thread. Pre-allocated once when the preview window is created
     /// so neither thread allocates inside the lock. `head` is the
     /// next slot to read; `count` is how many slots are in flight;
     /// the next write goes to `(head + count) % capacity`. On
@@ -260,9 +275,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // is one tap away rather than cluttering the default view.
     var fullDescription: String = ""
 
-    func application(_ application: UIApplication,
-                     didFinishLaunchingWithOptions launchOptions:
-                        [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    func makePreviewWindow(in windowScene: UIWindowScene) -> UIWindow {
+        // The app supports one scene and keeps one preview engine for the
+        // process lifetime. Reattach it if UIKit reconnects the scene.
+        if let previewWindow {
+            previewWindow.windowScene = windowScene
+            return previewWindow
+        }
+
         // Pre-allocate the MIDI-in ring up front - the Core MIDI
         // input callback fires on a high-priority MIDI thread and
         // any allocation under `midiInRingLock` would stall the
@@ -272,7 +292,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.midiInRingBuf = UnsafeMutablePointer<AuMidiEvent>
             .allocate(capacity: self.midiInRingCapacity)
 
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = UIWindow(windowScene: windowScene)
         let vc = ContainerViewController()
         self.rootVC = vc
         vc.onLayout = { [weak self] in self?.applyOrientationLayout() }
@@ -540,7 +560,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 vc.view.layoutIfNeeded()
                 let frameInWindow = container.convert(container.bounds, to: nil)
-                let s = container.window?.screen.scale ?? UIScreen.main.scale
+                let s = windowScene.screen.scale
                 let px = Int(frameInWindow.minX * s)
                 let py = Int(frameInWindow.minY * s)
                 let pw = Int(frameInWindow.width * s)
@@ -552,8 +572,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         window.rootViewController = vc
-        window.makeKeyAndVisible()
-        self.window = window
+        self.previewWindow = window
 
         // Plug-in-independent safe-area inset write. Runs even when
         // the editor never opens (e.g. alt-GUI backends with no iOS
@@ -564,16 +583,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.editorFrameWritten else { return }
             vc.view.layoutIfNeeded()
-            let s = vc.view.window?.screen.scale ?? UIScreen.main.scale
+            let s = windowScene.screen.scale
             let safeTopPx = Int(vc.view.safeAreaInsets.top * s)
             self.writeFrameJson(x: 0, y: 0, w: 0, h: 0, scale: s, safeTopPx: safeTopPx)
         }
-        return true
+        return window
     }
 
     /// Single source of truth for the `_truce_editor_frame.json`
     /// payload. Called from up to two sites in
-    /// `didFinishLaunchingWithOptions` (editor block + plug-in-
+    /// `makePreviewWindow(in:)` (editor block + plug-in-
     /// independent fallback). Last writer wins; both producers
     /// agree on `safeAreaTopPx` so order doesn't affect that field.
     ///
@@ -587,9 +606,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// UI space) land out of bounds against the portrait framebuffer.
     func writeFrameJson(x: Int, y: Int, w: Int, h: Int, scale: CGFloat, safeTopPx: Int) {
         let orientationName: String
-        switch UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first?.interfaceOrientation ?? .portrait {
+        switch previewWindow?.windowScene?.interfaceOrientation ?? .portrait {
         case .landscapeLeft:        orientationName = "landscapeLeft"
         case .landscapeRight:       orientationName = "landscapeRight"
         case .portraitUpsideDown:   orientationName = "portraitUpsideDown"
@@ -1403,7 +1420,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             sheetPresentation.detents = [.medium(), .large()]
             sheetPresentation.prefersGrabberVisible = true
         }
-        self.window?.rootViewController?.present(sheet, animated: true)
+        self.previewWindow?.rootViewController?.present(sheet, animated: true)
     }
 
     /// SF Symbol icon button sized for the top bar - matches the
@@ -1484,7 +1501,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 // The `previousLandscape == true` gate matters: on
                 // the very first layout pass `previousLandscape` is
                 // nil and chrome is still in its initial root-side
-                // position from `application(_:didFinishLaunching…)`
+                // position from `makePreviewWindow(in:)`
                 // - running placeChromeInRoot there would
                 // remove-and-re-add chrome that's already correctly
                 // parented, auto-removing the still-active
