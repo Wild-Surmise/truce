@@ -21,6 +21,8 @@
 // notifies the host even with no editor open and no host param polling
 // (the one case the main-thread callback hooks below can't reach).
 #include <dispatch/dispatch.h>
+#include <pthread.h>
+#include <type_traits>
 #endif
 // Linux uses the host's Steinberg::Linux::IRunLoop (queried off the plug
 // frame) with a periodic ITimerHandler to drain a pending restart on the
@@ -35,7 +37,8 @@
 // pump, so the TIMERPROC drains a pending restart on the host UI thread
 // for the component's whole life - editor or not - like the macOS
 // dispatch source. Message queues are per-thread on Windows, so no
-// plug-frame run loop is needed.
+// plug-frame run loop is needed. An instance beyond the legacy timer
+// lookup table still drains non-parameter edits on host polling or close.
 #define WIN32_LEAN_AND_MEAN
 // mingw's headers predefine NOMINMAX; guard so a cross build stays
 // warning-free.
@@ -118,6 +121,7 @@ static const TUID IPluginBase_iid     = MAKE_IID(0x22888DDB, 0x156E45AE, 0x8358B
 static const TUID IComponent_iid      = MAKE_IID(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802);
 static const TUID IAudioProcessor_iid = MAKE_IID(0x42043F99, 0xB7DA453C, 0xA569E79D, 0x9AAEC33D);
 static const TUID IEditController_iid = MAKE_IID(0xDCD7BBE3, 0x7742448D, 0xA874AACC, 0x979C759E);
+static const TUID IComponentHandler2_iid = MAKE_IID(0xF040B4B3, 0xA36045EC, 0xABCDC045, 0xB4D5A2CC);
 static const TUID IPluginFactory_iid  = MAKE_IID(0x7A4D811C, 0x52114A1F, 0xAED9D2EE, 0x0B43BF9F);
 static const TUID IPlugView_iid       = MAKE_IID(0x5BC32507, 0xD06049EA, 0xA6151B52, 0x2B755B29);
 static const TUID IEditControllerHostEditing_iid = MAKE_IID(0xC1271208, 0x70594098, 0xB9DD34B3, 0x6BB0195E);
@@ -413,7 +417,7 @@ struct Vst3Callbacks {
     // GUI
     int32_t (*gui_has_editor)(void*);
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
-    void (*gui_open)(void*, void*);
+    void (*gui_open)(void*, void*, void*);
     void (*gui_close)(void*);
     void (*gui_set_content_scale)(void*, double);
     int32_t (*gui_can_resize)(void*);
@@ -450,6 +454,7 @@ struct Vst3Callbacks {
     // block, so process_chunked applies each point at its sample offset
     // instead of the end value landing from sample 0.
     int32_t (*param_is_chunked)(void*, uint32_t);
+    int32_t (*take_state_dirty)(void*);
 };
 
 // ---------------------------------------------------------------------------
@@ -621,12 +626,10 @@ static void* g_ctx_map_key[kMaxInstances] = {};
 static TruceComponent* g_ctx_map_comp[kMaxInstances] = {};
 
 #if __APPLE__
-// Resolves the shim's opaque ctx key to its live component, or null once
-// the component's destructor has unregistered it. Both defined below,
-// once TruceComponent is complete; declared here so the constructor can
-// wire the dispatch source's event handler.
-static TruceComponent* ctx_lookup(void* ctx);
-static void truce_vst3_restart_source_event(void* key);
+// The context survives cancellation even if a wake is already queued.
+using RestartSourceOwner = std::atomic<TruceComponent*>;
+static_assert(std::is_trivially_destructible<RestartSourceOwner>::value);
+static void truce_vst3_restart_source_event(void* context);
 #endif
 
 #if defined(__linux__)
@@ -777,6 +780,7 @@ public:
     // on the host main thread - the editor-closed / no-param-poll path
     // the callback hooks below can't cover. Null if creation failed.
     dispatch_source_t restartSource = nullptr;
+    RestartSourceOwner* restartSourceOwner = nullptr;
 #endif
 #if defined(__linux__)
     // Linux run-loop bridge. `restartTimer` is the ITimerHandler we
@@ -823,17 +827,25 @@ public:
                     }
                 }
 #if __APPLE__
-                // Instances are created on the main thread, so setting up
-                // a main-queue source here is safe. Context is the stable
-                // ctx key, so the handler resolves the component safely
-                // even if it is mid-teardown.
-                restartSource = dispatch_source_create(
-                    DISPATCH_SOURCE_TYPE_DATA_OR, 0, 0, dispatch_get_main_queue());
-                if (restartSource) {
-                    dispatch_set_context(restartSource, ctx);
-                    dispatch_source_set_event_handler_f(
-                        restartSource, truce_vst3_restart_source_event);
-                    dispatch_resume(restartSource);
+                // Use a per-instance context, independent of the legacy
+                // fixed-size map. libdispatch releases the context only
+                // after the source has stopped invoking its handler.
+                if (void* storage = malloc(sizeof(RestartSourceOwner))) {
+                    restartSource = dispatch_source_create(
+                        DISPATCH_SOURCE_TYPE_DATA_OR, 0, 0, dispatch_get_main_queue());
+                    if (restartSource) {
+                        restartSourceOwner = new (storage) RestartSourceOwner(this);
+                        dispatch_set_context(restartSource, restartSourceOwner);
+                        dispatch_source_set_event_handler_f(
+                            restartSource, truce_vst3_restart_source_event);
+                        // RestartSourceOwner has a trivial destructor. Use
+                        // libc directly so cancellation need not call back
+                        // into this module after the component is gone.
+                        dispatch_source_set_cancel_handler_f(restartSource, free);
+                        dispatch_resume(restartSource);
+                    } else {
+                        free(storage);
+                    }
                 }
 #endif
 #if defined(__linux__)
@@ -859,6 +871,18 @@ public:
     }
 
     ~TruceComponent() {
+#if __APPLE__
+        // Invalidate queued delivery before any member is torn down. The
+        // handler and ordinary component teardown run on the host main
+        // thread, and the handler never accesses the component after a
+        // re-entrant host callback.
+        if (restartSource) {
+            restartSourceOwner->store(nullptr, std::memory_order_release);
+            dispatch_source_cancel(restartSource);
+            dispatch_release(restartSource);
+            restartSource = nullptr;
+        }
+#endif
         if (componentHandler) {
             auto release_fn = (uint32 (*)(void*))(*(void***)componentHandler)[2];
             release_fn(componentHandler);
@@ -872,17 +896,6 @@ public:
                 }
             }
         }
-#if __APPLE__
-        // Unregister above happens first, so any in-flight handler
-        // resolves null and never touches this freed instance. cancel()
-        // stops further invocations; release() is safe mid-handler
-        // (libdispatch retains the source across a running handler).
-        if (restartSource) {
-            dispatch_source_cancel(restartSource);
-            dispatch_release(restartSource);
-            restartSource = nullptr;
-        }
-#endif
 #if defined(__linux__)
         // Unregister the timer (releases the held IRunLoop) so the host
         // never calls onTimer on a freed component. A well-behaved host
@@ -1018,7 +1031,7 @@ public:
             if (!stateLoaded) {
                 stateLoaded = true;
                 if (deferredParent) {
-                    g_cb->gui_open(ctx, deferredParent);
+                    g_cb->gui_open(ctx, deferredParent, this);
                     deferredParent = nullptr;
                 }
             }
@@ -1070,7 +1083,7 @@ public:
         stateLoaded = true;
         // If the editor was attached before state was loaded, open it now
         if (deferredParent) {
-            g_cb->gui_open(ctx, deferredParent);
+            g_cb->gui_open(ctx, deferredParent, this);
             deferredParent = nullptr;
         }
         return result;
@@ -1920,12 +1933,12 @@ public:
     }
 
     double getParamNormalized(uint32 id) {
-        // Host UI polls this on the main thread; a good place to hand off
-        // a pending latency restart the audio thread flagged.
-        flushPendingRestart();
-        if (!g_cb || !ctx) return 0;
-        double plain = g_cb->param_get_value(ctx, id);
-        return g_cb->param_normalize(ctx, id, plain);
+        const double value = g_cb && ctx
+            ? g_cb->param_normalize(ctx, id, g_cb->param_get_value(ctx, id)) : 0;
+        // Host UI polls on the main thread. Read the value first because
+        // a host notification can synchronously close the component.
+        flushPendingHostNotifications();
+        return value;
     }
 
     tresult setParamNormalized(uint32 id, double value) {
@@ -1959,6 +1972,33 @@ public:
         if (!flags || !componentHandler) return;
         auto restart = (tresult (*)(void*, int32))(*(void***)componentHandler)[6];
         restart(componentHandler, flags);
+    }
+
+    // Called only by the host UI thread. The editor can run on a different
+    // thread (Linux), so setting the pending flag must never call the host.
+    static void notifyStateDirty(void* handler) {
+        auto query = (tresult (*)(void*, const int8_t*, void**))(*(void***)handler)[0];
+        void* handler2 = nullptr;
+        if (query(handler, IComponentHandler2_iid, &handler2) != kResultOk || !handler2) return;
+        auto setDirty = (tresult (*)(void*, TBool))(*(void***)handler2)[3];
+        auto release = (uint32 (*)(void*))(*(void***)handler2)[2];
+        setDirty(handler2, 1);
+        release(handler2);
+    }
+
+    void flushPendingHostNotifications(bool includeRestart = true) {
+        auto* handler = componentHandler;
+        if (!handler) return;
+        const bool dirty = g_cb && ctx && g_cb->take_state_dirty && g_cb->take_state_dirty(ctx);
+        const int32 flags = includeRestart ? pendingRestart.exchange(0, std::memory_order_acq_rel) : 0;
+        if (!dirty && !flags) return;
+        // Keep the host interface alive if either callback disposes the
+        // component. All component reads are finished before calling out.
+        auto** methods = *(void***)handler;
+        ((uint32 (*)(void*))methods[1])(handler);
+        if (dirty) notifyStateDirty(handler);
+        if (flags) ((tresult (*)(void*, int32))methods[6])(handler, flags);
+        ((uint32 (*)(void*))methods[2])(handler);
     }
 
 #if defined(__linux__)
@@ -2021,7 +2061,7 @@ static void th_onTimer(void* self) {
     // editor is open. Cheap when idle: flushPendingRestart exchanges the
     // atomic and returns immediately when no bits are set.
     auto* h = (RestartTimerHandler*)self;
-    if (h->comp) h->comp->flushPendingRestart();
+    if (h->comp) h->comp->flushPendingHostNotifications();
 }
 #endif
 
@@ -2039,7 +2079,7 @@ static void CALLBACK truce_vst3_restart_timer_proc(
     for (int i = 0; i < kMaxInstances; i++) {
         TruceComponent* comp = g_ctx_map_comp[i];
         if (comp && comp->restartTimerId == id) {
-            comp->flushPendingRestart();
+            comp->flushPendingHostNotifications();
             return;
         }
     }
@@ -2181,7 +2221,7 @@ static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
         // Editor attached before state was restored - defer gui_open
         pv->comp->deferredParent = parent;
     } else {
-        g_cb->gui_open(pv->ctx, parent);
+        g_cb->gui_open(pv->ctx, parent, pv->comp);
     }
     return kResultOk;
 }
@@ -2189,6 +2229,9 @@ static tresult pv_removed(void* s) {
     auto* pv = (TrucePlugView*)s;
     if (pv->comp) pv->comp->deferredParent = nullptr;
     if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+    // The host can close the view before the next timer tick, and Linux
+    // unregisters the timer with the view. Deliver the last edit here.
+    if (pv->comp) pv->comp->flushPendingHostNotifications(false);
     return kResultOk;
 }
 static tresult pv_getSize(void* s, void* rect) {
@@ -3031,6 +3074,14 @@ void truce_vst3_end_edit(void* ctx, uint32_t id) {
     comp->flushPendingRestart();
 }
 
+#if __APPLE__
+void truce_vst3_wake_state_dirty(void* component) {
+    if (!pthread_main_np()) return;
+    auto* owner = static_cast<TruceComponent*>(component);
+    if (owner->restartSource) dispatch_source_merge_data(owner->restartSource, 1);
+}
+#endif
+
 // Plugin -> host restart request. The audio thread calls this to flag a
 // pending IComponentHandler::restartComponent (e.g. kLatencyChanged = 8)
 // without touching the host: it only sets bits on an atomic. The bits
@@ -3056,11 +3107,12 @@ void truce_vst3_mark_restart(void* ctx, int32_t flags) {
 }
 
 #if __APPLE__
-// Main-queue handler for the restart dispatch source (declared up top).
-// Resolves the component from its stable ctx key so a torn-down instance
-// is a safe no-op, then drains any pending restartComponent.
-static void truce_vst3_restart_source_event(void* key) {
-    if (TruceComponent* comp = ctx_lookup(key)) comp->flushPendingRestart();
+// Main-queue delivery waits until the current editor event has returned.
+static void truce_vst3_restart_source_event(void* context) {
+    auto* owner = static_cast<RestartSourceOwner*>(context);
+    if (auto* component = owner->load(std::memory_order_acquire)) {
+        component->flushPendingHostNotifications();
+    }
 }
 #endif
 

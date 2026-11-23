@@ -258,7 +258,7 @@ pub struct Vst3Callbacks {
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
-    pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
+    pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void, component: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
     /// Host-driven DPI notification via `IPlugViewContentScaleSupport::
     /// setContentScaleFactor`. Passed to the Rust side so the instance
@@ -340,6 +340,8 @@ pub struct Vst3Callbacks {
     /// collection time - which would make a mid-block step audible from
     /// sample 0.
     pub param_is_chunked: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> i32,
+    /// Take a pending non-parameter edit notification on the host UI thread.
+    pub take_state_dirty: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
 }
 
 unsafe extern "C" {
@@ -362,6 +364,8 @@ unsafe extern "C" {
 
     /// Notify host: end editing a parameter (mouse-up).
     pub fn truce_vst3_end_edit(ctx: *mut std::ffi::c_void, id: u32);
+    #[cfg(target_os = "macos")]
+    pub fn truce_vst3_wake_state_dirty(component: *mut c_void);
 
     /// Plugin -> host resize request. Looks up the owning
     /// component via the ctx mapping, walks to the live plug view's
