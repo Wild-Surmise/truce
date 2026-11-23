@@ -133,9 +133,8 @@ impl std::error::Error for StateLoadError {}
 /// `#[persist]` fields are **not** applied here - `load_persist` takes a
 /// lock per field that a GUI reader can hold, so it would risk blocking
 /// the audio thread. [`apply_params`] applies persist on the host thread;
-/// the deferred wrappers call it before queueing, and a host-thread full
-/// load (the standalone host, an inactive-plugin load) calls it alongside
-/// this.
+/// the deferred wrappers use [`apply_params_for_audio_handoff`] before
+/// queueing, and synchronous callers can call `apply_params` alongside this.
 pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
     use truce_params::Params;
     plugin.params().restore_values(&state.params);
@@ -241,6 +240,19 @@ pub fn apply_params<P: truce_params::Params>(params: &P, state: &DeserializedSta
     params.snap_smoothers();
 }
 
+/// Apply host-side parameter state and dispose of the serialized persistence
+/// buffer before a deferred load can reach the audio thread. The receiver
+/// still needs the parameter values and extra state for [`apply_state`].
+#[must_use]
+pub fn apply_params_for_audio_handoff<P: truce_params::Params>(
+    params: &P,
+    mut state: DeserializedState,
+) -> DeserializedState {
+    apply_params(params, &state);
+    drop(std::mem::take(&mut state.persist));
+    state
+}
+
 // ---------------------------------------------------------------------------
 // `snapshot_plugin` / `restore_plugin` - high-level helpers wrapping
 // `serialize_state` + `deserialize_state` with the params-collect /
@@ -341,7 +353,81 @@ pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeserializedState, MigratedState};
+    use super::{DeserializedState, MigratedState, apply_params_for_audio_handoff};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use truce_params::{__private::Sealed, ParamInfo, Params};
+
+    #[derive(Default)]
+    struct RecallParams {
+        persist_applied: AtomicBool,
+    }
+
+    impl Sealed for RecallParams {}
+
+    impl Params for RecallParams {
+        fn param_infos(&self) -> Vec<ParamInfo> {
+            Vec::new()
+        }
+
+        fn count(&self) -> usize {
+            1
+        }
+
+        fn get_normalized(&self, _: u32) -> Option<f64> {
+            None
+        }
+
+        fn set_normalized(&self, _: u32, _: f64) {}
+
+        fn get_plain(&self, _: u32) -> Option<f64> {
+            None
+        }
+
+        fn set_plain(&self, _: u32, _: f64) {}
+
+        fn format_value(&self, _: u32, _: f64) -> Option<String> {
+            None
+        }
+
+        fn parse_value(&self, _: u32, _: &str) -> Option<f64> {
+            None
+        }
+
+        fn snap_smoothers(&self) {}
+
+        fn set_sample_rate(&self, _: f64) {}
+
+        fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
+            (Vec::new(), Vec::new())
+        }
+
+        fn restore_values(&self, values: &[(u32, f64)]) {
+            assert_eq!(values, &[(0, 0.5)]);
+        }
+
+        fn load_persist(&self, bytes: &[u8]) {
+            assert_eq!(bytes, &[1, 2, 3]);
+            self.persist_applied.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn audio_handoff_discards_host_applied_persistence_allocation() {
+        let mut persist = Vec::with_capacity(4096);
+        persist.extend_from_slice(&[1, 2, 3]);
+        let state = DeserializedState {
+            params: vec![(0, 0.5)],
+            extra: Some(vec![9, 8]),
+            persist,
+        };
+        let params = RecallParams::default();
+        let state = apply_params_for_audio_handoff(&params, state);
+        assert!(params.persist_applied.load(Ordering::Relaxed));
+        assert!(state.persist.is_empty());
+        assert_eq!(state.persist.capacity(), 0);
+        assert_eq!(state.params, vec![(0, 0.5)]);
+        assert_eq!(state.extra, Some(vec![9, 8]));
+    }
 
     // A renamed plugin that forwards its old envelope's `#[persist]`
     // bytes must keep them: the `From` bridge used to hardcode

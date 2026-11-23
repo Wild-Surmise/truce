@@ -2814,7 +2814,8 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         // `clap_plugin_state.load` see the restored values without
         // first running a process block - clap-validator reads back
         // immediately after a load round-trip.
-        state::apply_params(&*data.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*data.params_arc, deserialized);
 
         if data.active.load(Ordering::Relaxed) {
             // Active: the audio thread will drain `pending_state` at the
@@ -2906,7 +2907,8 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
             return false;
         };
 
-        state::apply_params(&*data.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*data.params_arc, deserialized);
         // Same active/inactive split as `state_load`: while inactive no
         // `process` drains `pending_state`, so a synchronous apply is what
         // keeps offline preset browsing from stranding the custom-state

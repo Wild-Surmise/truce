@@ -1125,7 +1125,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // so host queries that read parameter values right after
             // `setFullState:` see the restored values without first
             // running a render block.
-            state::apply_params(&*inst.params_arc, &deserialized);
+            let deserialized =
+                state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending
             // blob - see the `pending_state` field comment for why
@@ -1184,7 +1185,8 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
             return 0;
         };
         let deserialized: state::DeserializedState = migrated.into();
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         let _ = inst.pending_state.force_push(deserialized);
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
@@ -1349,7 +1351,8 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         // Same apply path as cb_state_load: params synchronously on
         // the host thread, full state through the audio-thread
         // handoff, editor notified.
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         let _ = inst.pending_state.force_push(deserialized);
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();

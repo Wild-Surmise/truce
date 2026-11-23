@@ -1318,7 +1318,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // after `setState` see the restored values without first
         // running a process block. pluginval / DAW preset reload
         // both observe this.
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         // Publish through the same priority handoff even while inactive so
         // pre-recall editor writes cannot survive and overwrite this load at
         // the next save, activation, or process callback.
