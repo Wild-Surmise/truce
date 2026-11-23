@@ -105,7 +105,8 @@ pub struct AuParamDescriptor {
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
 /// appended `set_render_mode`. v5: appended `param_parse_value`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7505;
+/// v6: appended `gui_take_state_dirty` and `gui_set_au_v2_state_target`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7506;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -300,6 +301,12 @@ pub struct AuCallbacks {
         text: *const c_char,
         out_plain: *mut f64,
     ) -> i32,
+    /// AU v3 consumes a pending editor document-state notification on its
+    /// existing UI sync tick or at editor close. No render-thread work.
+    pub gui_take_state_dirty: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    /// AU v2 binds its native notification token at open and clears it
+    /// before releasing the token. AU v3 leaves this unset, even on macOS.
+    pub gui_set_au_v2_state_target: unsafe extern "C" fn(ctx: *mut c_void, token: *mut c_void),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

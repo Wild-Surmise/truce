@@ -337,7 +337,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         // without forcing a runtime !-unwrap here.
         guard let callbacks = g_callbacks, case .some = rustCtx else { return }
         let rawCtx = rustCtx!
-        let cb = callbacks.pointee
+        // Keep the table as a pointer: copying the C struct by value
+        // would read the appended fields past an older framework's tail.
         var params: [AUParameter] = []
         var groups: [String: [AUParameter]] = [:]
 
@@ -359,7 +360,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 for step in 0...desc.step_count {
                     let plain = desc.min + Double(step)
                     var buf = [CChar](repeating: 0, count: 128)
-                    let len = cb.param_format_value(rawCtx, desc.id, plain, &buf, 128)
+                    let len = callbacks.pointee.param_format_value(rawCtx, desc.id, plain, &buf, 128)
                     names.append(len > 0 ? String(cString: buf) : "\(step)")
                 }
                 valueStrings = names
@@ -385,15 +386,15 @@ class TruceAUAudioUnit: AUAudioUnit {
 
         _parameterTree?.implementorValueObserver = { [weak self] p, v in
             guard self?.isSyncingToHost != true else { return }
-            cb.param_set_value(rawCtx, UInt32(p.address), Double(v))
+            callbacks.pointee.param_set_value(rawCtx, UInt32(p.address), Double(v))
         }
         _parameterTree?.implementorValueProvider = { p in
-            AUValue(cb.param_get_value(rawCtx, UInt32(p.address)))
+            AUValue(callbacks.pointee.param_get_value(rawCtx, UInt32(p.address)))
         }
         _parameterTree?.implementorStringFromValueCallback = { p, vp in
             let val = vp?.pointee ?? p.value
             var buf = [CChar](repeating: 0, count: 128)
-            let len = cb.param_format_value(rawCtx, UInt32(p.address), Double(val), &buf, 128)
+            let len = callbacks.pointee.param_format_value(rawCtx, UInt32(p.address), Double(val), &buf, 128)
             return len > 0 ? String(cString: buf) : String(format: "%.2f", val)
         }
         _parameterTree?.implementorValueFromStringCallback = { p, str in
@@ -404,7 +405,7 @@ class TruceAUAudioUnit: AUAudioUnit {
             if truceAbiTailVersion(callbacks) >= 5 {
                 var plain = 0.0
                 let ok = str.withCString { cstr in
-                    cb.param_parse_value(rawCtx, UInt32(p.address), cstr, &plain)
+                    callbacks.pointee.param_parse_value(rawCtx, UInt32(p.address), cstr, &plain)
                 }
                 if ok != 0 { return AUValue(plain) }
             }
@@ -1128,6 +1129,20 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
     }
 
+    /// Notify hosts when an editor changed the document snapshot outside
+    /// the parameter tree (for example, when it replaced an imported asset).
+    /// The existing editor timer and teardown check this flag on the main thread.
+    func notifyDocumentStateIfDirty() {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              truceAbiTailVersion(cb) >= 6,
+              cb.pointee.gui_take_state_dirty(ctx) != 0 else { return }
+        // An older host may cache the shared preset/document snapshot.
+        willChangeValue(forKey: "fullState")
+        willChangeValue(forKey: "fullStateForDocument")
+        didChangeValue(forKey: "fullStateForDocument")
+        didChangeValue(forKey: "fullState")
+    }
+
     // AUAudioUnit.latency is KVO-observed by hosts for delay
     // compensation, but the value comes from a callback (a computed
     // property) so re-assignment can't fire the notification. Called on
@@ -1425,6 +1440,8 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         stopParamSync()
         if guiSetUp, let ctx = myCtx, let cb = g_callbacks {
             cb.pointee.gui_close(ctx)
+            // Flush edits made after the last timer tick before hiding the UI.
+            auInstance?.notifyDocumentStateIfDirty()
         }
         guiContainer?.removeFromSuperview()
         guiContainer = nil
@@ -1483,11 +1500,10 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private func syncParamsToHost() {
         guard let au = auInstance,
               let ctx = au.rustCtx,
-              let cb = g_callbacks,
-              let tree = au.parameterTree else { return }
+              let cb = g_callbacks else { return }
 
         au.isSyncingToHost = true
-        for param in tree.allParameters {
+        for param in au.parameterTree?.allParameters ?? [] {
             let rustVal = AUValue(cb.pointee.param_get_value(ctx, UInt32(param.address)))
             if abs(param.value - rustVal) > 1e-4 {
                 param.setValue(rustVal, originator: nil)
@@ -1498,5 +1514,6 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         // Push a latency change (if any) to the host on the same
         // main-thread tick.
         au.notifyLatencyIfChanged()
+        au.notifyDocumentStateIfDirty()
     }
 }
