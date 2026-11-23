@@ -414,9 +414,8 @@ impl EditorBridge for ClosureBridge {
 /// via [`PluginContext::with_params`] using the `Arc<P>` they stored
 /// at editor construction.
 ///
-/// `Clone` is two refcount bumps (bridge + params). Editors that need
-/// to hand the context to UI worker threads or animation timers clone
-/// freely.
+/// Editors that hand the context to UI worker threads or animation timers
+/// can clone it without allocating.
 pub struct PluginContext<P: ?Sized = dyn Params> {
     bridge: Arc<dyn EditorBridge>,
     /// Background-task spawner bundle (one lane per declared task type),
@@ -424,6 +423,7 @@ pub struct PluginContext<P: ?Sized = dyn Params> {
     /// when the plugin wired `tasks:`. Lets the editor schedule work via
     /// [`Self::tasks`]. `None` for a plugin with no background tasks.
     tasks: Option<AnyTaskSpawner>,
+    state_dirty: Option<Arc<dyn Fn() + Send + Sync>>,
     params: Arc<P>,
 }
 
@@ -432,6 +432,7 @@ impl<P: ?Sized> Clone for PluginContext<P> {
         Self {
             bridge: Arc::clone(&self.bridge),
             tasks: self.tasks.clone(),
+            state_dirty: self.state_dirty.clone(),
             params: Arc::clone(&self.params),
         }
     }
@@ -445,6 +446,7 @@ impl<P: ?Sized> PluginContext<P> {
         Self {
             bridge,
             tasks: None,
+            state_dirty: None,
             params,
         }
     }
@@ -456,6 +458,22 @@ impl<P: ?Sized> PluginContext<P> {
     pub fn with_tasks(mut self, tasks: Option<AnyTaskSpawner>) -> Self {
         self.tasks = tasks;
         self
+    }
+
+    /// Attach the format wrapper's notification for non-parameter edits.
+    #[must_use]
+    pub fn with_state_dirty_callback(mut self, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.state_dirty = Some(callback);
+        self
+    }
+
+    /// Notify the host after the editor changes saved state outside parameter
+    /// automation. Call from the editor event loop once the edit has committed.
+    /// Hosts without a notification callback do nothing.
+    pub fn mark_state_dirty(&self) {
+        if let Some(callback) = &self.state_dirty {
+            callback();
+        }
     }
 
     /// The background-task spawner for task type `T`, or `None` if the
@@ -490,6 +508,7 @@ impl<P: ?Sized> PluginContext<P> {
         PluginContext {
             bridge: Arc::clone(&self.bridge),
             tasks: self.tasks.clone(),
+            state_dirty: self.state_dirty.clone(),
             params,
         }
     }
@@ -562,6 +581,7 @@ impl PluginContext<dyn Params> {
         Self {
             bridge: Arc::new(bridge),
             tasks: None,
+            state_dirty: None,
             params,
         }
     }
@@ -575,6 +595,7 @@ impl<P: Params + 'static> PluginContext<P> {
         PluginContext {
             bridge: self.bridge,
             tasks: self.tasks,
+            state_dirty: self.state_dirty,
             params: self.params as Arc<dyn Params>,
         }
     }

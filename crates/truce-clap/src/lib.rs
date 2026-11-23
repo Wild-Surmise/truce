@@ -76,7 +76,7 @@ use clap_sys::ext::remote_controls::{
 use clap_sys::ext::render::{
     CLAP_EXT_RENDER, CLAP_RENDER_OFFLINE, clap_plugin_render, clap_plugin_render_mode,
 };
-use clap_sys::ext::state::{CLAP_EXT_STATE, clap_plugin_state};
+use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_host_tail, clap_plugin_tail};
 use clap_sys::factory::preset_discovery::{
     CLAP_PRESET_DISCOVERY_LOCATION_FILE, clap_preset_discovery_location_kind,
@@ -247,6 +247,9 @@ struct ClapPluginData<P: PluginExport> {
     /// Host tail extension (for `changed`). Null if the host doesn't
     /// expose `clap.tail`.
     host_tail: *const clap_host_tail,
+    /// Optional host notification for non-parameter state edits.
+    host_state: *const clap_host_state,
+    state_dirty: Arc<AtomicBool>,
     /// Set on the audio thread when `latency()` changes; drained on the
     /// main thread, which notifies the host. Coalesces a burst of
     /// changes into one host notification per main-thread callback.
@@ -632,6 +635,7 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             if !tail_ext.is_null() {
                 data.host_tail = tail_ext.cast::<clap_host_tail>();
             }
+            data.host_state = get_ext(data.host, CLAP_EXT_STATE.as_ptr()).cast::<clap_host_state>();
         }
         true
     })
@@ -794,6 +798,12 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             && let Some(rescan) = (*data.host_params).rescan
         {
             rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
+        if data.state_dirty.swap(false, Ordering::AcqRel)
+            && let Some(host_state) = data.host_state.as_ref()
+            && let Some(mark_dirty) = host_state.mark_dirty
+        {
+            mark_dirty(data.host);
         }
 
         // Latency changed on the audio thread: tell the host here, off
@@ -3518,7 +3528,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let task_spawner_for_ctx = data.task_spawner.clone();
         let pending_state_for_set = data.pending_state.clone();
         let transport_slot = data.transport_slot.clone();
-        let context = PluginContext::from_closures(
+        let mut context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
                     // Push can fail only if the audio thread hasn't
@@ -3606,6 +3616,19 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             params_for_ctx,
         )
         .with_tasks(task_spawner_for_ctx);
+        if let Some(host_state) = data.host_state.as_ref()
+            && host_state.mark_dirty.is_some()
+            && let Some(request_callback) = (*data.host).request_callback
+        {
+            let dirty = Arc::clone(&data.state_dirty);
+            context = context.with_state_dirty_callback(Arc::new(move || {
+                if !dirty.swap(true, Ordering::AcqRel) {
+                    // mark_dirty is main-thread-only. request_callback can
+                    // be called from the editor's separate Linux thread.
+                    request_callback(host.as_ptr());
+                }
+            }));
+        }
 
         #[cfg(target_os = "macos")]
         let handle = RawWindowHandle::AppKit(parent_ptr);
@@ -4171,6 +4194,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             host_params: ptr::null(),
             host_latency: ptr::null(),
             host_tail: ptr::null(),
+            host_state: ptr::null(),
+            state_dirty: Arc::new(AtomicBool::new(false)),
             latency_dirty: AtomicBool::new(false),
             gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
             pending_state: Arc::new(StateLoadQueue::new(1)),
