@@ -73,6 +73,8 @@ struct Inner<P: Params + ?Sized> {
     scale: f32,
     egui_ctx: egui::Context,
     renderer: EguiRenderer,
+    #[cfg(target_abi = "sim")]
+    editor_ready_path: Option<std::path::PathBuf>,
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     params: Arc<P>,
     context: PluginContext<P>,
@@ -295,6 +297,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             scale: scalef,
             egui_ctx,
             renderer,
+            #[cfg(target_abi = "sim")]
+            editor_ready_path: std::env::var_os("TRUCE_IOS_EDITOR_READY_PATH")
+                .filter(|path| !path.is_empty())
+                .map(std::path::PathBuf::from),
             ui: Arc::clone(&self.ui),
             params: Arc::clone(&self.params),
             context: typed_ctx,
@@ -1007,9 +1013,21 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>, present: bool) {
     let clipped = inner
         .egui_ctx
         .tessellate(output.shapes, output.pixels_per_point);
-    inner
+    let presented = inner
         .renderer
-        .render(&output.textures_delta, &clipped, inner.scale);
+        .render_frame(&output.textures_delta, &clipped, inner.scale);
+    #[cfg(not(target_abi = "sim"))]
+    let _ = presented;
+    // The preview app can size a placeholder view without an editor. Report
+    // readiness only once the real editor has submitted a nonempty frame.
+    #[cfg(target_abi = "sim")]
+    if let Some(path) = inner
+        .editor_ready_path
+        .take_if(|_| presented && !clipped.is_empty())
+        && let Err(error) = std::fs::write(&path, "ready\n")
+    {
+        log::warn!("egui iOS: could not report editor readiness to {path:?}: {error}");
+    }
     // Mirror egui focus into UIKit using the native text proxy. The editor
     // view can receive legacy UIKeyInput events if proxy creation failed.
     let wants_kb = inner.egui_ctx.egui_wants_keyboard_input();

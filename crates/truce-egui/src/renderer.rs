@@ -286,6 +286,16 @@ impl EguiRenderer {
         clipped_primitives: &[egui::ClippedPrimitive],
         pixels_per_point: f32,
     ) {
+        self.render_frame(textures_delta, clipped_primitives, pixels_per_point);
+    }
+
+    /// Returns whether a frame was submitted for presentation.
+    pub(crate) fn render_frame(
+        &mut self,
+        textures_delta: &egui::TexturesDelta,
+        clipped_primitives: &[egui::ClippedPrimitive],
+        pixels_per_point: f32,
+    ) -> bool {
         for (id, delta) in &textures_delta.set {
             self.egui_rpass
                 .update_texture(&self.device, &self.queue, *id, delta);
@@ -316,7 +326,7 @@ impl EguiRenderer {
         let (wgpu::CurrentSurfaceTexture::Success(frame)
         | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = acquired
         else {
-            return;
+            return false;
         };
         let frame_view = frame
             .texture
@@ -366,6 +376,7 @@ impl EguiRenderer {
         for id in &textures_delta.free {
             self.egui_rpass.free_texture(id);
         }
+        true
     }
 
     /// Resize the surface. Clamps against the adapter-reported
