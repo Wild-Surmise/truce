@@ -1041,7 +1041,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
                 // `effGetParameter` after `effSetChunk` see the
                 // restored values without waiting for `cb_process`
                 // to pop the queue.
-                state::apply_params(&*inst.params_arc, &deserialized);
+                let deserialized =
+                    state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
                 let _ = inst.pending_state.force_push(deserialized);
                 true
             } else {

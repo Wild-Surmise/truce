@@ -9,6 +9,9 @@
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/CoreMIDI.h>
+#include <dispatch/dispatch.h>
+#include <mach-o/loader.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <stdlib.h>
 #include <dlfcn.h>
@@ -20,6 +23,13 @@
 // each render block. One block's worth of automation - generous even
 // under dense per-block automation.
 #define AU_PARAM_EVENT_CAP 512
+
+typedef struct AuStateDirtyToken AuStateDirtyToken;
+typedef struct {
+    AudioUnitPropertyID prop;
+    AudioUnitPropertyListenerProc proc;
+    void *userData;
+} AuPropertyListener;
 
 // ---------------------------------------------------------------------------
 // Per-instance state
@@ -130,12 +140,9 @@ typedef struct {
     Boolean hasHostCallbacks;
 
     // Property listeners
-    struct {
-        AudioUnitPropertyID prop;
-        AudioUnitPropertyListenerProc proc;
-        void *userData;
-    } listeners[32];
+    AuPropertyListener listeners[32];
     uint32_t listenerCount;
+    AuStateDirtyToken *stateDirty;
 
     // Render-notify callbacks (kAudioUnitAddRenderNotify). Invoked with
     // kAudioUnitRenderAction_PreRender before processing and _PostRender
@@ -324,6 +331,101 @@ void truce_au_v2_host_latency_changed(void *ctx) {
     AUEventListenerNotify(NULL, NULL, &event);
 }
 
+/* A queued notification owns its token, not the audio unit. Close cancels
+ * the target even when it happens reentrantly from a property listener. */
+struct AuStateDirtyToken {
+    atomic_uint refs;
+    atomic_bool queued;
+    pthread_mutex_t lock;
+    TruceAUv2 *target;
+};
+
+static AuStateDirtyToken *new_state_dirty_token(TruceAUv2 *inst) {
+    AuStateDirtyToken *token = malloc(sizeof(*token));
+    if (!token) return NULL;
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr)) { free(token); return NULL; }
+    int error = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    if (!error) error = pthread_mutex_init(&token->lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+    if (error) { free(token); return NULL; }
+    atomic_init(&token->refs, 1);
+    atomic_init(&token->queued, false);
+    token->target = inst;
+    return token;
+}
+
+static void release_state_dirty_token(AuStateDirtyToken *token) {
+    if (atomic_fetch_sub_explicit(&token->refs, 1, memory_order_acq_rel) == 1) {
+        pthread_mutex_destroy(&token->lock);
+        free(token);
+    }
+}
+
+static bool matches_property_listener(AuPropertyListener a, AuPropertyListener b) {
+    return a.prop == b.prop && a.proc == b.proc && a.userData == b.userData;
+}
+
+static void notify_state_dirty(void *context) {
+    AuStateDirtyToken *token = context;
+    atomic_store_explicit(&token->queued, false, memory_order_release);
+    pthread_mutex_lock(&token->lock);
+    TruceAUv2 *inst = token->target;
+    if (inst && inst->componentInstance) {
+        // A listener can remove itself or another listener, or dispose
+        // the entire unit. Check each registration and the live target
+        // again before invoking the next callback.
+        AuPropertyListener listeners[32];
+        uint32_t count = inst->listenerCount;
+        memcpy(listeners, inst->listeners, count * sizeof(*listeners));
+        for (uint32_t i = 0; i < count && token->target; ++i) {
+            AuPropertyListener listener = listeners[i];
+            if (listener.prop != kAudioUnitProperty_ClassInfo) continue;
+            inst = token->target;
+            for (uint32_t j = 0; j < inst->listenerCount; ++j) {
+                if (!matches_property_listener(listener, inst->listeners[j])) continue;
+                listener.proc(listener.userData, inst->componentInstance,
+                              listener.prop, kAudioUnitScope_Global, 0);
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&token->lock);
+    release_state_dirty_token(token);
+}
+
+static void pin_state_dirty_module(void *context) {
+    bool *pinned = context;
+    Dl_info info;
+    if (!dladdr((const void *)notify_state_dirty, &info)) return;
+    if (((const struct mach_header *)info.dli_fbase)->filetype == MH_EXECUTE) {
+        *pinned = true;
+        return;
+    }
+    void *module = dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE);
+    if (module) {
+        *pinned = true;
+        dlclose(module);
+    }
+}
+
+void truce_au_v2_host_state_dirty(void *target) {
+    AuStateDirtyToken *token = target;
+    if (!token) return;
+    static dispatch_once_t once;
+    static bool pinned;
+    // The host may unload the component before the queued callback runs.
+    dispatch_once_f(&once, &pinned, pin_state_dirty_module);
+    if (!pinned || atomic_exchange_explicit(&token->queued, true, memory_order_acq_rel)) return;
+    atomic_fetch_add_explicit(&token->refs, 1, memory_order_relaxed);
+    dispatch_async_f(dispatch_get_main_queue(), token, notify_state_dirty);
+}
+
+static bool supports_state_dirty_target(void) {
+    return (g_callbacks->abi_version & TRUCE_AU_ABI_MAGIC_MASK) == TRUCE_AU_ABI_MAGIC &&
+        (g_callbacks->abi_version & 0xFFu) >= 6u && g_callbacks->gui_set_au_v2_state_target;
+}
+
 /* Whether the host should hand this plugin MIDI input. Gated on the
  * `accepts_midi_in` capability (category default, overridable via
  * `midi_input` in truce.toml), not the component type - so an `aumu`
@@ -403,6 +505,11 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
     inst->rustCtx = g_callbacks->create();
     if (!inst->rustCtx) return kAudioUnitErr_FailedInitialization;
     au_ctx_map_register(inst->rustCtx, inst);
+    if (supports_state_dirty_target()) {
+        inst->stateDirty = new_state_dirty_token(inst);
+        if (inst->stateDirty)
+            g_callbacks->gui_set_au_v2_state_target(inst->rustCtx, inst->stateDirty);
+    }
 
     inst->sampleRate = 44100.0;
     inst->maxFramesPerSlice = 1024;
@@ -428,6 +535,14 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
 static OSStatus au_v2_close(void *self_) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (inst->rustCtx && g_callbacks) {
+        if (inst->stateDirty) {
+            AuStateDirtyToken *token = inst->stateDirty;
+            pthread_mutex_lock(&token->lock);
+            token->target = NULL;
+            pthread_mutex_unlock(&token->lock);
+            g_callbacks->gui_set_au_v2_state_target(inst->rustCtx, NULL);
+            release_state_dirty_token(token);
+        }
         au_ctx_map_unregister(inst->rustCtx);
         g_callbacks->destroy(inst->rustCtx);
         inst->rustCtx = NULL;
@@ -1988,11 +2103,11 @@ static OSStatus au_v2_add_property_listener(void *self_, AudioUnitPropertyID pro
                                              AudioUnitPropertyListenerProc proc,
                                              void *userData) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
-    if (inst->listenerCount >= 32) return noErr;
-    inst->listeners[inst->listenerCount].prop = prop;
-    inst->listeners[inst->listenerCount].proc = proc;
-    inst->listeners[inst->listenerCount].userData = userData;
-    inst->listenerCount++;
+    AuStateDirtyToken *token = inst->stateDirty;
+    if (token) pthread_mutex_lock(&token->lock);
+    if (inst->listenerCount < 32)
+        inst->listeners[inst->listenerCount++] = (AuPropertyListener){prop, proc, userData};
+    if (token) pthread_mutex_unlock(&token->lock);
     return noErr;
 }
 
@@ -2000,13 +2115,16 @@ static OSStatus au_v2_remove_property_listener_with_data(void *self_, AudioUnitP
                                                           AudioUnitPropertyListenerProc proc,
                                                           void *userData) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
+    AuStateDirtyToken *token = inst->stateDirty;
+    if (token) pthread_mutex_lock(&token->lock);
+    const AuPropertyListener listener = {prop, proc, userData};
     for (uint32_t i = 0; i < inst->listenerCount; i++) {
-        if (inst->listeners[i].prop == prop && inst->listeners[i].proc == proc &&
-            inst->listeners[i].userData == userData) {
+        if (matches_property_listener(listener, inst->listeners[i])) {
             inst->listeners[i] = inst->listeners[--inst->listenerCount];
             break;
         }
     }
+    if (token) pthread_mutex_unlock(&token->lock);
     return noErr;
 }
 

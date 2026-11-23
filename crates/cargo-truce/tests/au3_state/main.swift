@@ -2,13 +2,43 @@ import AudioToolbox
 import AVFAudio
 import Foundation
 
+let mode = CommandLine.arguments[1]
+if mode == "dirty-previous-abi" { mock_use_previous_abi() }
+
 let au = try TruceAUAudioUnit(componentDescription: AudioComponentDescription(
     componentType: kAudioUnitType_Effect, componentSubType: 0x74737431,
     componentManufacturer: 0x54737431, componentFlags: 0, componentFlagsMask: 0))
+if mode == "dirty" || mode == "dirty-previous-abi" {
+    var documentCount = 0
+    var presetCount = 0
+    let documentObservation = au.observe(\.fullStateForDocument, options: [.new]) { _, change in
+        precondition(change.newValue??["truce_state"] as? Data != nil,
+                     "document state was unavailable during notification")
+        documentCount += 1
+    }
+    let presetObservation = au.observe(\.fullState, options: [.new]) { _, change in
+        precondition(change.newValue??["truce_state"] as? Data != nil,
+                     "preset state was unavailable during notification")
+        presetCount += 1
+    }
+    au.notifyDocumentStateIfDirty()
+    precondition(documentCount == 0 && presetCount == 0, "notified without an edit")
+    mock_mark_state_dirty()
+    mock_mark_state_dirty()
+    au.notifyDocumentStateIfDirty()
+    au.notifyDocumentStateIfDirty()
+    let expected = mode == "dirty" ? 1 : 0
+    precondition(documentCount == expected && presetCount == expected,
+                 "expected \(expected) notifications per property; document \(documentCount), preset \(presetCount)")
+    documentObservation.invalidate()
+    presetObservation.invalidate()
+    print("PASS \(mode)")
+    exit(0)
+}
+
 let gain = au.parameterTree!.allParameters[0]
 gain.value = 0.75
 var state = au.fullState!
-let mode = CommandLine.arguments[1]
 let blob = state["truce_state"] as! Data
 if mode != "roundtrip" && mode != "apple-only" {
     // Invalid archive tag reproduces AUParameterGroup._deserialize + 176.

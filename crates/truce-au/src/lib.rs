@@ -14,8 +14,7 @@ use std::slice;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-// The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::thread::{self, JoinHandle, Thread};
@@ -253,6 +252,14 @@ impl Drop for ParamNotifier {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[derive(Default)]
+struct GuiStateDirty {
+    pending: AtomicBool,
+    #[cfg(target_os = "macos")]
+    au_v2_target: std::sync::Mutex<Option<SendPtr<std::ffi::c_void>>>,
+}
+
 struct AuInstance<P: PluginExport> {
     /// The plugin in the wrapper-standard ownership cell: the audio
     /// thread owns it per block, host lifecycle callbacks own it while
@@ -316,6 +323,10 @@ struct AuInstance<P: PluginExport> {
     /// editor-notify - all run on the host main thread; `cb_process` never
     /// touches it.
     gui: PluginCell<AuGui>,
+    /// AU v3 publishes editor-originated document changes on its existing
+    /// parameter-sync timer, on the host's UI thread.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    gui_state_dirty: Arc<GuiStateDirty>,
     /// Deferred editor resize requested through `PluginContext::request_resize`
     /// while the `gui` cell was already held (author code re-entering from
     /// inside `set_size` / `state_changed`). Packed `(w << 32) | h`, both
@@ -478,6 +489,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     scratch: RawBufferScratch::default(),
                 }),
                 gui: PluginCell::new(AuGui { editor: None }),
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                gui_state_dirty: Arc::new(GuiStateDirty::default()),
                 pending_resize: AtomicU64::new(0),
                 #[cfg(target_os = "macos")]
                 gui_parent_view: AtomicPtr::new(std::ptr::null_mut()),
@@ -1125,7 +1138,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // so host queries that read parameter values right after
             // `setFullState:` see the restored values without first
             // running a render block.
-            state::apply_params(&*inst.params_arc, &deserialized);
+            let deserialized =
+                state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending
             // blob - see the `pending_state` field comment for why
@@ -1184,7 +1198,8 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
             return 0;
         };
         let deserialized: state::DeserializedState = migrated.into();
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         let _ = inst.pending_state.force_push(deserialized);
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
@@ -1349,7 +1364,8 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         // Same apply path as cb_state_load: params synchronously on
         // the host thread, full state through the audio-thread
         // handoff, editor notified.
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         let _ = inst.pending_state.force_push(deserialized);
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
@@ -1901,6 +1917,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 let params_for_fmt = params.clone();
                 let params_for_ctx = params.clone();
                 let task_spawner_for_ctx = inst.task_spawner.clone();
+                let gui_state_dirty = inst.gui_state_dirty.clone();
                 let pending_state_for_set = inst.pending_state.clone();
                 let transport_slot = inst.transport_slot.clone();
                 let ctx_for_begin = ctx_raw;
@@ -2039,7 +2056,21 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     },
                     params_for_ctx,
                 )
-                .with_tasks(task_spawner_for_ctx);
+                .with_tasks(task_spawner_for_ctx)
+                .with_state_dirty_callback(Arc::new(move || {
+                    // AUv2 binds a notification token. Keep the token valid
+                    // just until native code has retained and queued it.
+                    // Close clears this slot under the same lock.
+                    #[cfg(target_os = "macos")]
+                    {
+                        let target = gui_state_dirty.au_v2_target.lock().unwrap();
+                        if let Some(target) = *target {
+                            truce_au_v2_host_state_dirty(target.as_ptr().cast_mut());
+                            return;
+                        }
+                    }
+                    gui_state_dirty.pending.store(true, Ordering::Release);
+                }));
                 #[cfg(target_os = "macos")]
                 let handle = RawWindowHandle::AppKit(parent);
                 #[cfg(target_os = "ios")]
@@ -2048,6 +2079,29 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             }
         }
     });
+}
+
+unsafe extern "C" fn cb_gui_take_state_dirty<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Some(inst) = unsafe { ctx.cast::<AuInstance<P>>().as_ref() } {
+        return i32::from(inst.gui_state_dirty.pending.swap(false, Ordering::AcqRel));
+    }
+    let _ = ctx;
+    0
+}
+
+unsafe extern "C" fn cb_gui_set_au_v2_state_target<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    target: *mut std::ffi::c_void,
+) {
+    #[cfg(target_os = "macos")]
+    if let Some(inst) = unsafe { ctx.cast::<AuInstance<P>>().as_ref() } {
+        // The native shim owns this token until it clears the slot.
+        // Editors hold the lock while asking native code to retain it.
+        *inst.gui_state_dirty.au_v2_target.lock().unwrap() =
+            (!target.is_null()).then(|| unsafe { SendPtr::new(target) });
+    }
+    let _ = (ctx, target);
 }
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
@@ -2106,6 +2160,7 @@ unsafe extern "C" {
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_latency_changed(ctx: *mut std::ffi::c_void);
+    fn truce_au_v2_host_state_dirty(target: *mut std::ffi::c_void);
     /// Resizes the AU v2 host's container `NSView` after a successful
     /// `editor.set_size` - AU v2 has no host-driven resize API, so Logic /
     /// Live / REAPER only observe the new frame via AppKit's own
@@ -2390,6 +2445,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         tail_samples: cb_tail_samples::<P>,
         set_render_mode: cb_set_render_mode::<P>,
         param_parse_value: cb_param_parse_value::<P>,
+        gui_take_state_dirty: cb_gui_take_state_dirty::<P>,
+        gui_set_au_v2_state_target: cb_gui_set_au_v2_state_target::<P>,
     }));
 
     let param_descs = param_descs.leak();

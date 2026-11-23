@@ -1810,7 +1810,8 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             // so host queries that read parameter values right after the
             // state load see the restored values without first running a
             // process block.
-            state::apply_params(&*inst.params_arc, &deserialized);
+            let deserialized =
+                state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
             // Refresh the snapshot slot now so a save before the next
             // render block sees the loaded custom state rather than the
             // pre-load snapshot (an inactive recall may never render).
@@ -1868,7 +1869,8 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
             return 0;
         };
         let deserialized: state::DeserializedState = migrated.into();
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         // Same inactive-load republish as `_load_state`: keep a save
         // before the next render consistent with the migrated custom state.
         republish_loaded_snapshot(&inst.snapshot, deserialized.extra.as_deref());

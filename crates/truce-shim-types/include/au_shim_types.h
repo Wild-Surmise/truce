@@ -45,7 +45,7 @@
 // binary (the pointer would be past its tail).
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417505u
+#define TRUCE_AU_ABI_VERSION 0x54417506u
 
 typedef struct {
     uint8_t component_type[4];
@@ -349,6 +349,12 @@ typedef struct {
      * (>= v5) before calling. */
     int32_t (*param_parse_value)(void *ctx, uint32_t id, const char *text,
                                  double *out_plain);
+    /* AU v3 consumes a pending editor document-state notification on its
+     * existing UI sync tick or at editor close. Call only at ABI >= v6. */
+    int32_t (*gui_take_state_dirty)(void *ctx);
+    /* AU v2 binds its native instance at open and clears it before close.
+     * AU v3 leaves it unset. Call only at ABI >= v6. */
+    void (*gui_set_au_v2_state_target)(void *ctx, void *token);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

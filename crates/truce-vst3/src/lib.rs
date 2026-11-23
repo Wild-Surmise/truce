@@ -6,7 +6,7 @@
 
 pub mod ffi;
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::slice;
 
@@ -45,6 +45,8 @@ use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -173,6 +175,7 @@ struct Vst3Instance<P: PluginExport> {
     /// `cb_set_active` - the editor pushes unconditionally rather than
     /// entering the cell from its own (possibly third) thread.
     pending_state: Arc<StateLoadQueue<state::DeserializedState>>,
+    state_dirty: Arc<AtomicBool>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()` reports. Updated by the audio thread (or `cb_reset`)
     /// so host-thread callbacks (`cb_get_latency`, `cb_get_tail`) read
@@ -251,6 +254,23 @@ struct Vst3Scratch<P: PluginExport> {
 /// Main/UI-thread-owned editor state (see [`Vst3Instance::gui`]).
 struct Vst3Gui {
     editor: Option<Box<dyn Editor>>,
+    #[cfg(target_os = "macos")]
+    dirty_component: Option<Arc<AtomicPtr<c_void>>>,
+}
+
+impl Vst3Gui {
+    fn detach_dirty_component(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(component) = self.dirty_component.take() {
+            component.store(std::ptr::null_mut(), Ordering::Release);
+        }
+    }
+}
+
+impl Drop for Vst3Gui {
+    fn drop(&mut self) {
+        self.detach_dirty_component();
+    }
 }
 
 /// Fixed-capacity `(port, noteId) -> (channel, note)` correlation for
@@ -400,6 +420,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 midi_maps,
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new()),
+                state_dirty: Arc::new(AtomicBool::new(false)),
                 latency_cache,
                 tail_cache,
                 midi_proxy_values: (0..midi_proxy_len::<P>())
@@ -427,7 +448,11 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     scratch: RawBufferScratch::default(),
                     note_id_map: NoteIdMap::new(),
                 }),
-                gui: PluginCell::new(Vst3Gui { editor: None }),
+                gui: PluginCell::new(Vst3Gui {
+                    editor: None,
+                    #[cfg(target_os = "macos")]
+                    dirty_component: None,
+                }),
             });
             let raw = Box::into_raw(instance);
             raw.cast::<std::ffi::c_void>()
@@ -1318,7 +1343,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // after `setState` see the restored values without first
         // running a process block. pluginval / DAW preset reload
         // both observe this.
-        state::apply_params(&*inst.params_arc, &deserialized);
+        let deserialized =
+            state::apply_params_for_audio_handoff(&*inst.params_arc, deserialized);
         // Publish through the same priority handoff even while inactive so
         // pre-recall editor writes cannot survive and overwrite this load at
         // the next save, activation, or process callback.
@@ -2266,12 +2292,20 @@ fn apply_physical_resize(editor: &mut dyn Editor, w: u32, h: u32, host_scale: f6
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
+    _component: *mut c_void,
 ) {
     // `editor.open` runs author GUI-construction code that can panic;
     // firewall it so the panic can't unwind across the C ABI.
     run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let mut gui = inst.gui.enter();
+        gui.detach_dirty_component();
+        #[cfg(target_os = "macos")]
+        let dirty_component = {
+            let component = Arc::new(AtomicPtr::new(_component));
+            gui.dirty_component = Some(Arc::clone(&component));
+            component
+        };
         if let Some(ref mut editor) = gui.editor {
             // Re-sync the editor's content scale to the host's current
             // value right before opening. `host_scale` lives on the
@@ -2301,6 +2335,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_ctx = params.clone();
             let task_spawner_for_ctx = inst.task_spawner.clone();
             let pending_state_for_set = inst.pending_state.clone();
+            let state_dirty = Arc::clone(&inst.state_dirty);
             let transport_slot = inst.transport_slot.clone();
             let context = PluginContext::from_closures(
                 ClosureBridge {
@@ -2382,7 +2417,23 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 },
                 params_for_ctx,
             )
-            .with_tasks(task_spawner_for_ctx);
+            .with_tasks(task_spawner_for_ctx)
+            .with_state_dirty_callback(Arc::new(move || {
+                state_dirty.store(true, Ordering::Release);
+                // Waking the AppKit host only schedules delivery. A host
+                // notification can reenter and close this editor.
+                #[cfg(target_os = "macos")]
+                {
+                    let component = dirty_component.load(Ordering::Acquire);
+                    if !component.is_null() {
+                        // The shim checks that we're on the AppKit main
+                        // thread before dereferencing the component.
+                        ffi::truce_vst3_wake_state_dirty(component);
+                    }
+                }
+                // Windows and Linux poll on the host UI thread or at close.
+                // The Linux draw thread never touches the component pointer.
+            }));
             #[cfg(target_os = "macos")]
             let handle = RawWindowHandle::AppKit(parent);
             #[cfg(target_os = "windows")]
@@ -2407,10 +2458,18 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // `editor.close` runs author teardown code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("vst3", "gui_close", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref mut editor) = inst.gui.enter().editor {
+        let mut gui = inst.gui.enter();
+        gui.detach_dirty_component();
+        if let Some(ref mut editor) = gui.editor {
             editor.close();
         }
     });
+}
+
+unsafe extern "C" fn cb_take_state_dirty<P: PluginExport>(ctx: *mut c_void) -> i32 {
+    // Called with this component's live Rust instance from the host UI thread.
+    let inst = unsafe { &*ctx.cast::<Vst3Instance<P>>() };
+    i32::from(inst.state_dirty.swap(false, Ordering::AcqRel))
 }
 
 // ---------------------------------------------------------------------------
@@ -2720,6 +2779,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         layout_bus_channels: cb_layout_bus_channels::<P>,
         match_bus_layout_perbus: cb_match_bus_layout_perbus::<P>,
         param_is_chunked: cb_param_is_chunked::<P>,
+        take_state_dirty: cb_take_state_dirty::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every
